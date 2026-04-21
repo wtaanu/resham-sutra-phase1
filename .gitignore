@@ -11,4 +11,5 @@ apps/web/.vite/
 apps/api/dist/
 data/mysql/
 *.bak
+.env.example
 
