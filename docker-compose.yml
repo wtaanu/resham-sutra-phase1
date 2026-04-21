@@ -8,8 +8,6 @@ services:
       MYSQL_USER: ${MYSQL_USER}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
-    ports:
-      - "3307:3306"
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
@@ -30,11 +28,11 @@ services:
       mysql:
         condition: service_healthy
     environment:
-      NODE_ENV: development
+      NODE_ENV: ${NODE_ENV:-production}
       PORT: ${API_PORT}
       DATABASE_URL: ${DATABASE_URL}
     ports:
-      - "${API_PORT}:4000"
+      - "127.0.0.1:${API_PORT}:4000"
 
   web:
     build:
@@ -47,9 +45,9 @@ services:
     depends_on:
       - api
     environment:
-      VITE_API_URL: https://api.reshamsutra.com
+      VITE_API_URL: ${PUBLIC_WEB_API_URL:-https://api.reshamsutra.com}
     ports:
-      - "${WEB_PORT}:3000"
+      - "127.0.0.1:${WEB_PORT}:3000"
 
   n8n:
     image: docker.n8n.io/n8nio/n8n:latest
@@ -76,7 +74,7 @@ services:
       DB_MYSQLDB_PASSWORD: ${MYSQL_PASSWORD}
       NODE_TLS_REJECT_UNAUTHORIZED: "0"
     ports:
-      - "${N8N_PORT}:5678"
+      - "127.0.0.1:${N8N_PORT}:5678"
     volumes:
       - n8n_data:/home/node/.n8n
 
