@@ -1,0 +1,43 @@
+import "dotenv/config";
+import { z } from "zod";
+
+const envSchema = z.object({
+  PORT: z.coerce.number().default(4000),
+  DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
+  DOCUMENT_STORAGE_DIR: z.string().default("./storage/documents"),
+  PUBLIC_API_BASE_URL: z.string().default("http://localhost:4000"),
+  QUOTATION_TEMPLATE_DIR: z.string().default("../../templates/quotation-template.xlsx"),
+  AIRTABLE_TOKEN: z.string().min(1, "AIRTABLE_TOKEN is required"),
+  AIRTABLE_BASE_ID: z.string().min(1, "AIRTABLE_BASE_ID is required"),
+  AIRTABLE_ENQUIRIES_TABLE: z.string().default("Enquiries"),
+  AIRTABLE_CUSTOMERS_TABLE: z.string().default("Customers"),
+  AIRTABLE_QUOTATIONS_TABLE: z.string().default("Quotations"),
+  AIRTABLE_QUOTATION_LINE_ITEMS_TABLE: z.string().default("Quotation Line Items"),
+  AIRTABLE_ORDERS_TABLE: z.string().default("Orders"),
+  AIRTABLE_PRODUCTS_TABLE: z.string().default("Products"),
+  GOOGLE_DRIVE_ACCESS_TOKEN: z.string().optional().default(""),
+  GOOGLE_DRIVE_CLIENTID: z.string().optional().default(""),
+  GOOGLE_DRIVE_CLIENTSECRET: z.string().optional().default(""),
+  GOOGLE_DRIVE_REFRESH_TOKEN: z.string().optional().default(""),
+  GOOGLE_DRIVE_ROOT_FOLDER_ID: z.string().optional().default(""),
+  AIRTABLE_INTERFACE_URL: z.string().optional().default(""),
+  AIRTABLE_ENQUIRY_FORM_URL: z.string().optional().default(""),
+  AIRTABLE_LINE_ITEMS_FORM_URL: z.string().optional().default(""),
+  AIRTABLE_PRODUCTS_FORM_URL: z.string().optional().default(""),
+  META_WHATSAPP_VERIFY_TOKEN: z.string().optional().default(""),
+  META_SYSTEM_USER_ACCESS_TOKEN: z.string().optional().default(""),
+  META_WHATSAPP_PHONE_NUMBER_ID: z.string().optional().default(""),
+  SALES_TEAM_NOTIFICATION_EMAIL: z.string().optional().default(""),
+  SMTP_HOST: z.string().optional().default(""),
+  SMTP_PORT: z.coerce.number().default(465),
+  SMTP_USER: z.string().optional().default(""),
+  SMTP_APP_PASSWORD: z.string().optional().default(""),
+  SMTP_FROM_NAME: z.string().optional().default("Resham Sutra Sales"),
+  INTAKE_POLLING_ENABLED: z
+    .union([z.string(), z.boolean()])
+    .transform((value) => String(value).toLowerCase() === "true")
+    .default(false),
+  INTAKE_POLLING_INTERVAL_MS: z.coerce.number().default(60000)
+});
+
+export const env = envSchema.parse(process.env);

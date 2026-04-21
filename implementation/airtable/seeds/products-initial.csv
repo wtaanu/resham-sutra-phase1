@@ -1,0 +1,26 @@
+Source Sheet,Category,Model,Narration,Variant,Supplier,Purchase Cost,Ex-factory,Freight,GST Amount,Bulk Sale Price,MRP,Alias Keywords,Active
+pricelist,Reeled for weft,SRM-02,"Sonalika Reeling Machine (2 ends Muga Reeling Machine)",Electric,,0,16330,2000,3299.4,21629.4,28800,"sonalika|muga reeling|srm-02",TRUE
+pricelist,Reeled for weft,SRM-03,"Sonalika Reeling Machine - Solar Power (2 ends Muga Reeling Machine)","Solar + Electric",,0,0,0,0,0,0,"sonalika|solar reeling|srm-03",TRUE
+pricelist,Reeling Mulberry,CRM-04,"Flexi Re-reeling Machine (4 ends Single Window Closed Type)",Electric,,0,36000,2500,6930,45430,60600,"mulberry rereeling|flexi rereeling|crm-04",TRUE
+pricelist,Reeling Mulberry,MRM-004,"Flexi Mulberry Reeling Machine (4 ends)",Electric,,0,0,0,0,0,0,"mulberry reeling|4 ends|mrm-004",TRUE
+pricelist,Reeling Mulberry,MRM-010,"Mulberry Reeling Machine (10 ends)",Electric,,0,58500,5000,11430,74930,99900,"mulberry reeling|10 ends|mrm-010",TRUE
+pricelist,Reeling Mulberry,MRM-020,"Mulberry Reeling Machine (20 ends)",Electric,,0,96500,7000,18630,122130,162800,"mulberry reeling|20 ends|mrm-020",TRUE
+pricelist,Reeling Mulberry,TCRM,"Twin Charkha Reeling Machine (8 ends Mulberry Reeling)",Electric,,0,32500,5000,6750,44250,59000,"twin charkha|mulberry reeling|tcrm",TRUE
+pricelist,Reeling Tassar,BRM-01,"Buniyaad Reeling Machine Electric Power",Electric,,0,9750,1500,2025,13275,17700,"buniyaad|reeling machine|brm-01",TRUE
+pricelist,Reeling Tassar,BRM-02,"Buniyaad Reeling Machine Solar + Electric",Solar,,0,18250,2000,3645,23895,31900,"buniyaad|solar reeling|brm-02",TRUE
+pricelist,Reeling Tassar,CRM-01,"Flexi Charkha Reeling (4 ends Reeling and Re-reeling Charkha)",Electric,,0,25500,1200,4806,31506,42000,"flexi charkha|reeling charkha|crm-01",TRUE
+pricelist,Reeling Tassar,MRTM-01,"MRTM Handy - Reeling + Twisting (4 Spindle Motorised Reeling & Twisting)",Electric,,0,25350,2000,4923,32273,43000,"mrtm handy|twisting|mrtm-01",TRUE
+pricelist,Reeling Tassar,RR4E-01,"Re-reeling Machine Lite (4 ends Single Window Open Type)",Electric,,0,16000,1500,3150,20650,27500,"rereeling lite|rr4e-01|4 ends",TRUE
+Sheet1,Finishing,,"Calendaring Machine 72"" (Pneumatic type)",Electric,,0,410000,15000,76500,501500,668700,"calendaring|finishing machine",TRUE
+Sheet1,Processing,BE100,"Boiler 100 Kgs (Electric Non-IBR)",Electric,,0,100000,20000,21600,141600,188800,"boiler 100|be100",TRUE
+Sheet1,Processing,BE50,"Boiler 50 Kgs (Electric Non-IBR)",Electric,,0,65000,10000,13500,88500,118000,"boiler 50|be50",TRUE
+Sheet1,Processing,ST01,Cocoon Storage,NA,,0,20000,5000,4500,29500,39300,"cocoon storage|st01",TRUE
+Sheet1,Processing,CM100,Cooking Machine 100L,Electric,,0,100000,12000,20160,132160,176200,"cooking machine|cm100",TRUE
+Sheet1,Processing,CM80,Cooking Machine 80L,Electric,,0,75000,5000,14400,94400,125900,"cooking machine|cm80",TRUE
+Sheet1,Processing,HAD-25,"Electrical Hot Air Dryer 25 Kg (12 Trays - 16 x 32)",Electric,,0,150000,20000,30600,200600,267500,"hot air dryer|had-25",TRUE
+Sheet1,Processing,HAD-50,"Electrical Hot Air Dryer 50 Kg (24 Trays - 16 x 32)",Electric,,0,195000,30000,40500,265500,354000,"hot air dryer|had-50|cocoon dryer",TRUE
+RSPL,Reeling Mulberry,MRM-C2,"Cooking 2 Pan (Electric powered)",Electric,RSPL,16000,45000,5000,9000,59000,70800,"cooking 2 pan|mrm-c2",TRUE
+RSPL,Reeling Tassar,WRM-06,"Pro-Wet Reeling Machine (6 ends wet reeling)",Electric,RSPL,19300,39500,3500,7740,50740,67700,"wet reeling|wrm-06",TRUE
+RSPL,Reeling Tassar,WRM-04,"Pro-Wet Reeling Machine (4 ends wet reeling)",Electric,RSPL,17300,34500,3000,6750,44250,59000,"wet reeling|wrm-04",TRUE
+RSPL,Reeling Tassar,URM-03,"Unnati Electric Reeling Machine (Electric Reeling & Twisting)",Electric,RSPL,6500,20800,2000,4104,26904,35900,"unnati|urm-03|twisting",TRUE
+RSPL,Reeling Tassar,RRM-03,"Re-reeling - 3 ends (Electric Power) (Compact Re-reeling Machine)",Electric+ hand,RSPL,5500,10500,1500,2160,14160,18900,"compact rereeling|rrm-03",TRUE

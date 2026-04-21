@@ -1,0 +1,85 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: resham-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: resham-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      NODE_ENV: development
+      PORT: ${API_PORT}
+      DATABASE_URL: ${DATABASE_URL}
+    ports:
+      - "${API_PORT}:4000"
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    container_name: resham-web
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      - api
+    environment:
+      VITE_API_URL: http://localhost:${API_PORT}
+    ports:
+      - "${WEB_PORT}:3000"
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: resham-n8n
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      N8N_PORT: ${N8N_PORT}
+      N8N_HOST: ${N8N_HOST}
+      N8N_PROTOCOL: ${N8N_PROTOCOL}
+      N8N_EDITOR_BASE_URL: ${N8N_EDITOR_BASE_URL}
+      N8N_BASIC_AUTH_ACTIVE: ${N8N_BASIC_AUTH_ACTIVE}
+      N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD}
+      DB_TYPE: mysqldb
+      DB_MYSQLDB_HOST: mysql
+      DB_MYSQLDB_PORT: 3306
+      DB_MYSQLDB_DATABASE: ${MYSQL_DATABASE}
+      DB_MYSQLDB_USER: ${MYSQL_USER}
+      DB_MYSQLDB_PASSWORD: ${MYSQL_PASSWORD}
+      NODE_TLS_REJECT_UNAUTHORIZED: "0"
+    ports:
+      - "${N8N_PORT}:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+
+volumes:
+  mysql_data:
+  n8n_data:

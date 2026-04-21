@@ -1,0 +1,186 @@
+{
+  "baseName": "Resham Sutra Phase 1",
+  "description": "Operational Airtable base for WhatsApp enquiry capture, quotation drafting, approval, PDF generation, reminders, and order conversion.",
+  "tables": [
+    {
+      "name": "Enquiries",
+      "purpose": "One row per forwarded lead message received over WhatsApp or entered manually.",
+      "primaryField": "Enquiry ID",
+      "fields": [
+        { "name": "Enquiry ID", "type": "formula", "formula": "'ENQ-' & RECORD_ID()" },
+        { "name": "Created At", "type": "createdTime" },
+        {
+          "name": "Source Channel",
+          "type": "singleSelect",
+          "options": ["WhatsApp Forward", "Manual Entry", "Phone", "Walk-in", "Email"]
+        },
+        { "name": "Receiving WhatsApp Number", "type": "singleLineText" },
+        { "name": "Forwarded By", "type": "singleLineText" },
+        { "name": "Raw Message", "type": "multilineText" },
+        {
+          "name": "Parser Status",
+          "type": "singleSelect",
+          "options": ["New", "Parsed", "Needs Review", "Ready for Draft"]
+        },
+        {
+          "name": "Confidence",
+          "type": "singleSelect",
+          "options": ["High", "Medium", "Low"]
+        },
+        { "name": "Lead Name", "type": "singleLineText" },
+        { "name": "Company", "type": "singleLineText" },
+        { "name": "Phone", "type": "phoneNumber" },
+        { "name": "Email", "type": "email" },
+        { "name": "Location", "type": "singleLineText" },
+        { "name": "Requirement Summary", "type": "multilineText" },
+        { "name": "Requested Asset", "type": "singleLineText" },
+        { "name": "Potential Product Keywords", "type": "multilineText" },
+        { "name": "Linked Customer", "type": "link", "table": "Customers" },
+        { "name": "Linked Quotation", "type": "link", "table": "Quotations" },
+        { "name": "Drive Folder URL", "type": "url" },
+        { "name": "Zoho Contact ID", "type": "singleLineText" },
+        { "name": "Zoho Deal ID", "type": "singleLineText" }
+      ]
+    },
+    {
+      "name": "Customers",
+      "purpose": "Master customer and company records synced to Zoho Bigin.",
+      "primaryField": "Customer Name",
+      "fields": [
+        { "name": "Customer Name", "type": "singleLineText" },
+        { "name": "Company", "type": "singleLineText" },
+        { "name": "Phone", "type": "phoneNumber" },
+        { "name": "WhatsApp", "type": "phoneNumber" },
+        { "name": "Email", "type": "email" },
+        { "name": "Address", "type": "multilineText" },
+        { "name": "State / Country", "type": "singleLineText" },
+        { "name": "Customer Type", "type": "singleSelect", "options": ["Domestic", "Export", "Dealer", "Distributor"] },
+        { "name": "Linked Enquiries", "type": "link", "table": "Enquiries" },
+        { "name": "Linked Quotations", "type": "link", "table": "Quotations" },
+        { "name": "Zoho Contact ID", "type": "singleLineText" },
+        { "name": "Zoho Account ID", "type": "singleLineText" }
+      ]
+    },
+    {
+      "name": "Products",
+      "purpose": "Normalized product master across all shared workbook sheets.",
+      "primaryField": "Product Key",
+      "fields": [
+        { "name": "Product Key", "type": "formula", "formula": "{Source Sheet} & '-' & {Model}" },
+        { "name": "Source Sheet", "type": "singleSelect", "options": ["pricelist", "Sheet1", "Sheet2", "RSPL"] },
+        { "name": "Category", "type": "singleLineText" },
+        { "name": "Model", "type": "singleLineText" },
+        { "name": "Narration", "type": "multilineText" },
+        { "name": "Variant", "type": "singleLineText" },
+        { "name": "Supplier", "type": "singleLineText" },
+        { "name": "Purchase Cost", "type": "currency" },
+        { "name": "Ex-factory", "type": "currency" },
+        { "name": "Freight", "type": "currency" },
+        { "name": "GST Amount", "type": "currency" },
+        { "name": "Bulk Sale Price", "type": "currency" },
+        { "name": "MRP", "type": "currency" },
+        { "name": "Alias Keywords", "type": "multilineText" },
+        { "name": "Active", "type": "checkbox" }
+      ]
+    },
+    {
+      "name": "Quotation Templates",
+      "purpose": "Reference rows for the two client-provided quotation layouts.",
+      "primaryField": "Template Name",
+      "fields": [
+        { "name": "Template Name", "type": "singleLineText" },
+        { "name": "Template Code", "type": "singleSelect", "options": ["domestic-standard", "myanmar-proforma"] },
+        { "name": "Document Kind", "type": "singleLineText" },
+        { "name": "Number Prefix", "type": "singleLineText" },
+        { "name": "Column Layout", "type": "multilineText" },
+        { "name": "Terms", "type": "multilineText" },
+        { "name": "Template Workbook URL", "type": "url" }
+      ]
+    },
+    {
+      "name": "Quotations",
+      "purpose": "Header records for quotation drafts, approvals, sending, and follow-ups.",
+      "primaryField": "Quotation Number",
+      "fields": [
+        { "name": "Quotation Number", "type": "singleLineText" },
+        { "name": "Linked Enquiry", "type": "link", "table": "Enquiries" },
+        { "name": "Linked Customer", "type": "link", "table": "Customers" },
+        { "name": "Template", "type": "link", "table": "Quotation Templates" },
+        { "name": "Status", "type": "singleSelect", "options": ["Draft", "Under Review", "Approved", "Sent", "Accepted", "Rejected"] },
+        { "name": "Draft Format", "type": "singleSelect", "options": ["XLSX", "DOCX"] },
+        { "name": "Draft File URL", "type": "url" },
+        { "name": "Final PDF URL", "type": "url" },
+        { "name": "Drive Folder URL", "type": "url" },
+        { "name": "Valid Until", "type": "date" },
+        { "name": "Reference Number", "type": "singleLineText" },
+        { "name": "Buyer Block", "type": "multilineText" },
+        { "name": "Consignee Block", "type": "multilineText" },
+        { "name": "Subtotal", "type": "currency" },
+        { "name": "Freight Total", "type": "currency" },
+        { "name": "GST Total", "type": "currency" },
+        { "name": "Grand Total", "type": "currency" },
+        { "name": "Terms Override", "type": "multilineText" },
+        { "name": "Preferred Send Channel", "type": "singleSelect", "options": ["WhatsApp", "Email", "Both"] },
+        { "name": "Send Quotation", "type": "checkbox" },
+        { "name": "Send Reminder", "type": "checkbox" },
+        { "name": "Mark Accepted", "type": "checkbox" },
+        { "name": "Mark Rejected", "type": "checkbox" },
+        { "name": "Sent Date", "type": "dateTime" },
+        { "name": "Reminder Count", "type": "number" },
+        { "name": "Last Reminder Date", "type": "dateTime" },
+        { "name": "Next Reminder Date", "type": "date" },
+        { "name": "Approval Notes", "type": "multilineText" },
+        { "name": "Zoho Deal ID", "type": "singleLineText" }
+      ]
+    },
+    {
+      "name": "Quotation Line Items",
+      "purpose": "Line-by-line product rows under each quotation header.",
+      "primaryField": "Line Item Key",
+      "fields": [
+        { "name": "Line Item Key", "type": "formula", "formula": "{Quotation} & '-' & {Line No.}" },
+        { "name": "Quotation", "type": "link", "table": "Quotations" },
+        { "name": "Line No.", "type": "number" },
+        { "name": "Linked Product", "type": "link", "table": "Products" },
+        { "name": "Description Override", "type": "multilineText" },
+        { "name": "Qty", "type": "number" },
+        { "name": "Rate Per Unit", "type": "currency" },
+        { "name": "Pkg & Transport", "type": "currency" },
+        { "name": "GST %", "type": "percent" },
+        { "name": "GST Amount", "type": "currency" },
+        { "name": "Unit Value", "type": "currency" },
+        { "name": "Total Amount", "type": "currency" }
+      ]
+    },
+    {
+      "name": "Document Jobs",
+      "purpose": "Tracks draft-generation and final-PDF-generation jobs for each quotation.",
+      "primaryField": "Job ID",
+      "fields": [
+        { "name": "Job ID", "type": "formula", "formula": "'DOC-' & RECORD_ID()" },
+        { "name": "Quotation", "type": "link", "table": "Quotations" },
+        { "name": "Job Type", "type": "singleSelect", "options": ["Draft XLSX", "Draft DOCX", "Final PDF", "WhatsApp Send", "Email Send"] },
+        { "name": "Status", "type": "singleSelect", "options": ["Queued", "Running", "Completed", "Failed"] },
+        { "name": "Output URL", "type": "url" },
+        { "name": "Error Message", "type": "multilineText" },
+        { "name": "Triggered At", "type": "createdTime" }
+      ]
+    },
+    {
+      "name": "Orders",
+      "purpose": "Created only when a quotation is accepted and converted into a final order.",
+      "primaryField": "Order Number",
+      "fields": [
+        { "name": "Order Number", "type": "singleLineText" },
+        { "name": "Linked Quotation", "type": "link", "table": "Quotations" },
+        { "name": "Linked Customer", "type": "link", "table": "Customers" },
+        { "name": "Order Date", "type": "date" },
+        { "name": "Order Value", "type": "currency" },
+        { "name": "Payment Status", "type": "singleSelect", "options": ["Pending", "Advance Received", "Partial", "Paid"] },
+        { "name": "Delivery Status", "type": "singleSelect", "options": ["Not Started", "In Production", "Ready to Dispatch", "Dispatched", "Delivered"] },
+        { "name": "Drive Folder URL", "type": "url" },
+        { "name": "Zoho Deal ID", "type": "singleLineText" }
+      ]
+    }
+  ]
+}

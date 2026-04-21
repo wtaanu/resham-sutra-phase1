@@ -1,0 +1,1151 @@
+import { access } from "node:fs/promises";
+import path from "node:path";
+import {
+  createRecord,
+  getRecord,
+  listRecords,
+  type AirtableRecord,
+  updateRecord
+} from "./airtable.js";
+import {
+  createDraftDocument,
+  createPdfDocument,
+  getStoredDocumentArtifact
+} from "./documents.js";
+import {
+  extractDriveFolderId,
+  findOrCreateClientFolder,
+  isDriveConfigured,
+  uploadFileToFolder
+} from "./drive.js";
+import { env } from "./config.js";
+import { isSmtpConfigured, resolveDocumentAttachment, sendMail } from "./mailer.js";
+import {
+  createRecordWithUniqueNumber,
+  nextQuotationNumber as generateNextQuotationNumber
+} from "./numbering.js";
+import {
+  isWhatsAppOutboundConfigured,
+  sendQuotationDocumentOnWhatsApp
+} from "./whatsapp-outbound.js";
+
+type EnquiryFields = {
+  "Enquiry ID"?: string;
+  "Lead Name"?: string;
+  Company?: string;
+  Phone?: string;
+  Email?: string;
+  Address?: string;
+  State?: string;
+  City?: string;
+  Pincode?: string | number;
+  "Destination Address"?: string;
+  "Destination State"?: string;
+  "Destination City"?: string;
+  "Destination Pincode"?: string;
+  "Parser Status"?: string;
+  "Linked Customer"?: string[];
+  Quotations?: string[];
+  "Drive Folder URL"?: string;
+  "Requirement Summary"?: string;
+  "Requested Asset"?: string;
+  Quantity?: string | number;
+  Qty?: string | number;
+  Notes?: string;
+};
+
+type CustomerFields = {
+  "Client ID"?: string;
+  "Customer Name"?: string;
+  Company?: string;
+  Phone?: string;
+  WhatsApp?: string;
+  Email?: string;
+  Address?: string;
+  State?: string;
+  City?: string;
+  Pincode?: string | number;
+  "Customer Type"?: string;
+  "Drive Folder URL"?: string;
+};
+
+type QuotationFields = {
+  "Quotation Number"?: string;
+  "Linked Enquiry"?: string[];
+  "Linked Customer"?: string[];
+  Status?: string;
+  "Draft Format"?: string;
+  "Draft File URL"?: string;
+  "Final PDF URL"?: string;
+  "Drive Folder URL"?: string;
+  "Reference Number"?: string;
+  "Buyer Block"?: string;
+  "Preferred Send Channel"?: string;
+  "Sent Date"?: string;
+  "Send Quotation"?: boolean;
+  "Send Reminder"?: boolean;
+  "Mark Accepted"?: boolean;
+  "Mark Rejected"?: boolean;
+  "Reminder Count"?: number;
+  "Last Reminder Date"?: string;
+  "Next Reminder Date"?: string;
+};
+
+type QuotationLineItemFields = {
+  Quotation?: string[];
+  "Line No."?: number;
+  "Description Override"?: string;
+  Qty?: number;
+  "Rate Per Unit"?: number;
+  "Pkg & Transport"?: number;
+  "GST %"?: number;
+  "GST Amount"?: number;
+  "Total Amount"?: number;
+  "Unit Value"?: number;
+};
+
+type ProcessingResult = {
+  enquiryRecordId: string;
+  enquiryId: string;
+  customerRecordId?: string;
+  quotationRecordId?: string;
+  driveFolderUrl?: string;
+  status: "processed" | "error" | "skipped";
+  message?: string;
+};
+
+const customerLocks = new Map<string, Promise<void>>();
+
+function linkedRecordIds(...recordIds: Array<string | undefined>) {
+  return recordIds.filter((value): value is string => Boolean(value));
+}
+
+function normalizePhone(value: unknown) {
+  const digits = String(value ?? "").replace(/\D/g, "");
+  if (!digits) {
+    return "";
+  }
+
+  return digits.length > 10 ? digits.slice(-10) : digits;
+}
+
+function normalizeEmail(value: unknown) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function toPincodeNumber(value: unknown) {
+  const normalized = String(value ?? "")
+    .replace(/\D/g, "")
+    .slice(0, 6);
+
+  return normalized ? Number(normalized) : undefined;
+}
+
+function withOptionalNumberField(
+  fields: Record<string, unknown>,
+  fieldName: string,
+  value: number | undefined
+) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    fields[fieldName] = value;
+  }
+
+  return fields;
+}
+
+function customerLockKeys(enquiry: AirtableRecord<EnquiryFields>) {
+  return [
+    normalizePhone(enquiry.fields.Phone),
+    normalizeEmail(enquiry.fields.Email)
+  ].filter(Boolean);
+}
+
+async function withCustomerLocks<T>(keys: string[], task: () => Promise<T>) {
+  if (!keys.length) {
+    return task();
+  }
+
+  const uniqueKeys = [...new Set(keys)].sort();
+  const previousLocks = uniqueKeys.map((key) => customerLocks.get(key) ?? Promise.resolve());
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+
+  uniqueKeys.forEach((key) => {
+    const previous = customerLocks.get(key) ?? Promise.resolve();
+    customerLocks.set(key, previous.then(() => current));
+  });
+
+  await Promise.all(previousLocks);
+
+  try {
+    return await task();
+  } finally {
+    release();
+    uniqueKeys.forEach((key) => {
+      if (customerLocks.get(key) === current) {
+        customerLocks.delete(key);
+      }
+    });
+  }
+}
+
+function safeFolderPart(value: string) {
+  return value
+    .replace(/[\\/:*?"<>|]/g, "-")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildCustomerFolderName(customer: AirtableRecord<CustomerFields>) {
+  return safeFolderPart(
+    `${customer.fields["Client ID"] || customer.id}-${customer.fields["Customer Name"] || "Unknown Client"}`
+  );
+}
+
+function enquiryStatusFields(status: string) {
+  return {
+    "Parser Status": status
+  };
+}
+
+function nextClientId(customers: AirtableRecord<CustomerFields>[]) {
+  const max = customers.reduce((currentMax, customer) => {
+    const clientId = customer.fields["Client ID"] ?? "";
+    const match = clientId.match(/CUST-(\d+)/);
+    const value = match ? Number(match[1]) : 0;
+    return Math.max(currentMax, value);
+  }, 0);
+
+  return `CUST-${String(max + 1).padStart(3, "0")}`;
+}
+
+function findMatchingCustomer(
+  enquiry: AirtableRecord<EnquiryFields>,
+  customers: AirtableRecord<CustomerFields>[]
+) {
+  const enquiryPhone = normalizePhone(enquiry.fields.Phone);
+  const enquiryEmail = normalizeEmail(enquiry.fields.Email);
+
+  if (enquiryPhone) {
+    const byPhone = customers.find((customer) => {
+      const customerPhone = normalizePhone(customer.fields.Phone || customer.fields.WhatsApp);
+      return customerPhone && customerPhone === enquiryPhone;
+    });
+
+    if (byPhone) {
+      return byPhone;
+    }
+  }
+
+  if (enquiryEmail) {
+    const byEmail = customers.find((customer) => {
+      const customerEmail = normalizeEmail(customer.fields.Email);
+      return customerEmail && customerEmail === enquiryEmail;
+    });
+
+    if (byEmail) {
+      return byEmail;
+    }
+  }
+
+  return null;
+}
+
+async function ensureCustomer(enquiry: AirtableRecord<EnquiryFields>) {
+  return withCustomerLocks(customerLockKeys(enquiry), async () => {
+    const customers = await listRecords<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, {
+      fields: [
+        "Client ID",
+        "Customer Name",
+        "Company",
+        "Phone",
+        "WhatsApp",
+        "Email",
+        "Address",
+        "State",
+        "City",
+        "Pincode",
+        "Drive Folder URL"
+      ],
+      maxRecords: 500
+    });
+
+    const matchedCustomer = findMatchingCustomer(enquiry, customers);
+    if (matchedCustomer) {
+      return matchedCustomer;
+    }
+
+    const clientId = nextClientId(customers);
+    const customerFields = withOptionalNumberField(
+      {
+        "Client ID": clientId,
+        "Customer Name": enquiry.fields["Lead Name"] || "Unknown Client",
+        Company: enquiry.fields.Company || "",
+        Phone: enquiry.fields.Phone || "",
+        WhatsApp: enquiry.fields.Phone || "",
+        Email: enquiry.fields.Email || "",
+        Address: enquiry.fields.Address || "",
+        State: enquiry.fields.State || "",
+        City: enquiry.fields.City || "",
+        "Customer Type": "Domestic"
+      },
+      "Pincode",
+      toPincodeNumber(enquiry.fields.Pincode)
+    );
+
+    try {
+      return await createRecord<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, customerFields);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (!message.toLowerCase().includes("pincode")) {
+        throw error;
+      }
+
+      const retryFields = { ...customerFields };
+      delete retryFields.Pincode;
+      return createRecord<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, retryFields);
+    }
+  });
+}
+
+async function ensureFolder(customer: AirtableRecord<CustomerFields>) {
+  const existingUrl = customer.fields["Drive Folder URL"] || "";
+  if (existingUrl) {
+    return {
+      folderId: extractDriveFolderId(existingUrl),
+      folderUrl: existingUrl
+    };
+  }
+
+  if (!isDriveConfigured()) {
+    return {
+      folderId: "",
+      folderUrl: ""
+    };
+  }
+
+  const clientId = customer.fields["Client ID"] || customer.id;
+  const customerName = safeFolderPart(customer.fields["Customer Name"] || "Unknown Client");
+  const folderName = `${clientId}-${customerName}`;
+
+  const folder = await findOrCreateClientFolder(folderName);
+
+  await updateRecord<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, {
+    id: customer.id,
+    fields: {
+      "Drive Folder URL": folder.folderUrl
+    }
+  });
+
+  return {
+    folderId: folder.folderId,
+    folderUrl: folder.folderUrl
+  };
+}
+
+async function syncFolderLinks(
+  enquiry: AirtableRecord<EnquiryFields>,
+  customer: AirtableRecord<CustomerFields>,
+  quotation: AirtableRecord<QuotationFields>,
+  folderUrl: string
+) {
+  if (!folderUrl) {
+    return {
+      enquiry,
+      quotation
+    };
+  }
+
+  const enquiryNeedsUpdate = enquiry.fields["Drive Folder URL"] !== folderUrl;
+  const quotationNeedsUpdate = quotation.fields["Drive Folder URL"] !== folderUrl;
+
+  const [updatedEnquiry, updatedQuotation] = await Promise.all([
+    enquiryNeedsUpdate
+      ? updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
+          id: enquiry.id,
+          fields: {
+            "Drive Folder URL": folderUrl
+          }
+        })
+      : Promise.resolve(enquiry),
+    quotationNeedsUpdate
+      ? updateRecord<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
+          id: quotation.id,
+          fields: {
+            "Drive Folder URL": folderUrl
+          }
+        })
+      : Promise.resolve(quotation)
+  ]);
+
+  return {
+    enquiry: updatedEnquiry,
+    quotation: updatedQuotation
+  };
+}
+
+function buildBuyerBlock(enquiry: AirtableRecord<EnquiryFields>) {
+  return [
+    enquiry.fields["Lead Name"] || "",
+    enquiry.fields.Company || "",
+    enquiry.fields.Address || "",
+    [enquiry.fields.City || "", enquiry.fields.State || "", enquiry.fields.Pincode || ""]
+      .filter(Boolean)
+      .join(", "),
+    enquiry.fields.Phone || "",
+    enquiry.fields.Email || ""
+  ]
+    .map((value) => String(value).trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
+async function syncEnquiryAddressFromCustomer(
+  enquiry: AirtableRecord<EnquiryFields>,
+  customer: AirtableRecord<CustomerFields>
+) {
+  const needsAddressUpdate =
+    (customer.fields.Address && enquiry.fields.Address !== customer.fields.Address) ||
+    (customer.fields.State && enquiry.fields.State !== customer.fields.State) ||
+    (customer.fields.City && enquiry.fields.City !== customer.fields.City) ||
+    (customer.fields.Pincode && enquiry.fields.Pincode !== customer.fields.Pincode);
+
+  if (!needsAddressUpdate) {
+    return enquiry;
+  }
+
+  const fields = withOptionalNumberField(
+    {
+      Address: customer.fields.Address || enquiry.fields.Address || "",
+      State: customer.fields.State || enquiry.fields.State || "",
+      City: customer.fields.City || enquiry.fields.City || ""
+    },
+    "Pincode",
+    toPincodeNumber(customer.fields.Pincode) ?? toPincodeNumber(enquiry.fields.Pincode)
+  );
+
+  try {
+    return await updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
+      id: enquiry.id,
+      fields
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (!message.toLowerCase().includes("pincode")) {
+      throw error;
+    }
+
+    const retryFields = { ...fields };
+    delete retryFields.Pincode;
+    return updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
+      id: enquiry.id,
+      fields: retryFields
+    });
+  }
+}
+
+async function nextQuotationNumber() {
+  return generateNextQuotationNumber(env.AIRTABLE_QUOTATIONS_TABLE, "Quotation Number");
+}
+
+async function getQuotationById(quotationId: string) {
+  return getRecord<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, quotationId);
+}
+
+async function getCustomerById(customerId: string) {
+  return getRecord<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, customerId);
+}
+
+async function findExistingQuotation(enquiryId: string) {
+  const escaped = enquiryId.replace(/'/g, "\\'");
+  const quotations = await listRecords<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
+    fields: [
+      "Quotation Number",
+      "Reference Number",
+      "Draft File URL",
+      "Status",
+      "Linked Customer",
+      "Linked Enquiry"
+    ],
+    filterByFormula: `{Reference Number}='${escaped}'`,
+    maxRecords: 1
+  });
+
+  return quotations[0] ?? null;
+}
+
+async function syncEnquiryQuotationLinks(
+  enquiry: AirtableRecord<EnquiryFields>,
+  customer: AirtableRecord<CustomerFields>,
+  quotation: AirtableRecord<QuotationFields>
+) {
+  const enquiryNeedsUpdate =
+    enquiry.fields["Linked Customer"]?.[0] !== customer.id ||
+    enquiry.fields.Quotations?.[0] !== quotation.id;
+
+  const quotationNeedsUpdate =
+    quotation.fields["Linked Enquiry"]?.[0] !== enquiry.id ||
+    quotation.fields["Linked Customer"]?.[0] !== customer.id;
+
+  const [updatedEnquiry, updatedQuotation] = await Promise.all([
+    enquiryNeedsUpdate
+      ? updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
+          id: enquiry.id,
+          fields: {
+            "Linked Customer": linkedRecordIds(customer.id),
+            Quotations: linkedRecordIds(quotation.id)
+          }
+        })
+      : Promise.resolve(enquiry),
+    quotationNeedsUpdate
+      ? updateRecord<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
+          id: quotation.id,
+          fields: {
+            "Linked Enquiry": linkedRecordIds(enquiry.id),
+            "Linked Customer": linkedRecordIds(customer.id)
+          }
+        })
+      : Promise.resolve(quotation)
+  ]);
+
+  return {
+    enquiry: updatedEnquiry,
+    quotation: updatedQuotation
+  };
+}
+
+async function ensureQuotationShell(
+  enquiry: AirtableRecord<EnquiryFields>,
+  customer: AirtableRecord<CustomerFields>
+) {
+  const enquiryReference = enquiry.fields["Enquiry ID"] || enquiry.id;
+  const existing = await findExistingQuotation(enquiryReference);
+  if (existing) {
+    const synced = await syncEnquiryQuotationLinks(enquiry, customer, existing);
+    return synced.quotation;
+  }
+
+  const created = await createRecordWithUniqueNumber<QuotationFields, AirtableRecord<QuotationFields>>({
+    tableName: env.AIRTABLE_QUOTATIONS_TABLE,
+    fieldName: "Quotation Number",
+    prefix: "QTN",
+    create: (quotationNumber) =>
+      createRecord<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
+        "Quotation Number": quotationNumber,
+        "Linked Enquiry": linkedRecordIds(enquiry.id),
+        "Linked Customer": linkedRecordIds(customer.id),
+        Status: "Parsed",
+        "Draft Format": "XLSX",
+        "Drive Folder URL": enquiry.fields["Drive Folder URL"] || "",
+        "Reference Number": enquiryReference,
+        "Buyer Block": buildBuyerBlock(enquiry),
+        "Preferred Send Channel": "Email",
+        "Send Quotation": false,
+        "Send Reminder": false,
+        "Mark Accepted": false,
+        "Mark Rejected": false,
+        "Reminder Count": 0
+      })
+  });
+
+  const synced = await syncEnquiryQuotationLinks(enquiry, customer, created);
+  return synced.quotation;
+}
+
+async function listAllLineItems() {
+  return listRecords<QuotationLineItemFields>(env.AIRTABLE_QUOTATION_LINE_ITEMS_TABLE, {
+    fields: [
+      "Quotation",
+      "Description Override",
+      "Qty",
+      "Rate Per Unit",
+      "Pkg & Transport",
+      "GST %",
+      "GST Amount",
+      "Total Amount",
+      "Unit Value"
+    ],
+    maxRecords: 500
+  });
+}
+
+function getLineItemsForQuotation(
+  quotationId: string,
+  lineItems: AirtableRecord<QuotationLineItemFields>[]
+) {
+  return lineItems.filter((item) => item.fields.Quotation?.includes(quotationId));
+}
+
+function mapDraftLineItems(items: AirtableRecord<QuotationLineItemFields>[]) {
+  return items.map((item, index) => ({
+    lineNo: index + 1,
+    description: String(item.fields["Description Override"] || "Quotation item").trim(),
+    qty: Number(item.fields.Qty || 0),
+    rate: Number(item.fields["Rate Per Unit"] || 0),
+    transport: Number(item.fields["Pkg & Transport"] || 0),
+    gstPercent: Number(item.fields["GST %"] || 0),
+    gstAmount: Number(item.fields["GST Amount"] || 0),
+    totalAmount: Number(item.fields["Total Amount"] || 0),
+    unitValue: Number(item.fields["Unit Value"] || 0)
+  }));
+}
+
+async function fileExists(filePath: string) {
+  try {
+    await access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function resolveQuotationSendDocument(
+  quotation: AirtableRecord<QuotationFields>,
+  customer: AirtableRecord<CustomerFields>
+) {
+  const quotationNumber = quotation.fields["Quotation Number"] || (await nextQuotationNumber());
+  const customerFolderName = buildCustomerFolderName(customer);
+  const finalPdf = getStoredDocumentArtifact(customerFolderName, quotationNumber, "pdf");
+  const draftXlsx = getStoredDocumentArtifact(customerFolderName, quotationNumber, "xlsx");
+
+  if (quotation.fields["Final PDF URL"]) {
+    const pdfExists = await fileExists(finalPdf.filePath);
+    return {
+      kind: "pdf" as const,
+      fileName: finalPdf.fileName,
+      publicUrl: pdfExists ? finalPdf.fileUrl : quotation.fields["Final PDF URL"],
+      attachment: pdfExists
+        ? resolveDocumentAttachment(
+            `${path.basename(path.dirname(finalPdf.filePath))}/${finalPdf.fileName}`,
+            finalPdf.fileName,
+            "application/pdf"
+          )
+        : undefined
+    };
+  }
+
+  if (quotation.fields["Draft File URL"]) {
+    const draftExists = await fileExists(draftXlsx.filePath);
+    return {
+      kind: "xlsx" as const,
+      fileName: draftXlsx.fileName,
+      publicUrl: draftExists ? draftXlsx.fileUrl : quotation.fields["Draft File URL"],
+      attachment: draftExists
+        ? resolveDocumentAttachment(
+            `${path.basename(path.dirname(draftXlsx.filePath))}/${draftXlsx.fileName}`,
+            draftXlsx.fileName,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          )
+        : undefined
+    };
+  }
+
+  throw new Error("No quotation document is available to send yet.");
+}
+
+async function loadQuotationDeliveryContext(quotationId: string) {
+  const quotation = await getQuotationById(quotationId);
+  const customerId = quotation.fields["Linked Customer"]?.[0];
+  const enquiryId = quotation.fields["Linked Enquiry"]?.[0];
+
+  if (!customerId || !enquiryId) {
+    throw new Error("Quotation is missing linked customer or enquiry.");
+  }
+
+  const [customer, enquiry] = await Promise.all([
+    getCustomerById(customerId),
+    getRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, enquiryId)
+  ]);
+
+  return {
+    quotation,
+    customer,
+    enquiry
+  };
+}
+
+async function markQuotationSent(
+  quotation: AirtableRecord<QuotationFields>,
+  channel: "Email" | "WhatsApp"
+) {
+  return updateRecord<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
+    id: quotation.id,
+    fields: {
+      Status: "Draft Sent",
+      "Sent Date": new Date().toISOString(),
+      "Preferred Send Channel": channel,
+      "Send Quotation": true
+    }
+  });
+}
+
+async function createDraftForReadyEnquiry(
+  enquiry: AirtableRecord<EnquiryFields>,
+  customer: AirtableRecord<CustomerFields>,
+  quotation: AirtableRecord<QuotationFields>,
+  lineItems: AirtableRecord<QuotationLineItemFields>[]
+) {
+  const folder = await ensureFolder(customer);
+  const draftLineItems = mapDraftLineItems(lineItems);
+  const buyerBlock = quotation.fields["Buyer Block"] || buildBuyerBlock(enquiry);
+  const quotationNumber = quotation.fields["Quotation Number"] || (await nextQuotationNumber());
+
+  const draft = await createDraftDocument({
+    quotationRecordId: quotation.id,
+    quotationNumber,
+    templateCode: customer.fields["Customer Type"] === "Export" ? "myanmar-proforma" : "domestic-standard",
+    draftFormat: "XLSX",
+    customerName: customer.fields["Customer Name"] || enquiry.fields["Lead Name"] || "",
+    customerFolderName: buildCustomerFolderName(customer),
+    company: customer.fields.Company || enquiry.fields.Company || "",
+    buyerBlock,
+    consigneeBlock: "",
+    terms: [
+      "Price includes delivery as agreed in the quotation.",
+      "Dispatch timeline will be finalized during order confirmation."
+    ],
+    driveFolderName: folder.folderUrl,
+    lineItems: draftLineItems
+  });
+
+  let draftFileUrl = draft.fileUrl;
+  if (folder.folderId && isDriveConfigured()) {
+    const upload = await uploadFileToFolder(draft.filePath, `${quotationNumber}.xlsx`, folder.folderId);
+    draftFileUrl = upload.fileUrl;
+  }
+
+  const updatedQuotation = await updateRecord<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
+    id: quotation.id,
+    fields: {
+      "Draft File URL": draftFileUrl,
+      "Drive Folder URL": folder.folderUrl || null,
+      Status: "Ready for Review",
+      "Quotation Number": quotationNumber
+    }
+  });
+
+  await updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
+    id: enquiry.id,
+    fields: {
+      ...enquiryStatusFields("Ready for Review"),
+      "Linked Customer": linkedRecordIds(customer.id),
+      Quotations: linkedRecordIds(quotation.id),
+      "Drive Folder URL": folder.folderUrl || null
+    }
+  });
+
+  return {
+    quotation: updatedQuotation,
+    folder
+  };
+}
+
+export async function refreshDraftForQuotation(quotationId: string) {
+  const quotation = await getQuotationById(quotationId);
+  const customerId = quotation.fields["Linked Customer"]?.[0];
+  const enquiryId = quotation.fields["Linked Enquiry"]?.[0];
+
+  if (!customerId || !enquiryId) {
+    throw new Error("Quotation is missing linked customer or enquiry.");
+  }
+
+  const customer = await getCustomerById(customerId);
+  const enquiry = await getRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, enquiryId);
+  const lineItems = getLineItemsForQuotation(quotation.id, await listAllLineItems());
+
+  if (!lineItems.length) {
+    throw new Error("Quotation line items not found for draft generation.");
+  }
+
+  await updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
+    id: enquiry.id,
+    fields: {
+      ...enquiryStatusFields("Ready for Draft")
+    }
+  });
+
+  await updateRecord<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
+    id: quotation.id,
+    fields: {
+      Status: "Ready for Draft"
+    }
+  });
+
+  return createDraftForReadyEnquiry(enquiry, customer, quotation, lineItems);
+}
+
+export async function generateFinalPdfForQuotation(quotationId: string) {
+  const quotation = await getQuotationById(quotationId);
+  const customerId = quotation.fields["Linked Customer"]?.[0];
+  const enquiryId = quotation.fields["Linked Enquiry"]?.[0];
+
+  if (!customerId || !enquiryId) {
+    throw new Error("Quotation is missing linked customer or enquiry.");
+  }
+
+  const customer = await getCustomerById(customerId);
+  const enquiry = await getRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, enquiryId);
+  const lineItems = getLineItemsForQuotation(quotation.id, await listAllLineItems());
+
+  if (!lineItems.length) {
+    throw new Error("Quotation line items not found for final PDF generation.");
+  }
+
+  const buyerBlock = quotation.fields["Buyer Block"] || buildBuyerBlock(enquiry);
+  const folder = await ensureFolder(customer);
+  const quotationNumber = quotation.fields["Quotation Number"] || (await nextQuotationNumber());
+  const pdf = await createPdfDocument({
+    quotationRecordId: quotation.id,
+    quotationNumber,
+    templateCode: customer.fields["Customer Type"] === "Export" ? "myanmar-proforma" : "domestic-standard",
+    draftFormat: "XLSX",
+    customerName: customer.fields["Customer Name"] || enquiry.fields["Lead Name"] || "",
+    customerFolderName: buildCustomerFolderName(customer),
+    company: customer.fields.Company || enquiry.fields.Company || "",
+    buyerBlock,
+    consigneeBlock: "",
+    terms: [
+      "Final commercial terms approved after internal review.",
+      "Dispatch timeline will be finalized during order confirmation."
+    ],
+    driveFolderName: folder.folderUrl || customer.fields["Drive Folder URL"] || "",
+    lineItems: mapDraftLineItems(lineItems)
+  });
+
+  let finalPdfUrl = pdf.fileUrl;
+  if (folder.folderId && isDriveConfigured()) {
+    const upload = await uploadFileToFolder(pdf.filePath, `${quotationNumber}.pdf`, folder.folderId);
+    finalPdfUrl = upload.fileUrl;
+  }
+
+  const updatedQuotation = await updateRecord<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
+    id: quotation.id,
+    fields: {
+      "Final PDF URL": finalPdfUrl,
+      "Drive Folder URL": folder.folderUrl || quotation.fields["Drive Folder URL"] || null,
+      Status: "Approved",
+      "Quotation Number": quotationNumber
+    }
+  });
+
+  return {
+    quotation: updatedQuotation,
+    pdf: {
+      ...pdf,
+      fileUrl: finalPdfUrl
+    }
+  };
+}
+
+export async function sendQuotationEmail(quotationId: string) {
+  if (!isSmtpConfigured()) {
+    throw new Error("SMTP is not configured yet.");
+  }
+
+  const { quotation, customer } = await loadQuotationDeliveryContext(quotationId);
+  const recipientEmail = String(customer.fields.Email || "").trim();
+
+  if (!recipientEmail) {
+    throw new Error("The linked customer does not have an email address yet.");
+  }
+
+  const document = await resolveQuotationSendDocument(quotation, customer);
+  const customerName = String(customer.fields["Customer Name"] || "Customer").trim() || "Customer";
+  const quotationNumber = quotation.fields["Quotation Number"] || quotation.id;
+
+  await sendMail({
+    to: recipientEmail,
+    subject: `Quotation ${quotationNumber} from Resham Sutra`,
+    text: [
+      `Dear ${customerName},`,
+      "",
+      `Please find quotation ${quotationNumber} attached for your review.`,
+      document.publicUrl ? `Reference link: ${document.publicUrl}` : "",
+      "",
+      "Regards,",
+      "Resham Sutra Sales"
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    attachments: document.attachment ? [document.attachment] : undefined
+  });
+
+  const updatedQuotation = await markQuotationSent(quotation, "Email");
+  return {
+    quotation: updatedQuotation,
+    recipient: recipientEmail,
+    documentUrl: document.publicUrl
+  };
+}
+
+export async function sendQuotationWhatsApp(quotationId: string) {
+  if (!isWhatsAppOutboundConfigured()) {
+    throw new Error("WhatsApp outbound is not configured yet.");
+  }
+
+  const { quotation, customer } = await loadQuotationDeliveryContext(quotationId);
+  const recipientPhone = String(customer.fields.WhatsApp || customer.fields.Phone || "").trim();
+
+  if (!recipientPhone) {
+    throw new Error("The linked customer does not have a WhatsApp or phone number yet.");
+  }
+
+  const document = await resolveQuotationSendDocument(quotation, customer);
+  const quotationNumber = quotation.fields["Quotation Number"] || quotation.id;
+
+  await sendQuotationDocumentOnWhatsApp({
+    to: recipientPhone,
+    documentUrl: document.publicUrl,
+    filename: document.fileName,
+    caption: `Quotation ${quotationNumber} from Resham Sutra`
+  });
+
+  const updatedQuotation = await markQuotationSent(quotation, "WhatsApp");
+  return {
+    quotation: updatedQuotation,
+    recipient: recipientPhone,
+    documentUrl: document.publicUrl
+  };
+}
+
+export async function regenerateQuotationDraft(quotationId: string) {
+  const result = await refreshDraftForQuotation(quotationId);
+
+  return {
+    quotation: result.quotation,
+    draftFileUrl: result.quotation.fields["Draft File URL"] || "",
+    driveFolderUrl: result.quotation.fields["Drive Folder URL"] || ""
+  };
+}
+
+async function syncParsedEnquiriesWithLineItems() {
+  const parsedEnquiries = await listRecords<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
+    fields: [
+      "Enquiry ID",
+      "Lead Name",
+      "Company",
+      "Phone",
+      "Email",
+      "Address",
+      "State",
+      "City",
+      "Pincode",
+      "Parser Status",
+      "Linked Customer",
+      "Quotations",
+      "Drive Folder URL"
+    ],
+    filterByFormula: "{Parser Status}='Parsed'",
+    maxRecords: 100
+  });
+
+  if (!parsedEnquiries.length) {
+    return;
+  }
+
+  const lineItems = await listAllLineItems();
+
+  for (const enquiry of parsedEnquiries) {
+    let customerId = enquiry.fields["Linked Customer"]?.[0] || "";
+    let quotationId = enquiry.fields.Quotations?.[0] || "";
+
+    if (!customerId || !quotationId) {
+      const customer = await ensureCustomer(enquiry);
+      const syncedEnquiry = await syncEnquiryAddressFromCustomer(enquiry, customer);
+      const quotation = await ensureQuotationShell(syncedEnquiry, customer);
+
+      customerId = customer.id;
+      quotationId = quotation.id;
+
+      await updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
+        id: enquiry.id,
+        fields: {
+          ...enquiryStatusFields("Parsed"),
+          "Linked Customer": linkedRecordIds(customerId),
+          Quotations: linkedRecordIds(quotationId)
+        }
+      });
+    }
+
+    if (!quotationId) {
+      continue;
+    }
+
+    const matchingItems = getLineItemsForQuotation(quotationId, lineItems);
+    if (!matchingItems.length) {
+      continue;
+    }
+
+    await updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
+      id: enquiry.id,
+      fields: {
+        ...enquiryStatusFields("Ready for Draft")
+      }
+    });
+
+    await updateRecord<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
+      id: quotationId,
+      fields: {
+        Status: "Ready for Draft"
+      }
+    });
+  }
+}
+
+async function syncNewEnquiriesWithCustomers() {
+  const newEnquiries = await listRecords<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
+    fields: [
+      "Enquiry ID",
+      "Lead Name",
+      "Company",
+      "Phone",
+      "Email",
+      "Address",
+      "State",
+      "City",
+      "Pincode",
+      "Parser Status",
+      "Linked Customer",
+      "Quotations",
+      "Drive Folder URL"
+    ],
+    filterByFormula: "{Parser Status}='New'",
+    maxRecords: 100
+  });
+
+  for (const enquiry of newEnquiries) {
+    const customer = await ensureCustomer(enquiry);
+    const syncedEnquiry = await syncEnquiryAddressFromCustomer(enquiry, customer);
+    const quotation = await ensureQuotationShell(syncedEnquiry, customer);
+
+    await updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
+      id: enquiry.id,
+      fields: {
+        ...enquiryStatusFields("Parsed"),
+        "Linked Customer": linkedRecordIds(customer.id),
+        Quotations: linkedRecordIds(quotation.id)
+      }
+    });
+  }
+}
+
+export async function createCustomerForEnquiry(enquiryId: string) {
+  const enquiry = await getRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, enquiryId);
+  const customer = await ensureCustomer(enquiry);
+  const syncedEnquiry = await syncEnquiryAddressFromCustomer(enquiry, customer);
+  const quotation = await ensureQuotationShell(syncedEnquiry, customer);
+  const folder = await ensureFolder(customer);
+
+  const updatedEnquiry = await updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
+    id: syncedEnquiry.id,
+    fields: {
+      ...enquiryStatusFields("Parsed"),
+      "Linked Customer": linkedRecordIds(customer.id),
+      Quotations: linkedRecordIds(quotation.id),
+      "Drive Folder URL": folder.folderUrl || null
+    }
+  });
+
+  const updatedQuotation = await updateRecord<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
+    id: quotation.id,
+    fields: {
+      "Linked Enquiry": linkedRecordIds(updatedEnquiry.id),
+      "Linked Customer": linkedRecordIds(customer.id),
+      "Drive Folder URL": folder.folderUrl || null
+    }
+  });
+
+  const syncedRecords = await syncFolderLinks(updatedEnquiry, customer, updatedQuotation, folder.folderUrl);
+
+  return {
+    enquiry: syncedRecords.enquiry,
+    customer,
+    quotation: syncedRecords.quotation,
+    folder
+  };
+}
+
+export async function processPendingEnquiries() {
+  await syncNewEnquiriesWithCustomers();
+  await syncParsedEnquiriesWithLineItems();
+
+  const readyEnquiries = await listRecords<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
+    fields: [
+      "Enquiry ID",
+      "Lead Name",
+      "Company",
+      "Phone",
+      "Email",
+      "Address",
+      "State",
+      "City",
+      "Pincode",
+      "Parser Status",
+      "Linked Customer",
+      "Quotations",
+      "Drive Folder URL"
+    ],
+    filterByFormula:
+      "AND({Parser Status}='Ready for Draft', {Linked Customer}!=BLANK(), {Quotations}!=BLANK())",
+    maxRecords: 100
+  });
+
+  const lineItems = await listAllLineItems();
+  const results: ProcessingResult[] = [];
+
+  for (const enquiry of readyEnquiries) {
+    try {
+      const customerId = enquiry.fields["Linked Customer"]?.[0];
+      const quotationId = enquiry.fields.Quotations?.[0];
+
+      if (!customerId || !quotationId) {
+        results.push({
+          enquiryRecordId: enquiry.id,
+          enquiryId: enquiry.fields["Enquiry ID"] || enquiry.id,
+          status: "skipped",
+          message: "Missing linked customer or quotation"
+        });
+        continue;
+      }
+
+      const matchingItems = getLineItemsForQuotation(quotationId, lineItems);
+      if (!matchingItems.length) {
+        results.push({
+          enquiryRecordId: enquiry.id,
+          enquiryId: enquiry.fields["Enquiry ID"] || enquiry.id,
+          status: "skipped",
+          message: "Quotation line items not found"
+        });
+        continue;
+      }
+
+      const customer = await getCustomerById(customerId);
+      const quotation = await getQuotationById(quotationId);
+      const { folder } = await createDraftForReadyEnquiry(enquiry, customer, quotation, matchingItems);
+
+      results.push({
+        enquiryRecordId: enquiry.id,
+        enquiryId: enquiry.fields["Enquiry ID"] || enquiry.id,
+        customerRecordId: customer.id,
+        quotationRecordId: quotation.id,
+        driveFolderUrl: folder.folderUrl,
+        status: "processed"
+      });
+    } catch (error) {
+      results.push({
+        enquiryRecordId: enquiry.id,
+        enquiryId: enquiry.fields["Enquiry ID"] || enquiry.id,
+        status: "error",
+        message: error instanceof Error ? error.message : "Unknown processing error"
+      });
+    }
+  }
+
+  return {
+    processedCount: results.filter((result) => result.status === "processed").length,
+    errorCount: results.filter((result) => result.status === "error").length,
+    results
+  };
+}

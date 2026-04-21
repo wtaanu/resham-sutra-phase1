@@ -1,0 +1,129 @@
+{
+  "name": "01 Inbound Enquiry Capture",
+  "nodes": [
+    {
+      "id": "Webhook_WhatsApp",
+      "name": "WhatsApp Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-900, 200],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "whatsapp/inbound",
+        "responseMode": "onReceived",
+        "options": {}
+      }
+    },
+    {
+      "id": "Fn_Normalize",
+      "name": "Normalize Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-650, 200],
+      "parameters": {
+        "language": "javaScript",
+        "jsCode": "// Extract message text, receiving number, and sender metadata from Meta webhook payload."
+      }
+    },
+    {
+      "id": "Fn_Parse",
+      "name": "Parse Enquiry",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-400, 200],
+      "parameters": {
+        "language": "javaScript",
+        "jsCode": "// Apply parser heuristics for name, phone, company, product, location, and requested asset."
+      }
+    },
+    {
+      "id": "Airtable_UpsertEnquiry",
+      "name": "Upsert Airtable Enquiry",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2,
+      "position": [-140, 120],
+      "parameters": {
+        "operation": "create",
+        "base": "={{$env.AIRTABLE_BASE_ID}}",
+        "table": "Enquiries"
+      }
+    },
+    {
+      "id": "Airtable_UpsertCustomer",
+      "name": "Upsert Airtable Customer",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2,
+      "position": [-140, 280],
+      "parameters": {
+        "operation": "create",
+        "base": "={{$env.AIRTABLE_BASE_ID}}",
+        "table": "Customers"
+      }
+    },
+    {
+      "id": "Drive_CreateFolder",
+      "name": "Create Drive Folder",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [120, 120],
+      "parameters": {
+        "resource": "folder",
+        "operation": "create"
+      }
+    },
+    {
+      "id": "Zoho_Upsert",
+      "name": "Create Or Update Zoho",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [120, 280],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.ZOHO_BIGIN_UPSERT_URL}}"
+      }
+    },
+    {
+      "id": "Respond_OK",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [360, 200],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\"status\":\"received\"}"
+      }
+    }
+  ],
+  "connections": {
+    "WhatsApp Webhook": {
+      "main": [[{ "node": "Normalize Message", "type": "main", "index": 0 }]]
+    },
+    "Normalize Message": {
+      "main": [[{ "node": "Parse Enquiry", "type": "main", "index": 0 }]]
+    },
+    "Parse Enquiry": {
+      "main": [
+        [
+          { "node": "Upsert Airtable Enquiry", "type": "main", "index": 0 },
+          { "node": "Upsert Airtable Customer", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Upsert Airtable Enquiry": {
+      "main": [[{ "node": "Create Drive Folder", "type": "main", "index": 0 }]]
+    },
+    "Upsert Airtable Customer": {
+      "main": [[{ "node": "Create Or Update Zoho", "type": "main", "index": 0 }]]
+    },
+    "Create Drive Folder": {
+      "main": [[{ "node": "Respond OK", "type": "main", "index": 0 }]]
+    },
+    "Create Or Update Zoho": {
+      "main": [[{ "node": "Respond OK", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "settings": {},
+  "staticData": null,
+  "tags": ["resham-sutra", "phase-1", "whatsapp"]
+}

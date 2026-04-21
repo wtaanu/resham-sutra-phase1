@@ -1,0 +1,145 @@
+{
+  "name": "03 Approve Generate PDF Send",
+  "nodes": [
+    {
+      "id": "Trigger_SendQuotation",
+      "name": "Airtable Send Quotation Trigger",
+      "type": "n8n-nodes-base.airtableTrigger",
+      "typeVersion": 1,
+      "position": [-980, 240],
+      "parameters": {
+        "base": "={{$env.AIRTABLE_BASE_ID}}",
+        "table": "Quotations"
+      }
+    },
+    {
+      "id": "Airtable_GetLines",
+      "name": "Fetch Quotation Lines",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2,
+      "position": [-740, 240],
+      "parameters": {
+        "operation": "list",
+        "base": "={{$env.AIRTABLE_BASE_ID}}",
+        "table": "Quotation Line Items"
+      }
+    },
+    {
+      "id": "Fn_BuildDraftPayload",
+      "name": "Build Draft Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-500, 240],
+      "parameters": {
+        "language": "javaScript",
+        "jsCode": "// Assemble quotation header, line items, template choice, and buyer/consignee blocks."
+      }
+    },
+    {
+      "id": "Http_GenerateDraft",
+      "name": "Generate Draft XLSX DOCX",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [-240, 160],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.DOCUMENT_SERVICE_URL}}/draft"
+      }
+    },
+    {
+      "id": "Http_GeneratePdf",
+      "name": "Generate Final PDF",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [-240, 320],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.DOCUMENT_SERVICE_URL}}/pdf"
+      }
+    },
+    {
+      "id": "Drive_UploadFiles",
+      "name": "Upload To Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [20, 240],
+      "parameters": {
+        "resource": "file",
+        "operation": "upload"
+      }
+    },
+    {
+      "id": "WhatsApp_Send",
+      "name": "Send WhatsApp Quote",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [280, 160],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.META_WHATSAPP_SEND_URL}}"
+      }
+    },
+    {
+      "id": "Email_Send",
+      "name": "Send Email Quote",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [280, 320],
+      "parameters": {
+        "subject": "Quotation from Resham Sutra"
+      }
+    },
+    {
+      "id": "Airtable_UpdateStatus",
+      "name": "Update Quotation Status",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2,
+      "position": [540, 240],
+      "parameters": {
+        "operation": "update",
+        "base": "={{$env.AIRTABLE_BASE_ID}}",
+        "table": "Quotations"
+      }
+    }
+  ],
+  "connections": {
+    "Airtable Send Quotation Trigger": {
+      "main": [[{ "node": "Fetch Quotation Lines", "type": "main", "index": 0 }]]
+    },
+    "Fetch Quotation Lines": {
+      "main": [[{ "node": "Build Draft Payload", "type": "main", "index": 0 }]]
+    },
+    "Build Draft Payload": {
+      "main": [
+        [
+          { "node": "Generate Draft XLSX DOCX", "type": "main", "index": 0 },
+          { "node": "Generate Final PDF", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Generate Draft XLSX DOCX": {
+      "main": [[{ "node": "Upload To Drive", "type": "main", "index": 0 }]]
+    },
+    "Generate Final PDF": {
+      "main": [[{ "node": "Upload To Drive", "type": "main", "index": 0 }]]
+    },
+    "Upload To Drive": {
+      "main": [
+        [
+          { "node": "Send WhatsApp Quote", "type": "main", "index": 0 },
+          { "node": "Send Email Quote", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Send WhatsApp Quote": {
+      "main": [[{ "node": "Update Quotation Status", "type": "main", "index": 0 }]]
+    },
+    "Send Email Quote": {
+      "main": [[{ "node": "Update Quotation Status", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "settings": {},
+  "staticData": null,
+  "tags": ["resham-sutra", "phase-1", "approval", "pdf"]
+}

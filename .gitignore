@@ -1,0 +1,14 @@
+node_modules/
+dist/
+build/
+.env
+.env.local
+.DS_Store
+coverage/
+npm-debug.log*
+package-lock.json
+apps/web/.vite/
+apps/api/dist/
+data/mysql/
+*.bak
+

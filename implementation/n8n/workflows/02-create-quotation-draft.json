@@ -1,0 +1,86 @@
+{
+  "name": "02 Create Quotation Draft",
+  "nodes": [
+    {
+      "id": "Trigger_AirtableReady",
+      "name": "Airtable Ready For Draft",
+      "type": "n8n-nodes-base.airtableTrigger",
+      "typeVersion": 1,
+      "position": [-840, 220],
+      "parameters": {
+        "base": "={{$env.AIRTABLE_BASE_ID}}",
+        "table": "Enquiries"
+      }
+    },
+    {
+      "id": "Fn_SelectTemplate",
+      "name": "Select Template",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-600, 220],
+      "parameters": {
+        "language": "javaScript",
+        "jsCode": "// Choose domestic-standard or myanmar-proforma based on customer type / destination."
+      }
+    },
+    {
+      "id": "Airtable_CreateQuotation",
+      "name": "Create Quotation Header",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2,
+      "position": [-340, 140],
+      "parameters": {
+        "operation": "create",
+        "base": "={{$env.AIRTABLE_BASE_ID}}",
+        "table": "Quotations"
+      }
+    },
+    {
+      "id": "Airtable_CreateLines",
+      "name": "Create Line Items",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2,
+      "position": [-340, 300],
+      "parameters": {
+        "operation": "create",
+        "base": "={{$env.AIRTABLE_BASE_ID}}",
+        "table": "Quotation Line Items"
+      }
+    },
+    {
+      "id": "Airtable_CreateDocJob",
+      "name": "Queue Draft Job",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2,
+      "position": [-60, 220],
+      "parameters": {
+        "operation": "create",
+        "base": "={{$env.AIRTABLE_BASE_ID}}",
+        "table": "Document Jobs"
+      }
+    }
+  ],
+  "connections": {
+    "Airtable Ready For Draft": {
+      "main": [[{ "node": "Select Template", "type": "main", "index": 0 }]]
+    },
+    "Select Template": {
+      "main": [
+        [
+          { "node": "Create Quotation Header", "type": "main", "index": 0 },
+          { "node": "Create Line Items", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Create Quotation Header": {
+      "main": [[{ "node": "Queue Draft Job", "type": "main", "index": 0 }]]
+    },
+    "Create Line Items": {
+      "main": [[{ "node": "Queue Draft Job", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "settings": {},
+  "staticData": null,
+  "tags": ["resham-sutra", "phase-1", "quotation-draft"]
+}

@@ -1,0 +1,146 @@
+{
+  "name": "04 Reminders And Conversion",
+  "nodes": [
+    {
+      "id": "Cron_Daily",
+      "name": "Daily Reminder Scan",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [-980, 120],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 10 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "Trigger_ManualReminder",
+      "name": "Manual Reminder Trigger",
+      "type": "n8n-nodes-base.airtableTrigger",
+      "typeVersion": 1,
+      "position": [-980, 340],
+      "parameters": {
+        "base": "={{$env.AIRTABLE_BASE_ID}}",
+        "table": "Quotations"
+      }
+    },
+    {
+      "id": "Airtable_FilterDue",
+      "name": "Fetch Due Quotations",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2,
+      "position": [-720, 220],
+      "parameters": {
+        "operation": "list",
+        "base": "={{$env.AIRTABLE_BASE_ID}}",
+        "table": "Quotations"
+      }
+    },
+    {
+      "id": "WhatsApp_Reminder",
+      "name": "Send WhatsApp Reminder",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [-440, 140],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.META_WHATSAPP_SEND_URL}}"
+      }
+    },
+    {
+      "id": "Email_Reminder",
+      "name": "Send Email Reminder",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [-440, 300],
+      "parameters": {
+        "subject": "Reminder: quotation from Resham Sutra"
+      }
+    },
+    {
+      "id": "Airtable_UpdateReminder",
+      "name": "Update Reminder Counters",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2,
+      "position": [-160, 220],
+      "parameters": {
+        "operation": "update",
+        "base": "={{$env.AIRTABLE_BASE_ID}}",
+        "table": "Quotations"
+      }
+    },
+    {
+      "id": "Trigger_Accepted",
+      "name": "Accepted Trigger",
+      "type": "n8n-nodes-base.airtableTrigger",
+      "typeVersion": 1,
+      "position": [120, 220],
+      "parameters": {
+        "base": "={{$env.AIRTABLE_BASE_ID}}",
+        "table": "Quotations"
+      }
+    },
+    {
+      "id": "Airtable_CreateOrder",
+      "name": "Create Order",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2,
+      "position": [380, 180],
+      "parameters": {
+        "operation": "create",
+        "base": "={{$env.AIRTABLE_BASE_ID}}",
+        "table": "Orders"
+      }
+    },
+    {
+      "id": "Zoho_UpdateDeal",
+      "name": "Update Zoho Deal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [380, 320],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.ZOHO_BIGIN_DEAL_UPDATE_URL}}"
+      }
+    }
+  ],
+  "connections": {
+    "Daily Reminder Scan": {
+      "main": [[{ "node": "Fetch Due Quotations", "type": "main", "index": 0 }]]
+    },
+    "Manual Reminder Trigger": {
+      "main": [[{ "node": "Fetch Due Quotations", "type": "main", "index": 0 }]]
+    },
+    "Fetch Due Quotations": {
+      "main": [
+        [
+          { "node": "Send WhatsApp Reminder", "type": "main", "index": 0 },
+          { "node": "Send Email Reminder", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Send WhatsApp Reminder": {
+      "main": [[{ "node": "Update Reminder Counters", "type": "main", "index": 0 }]]
+    },
+    "Send Email Reminder": {
+      "main": [[{ "node": "Update Reminder Counters", "type": "main", "index": 0 }]]
+    },
+    "Accepted Trigger": {
+      "main": [
+        [
+          { "node": "Create Order", "type": "main", "index": 0 },
+          { "node": "Update Zoho Deal", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {},
+  "staticData": null,
+  "tags": ["resham-sutra", "phase-1", "reminders", "conversion"]
+}
