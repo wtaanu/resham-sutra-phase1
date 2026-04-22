@@ -38,6 +38,8 @@ services:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
+      args:
+        VITE_API_URL: ${PUBLIC_WEB_API_URL:-https://api.reshamsutra.com}
     container_name: resham-web
     restart: unless-stopped
     env_file:
