@@ -33,6 +33,100 @@ body {
   background: #f7f7f5;
 }
 
+.auth-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(circle at top left, rgba(253, 187, 18, 0.24), transparent 28%),
+    linear-gradient(180deg, #fffef9 0%, #f7f7f5 100%);
+}
+
+.auth-card {
+  width: min(460px, 100%);
+  padding: 28px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 28px 80px rgba(19, 28, 45, 0.12);
+}
+
+.auth-card h1 {
+  margin: 0;
+  font-size: 1.5rem;
+  line-height: 1.05;
+}
+
+.auth-card-loading {
+  text-align: center;
+}
+
+.auth-logo {
+  width: 72px;
+  height: 72px;
+  object-fit: contain;
+  border-radius: 18px;
+  background: rgba(253, 187, 18, 0.14);
+  padding: 8px;
+  margin-bottom: 16px;
+}
+
+.auth-copy {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.auth-banner {
+  margin: 18px 0 0;
+}
+
+.auth-form {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.auth-form label {
+  display: grid;
+  gap: 6px;
+}
+
+.auth-form span {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.auth-form input {
+  width: 100%;
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.auth-error {
+  margin: 12px 0 0;
+  color: var(--danger);
+  font-size: 0.78rem;
+}
+
+.auth-actions {
+  margin-top: 18px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.auth-actions span {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
 button,
 input,
 textarea,
@@ -164,9 +258,62 @@ a:hover {
   min-height: 52px;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   padding: 8px 22px;
   border-bottom: 1px solid #ececec;
   background: #ffffff;
+}
+
+.workspace-tools {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.logout-button {
+  min-height: 32px;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #ffffff;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.profile-button {
+  width: 34px;
+  height: 34px;
+  border: 1px solid #c6d4ec;
+  border-radius: 999px;
+  background: #eef4ff;
+  color: var(--accent);
+  font-size: 0.74rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.profile-card {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 220px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 18px 36px rgba(20, 28, 43, 0.12);
+}
+
+.profile-card strong,
+.profile-card span {
+  display: block;
+}
+
+.profile-card span {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.74rem;
 }
 
 .breadcrumbs {
@@ -978,6 +1125,12 @@ td span {
 
   .workspace-header {
     padding: 8px 14px;
+  }
+
+  .auth-actions,
+  .workspace-tools {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .hero-card,

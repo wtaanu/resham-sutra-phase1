@@ -142,6 +142,17 @@ type ActionState = {
   message: string;
 };
 
+type AuthUser = {
+  id: string;
+  name: string;
+  email: string;
+};
+
+type LoginFormState = {
+  email: string;
+  password: string;
+};
+
 type EntryMode = "enquiry" | "lineItems" | "productDocuments" | "enquiryDocuments" | null;
 
 type EnquiryFormState = {
@@ -560,6 +571,15 @@ function DonutChart({
 }
 
 export default function App() {
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authError, setAuthError] = useState("");
+  const [loginForm, setLoginForm] = useState<LoginFormState>({
+    email: "",
+    password: ""
+  });
+  const [authActionState, setAuthActionState] = useState<ActionState | null>(null);
+  const [profileOpen, setProfileOpen] = useState(false);
   const [operations, setOperations] = useState<OperationsResponse | null>(null);
   const [activeView, setActiveView] = useState<ViewKey>("dashboard");
   const [loading, setLoading] = useState(true);
@@ -578,8 +598,150 @@ export default function App() {
   const [selectedEnquiryId, setSelectedEnquiryId] = useState("");
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
   const entryModalRef = useRef<HTMLElement | null>(null);
+  const profileMenuRef = useRef<HTMLDivElement | null>(null);
+
+  async function apiFetch(input: string, init?: RequestInit) {
+    const response = await fetch(input, {
+      ...init,
+      credentials: "include",
+      headers: {
+        ...(init?.headers ?? {})
+      }
+    });
+
+    if (response.status === 401) {
+      setCurrentUser(null);
+      setOperations(null);
+      setProfileOpen(false);
+      setActionState(null);
+      setEntryMode(null);
+      throw new Error("Your session expired. Please sign in again.");
+    }
+
+    return response;
+  }
+
+  async function loadSession() {
+    try {
+      setAuthLoading(true);
+      const response = await fetch(`${apiUrl}/api/auth/session`, {
+        credentials: "include"
+      });
+
+      if (!response.ok) {
+        setCurrentUser(null);
+        return;
+      }
+
+      const payload = (await response.json()) as { user: AuthUser };
+      setCurrentUser(payload.user);
+    } catch {
+      setCurrentUser(null);
+    } finally {
+      setAuthLoading(false);
+    }
+  }
+
+  async function handleLogin() {
+    try {
+      setAuthError("");
+      setAuthActionState({
+        key: "auth-login",
+        label: "Sign In",
+        status: "loading",
+        message: "Signing you into ReshamSutra..."
+      });
+
+      const response = await fetch(`${apiUrl}/api/auth/login`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(loginForm)
+      });
+
+      const payload = (await response.json()) as { message?: string; user?: AuthUser };
+      if (!response.ok || !payload.user) {
+        throw new Error(payload.message || "Invalid email or password.");
+      }
+
+      setCurrentUser(payload.user);
+      setLoginForm({
+        email: payload.user.email,
+        password: ""
+      });
+      setAuthActionState({
+        key: "auth-login",
+        label: "Sign In",
+        status: "success",
+        message: "Signed in successfully."
+      });
+    } catch (loginError) {
+      const message = loginError instanceof Error ? loginError.message : "Failed to sign in";
+      setAuthError(message);
+      setAuthActionState({
+        key: "auth-login",
+        label: "Sign In",
+        status: "error",
+        message
+      });
+    }
+  }
+
+  async function handleLogout() {
+    try {
+      setAuthActionState({
+        key: "auth-logout",
+        label: "Logout",
+        status: "loading",
+        message: "Signing you out..."
+      });
+
+      await fetch(`${apiUrl}/api/auth/logout`, {
+        method: "POST",
+        credentials: "include"
+      });
+    } finally {
+      setCurrentUser(null);
+      setOperations(null);
+      setProfileOpen(false);
+      setActionState(null);
+      setEntryMode(null);
+      setError("");
+      setLoading(false);
+      setAuthActionState({
+        key: "auth-logout",
+        label: "Logout",
+        status: "success",
+        message: "You have been signed out."
+      });
+    }
+  }
 
   useEffect(() => {
+    void loadSession();
+  }, []);
+
+  useEffect(() => {
+    function handlePointerDown(event: MouseEvent) {
+      if (!profileMenuRef.current?.contains(event.target as Node)) {
+        setProfileOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (authLoading || !currentUser) {
+      setLoading(false);
+      return;
+    }
+
     let cancelled = false;
 
     async function loadOperations(isBackgroundRefresh = false) {
@@ -589,7 +751,7 @@ export default function App() {
         }
         setError("");
 
-        const response = await fetch(`${apiUrl}/api/operations`);
+        const response = await apiFetch(`${apiUrl}/api/operations`);
         if (!response.ok) {
           throw new Error(`Operations API returned ${response.status}`);
         }
@@ -600,7 +762,12 @@ export default function App() {
         }
       } catch (loadError) {
         if (!cancelled) {
-          setError(loadError instanceof Error ? loadError.message : "Failed to load dashboard");
+          const message =
+            loadError instanceof Error ? loadError.message : "Failed to load dashboard";
+          setError(message);
+          if (message.includes("sign in again")) {
+            setAuthError(message);
+          }
         }
       } finally {
         if (!cancelled && !isBackgroundRefresh) {
@@ -626,7 +793,7 @@ export default function App() {
       window.clearInterval(intervalId);
       window.removeEventListener("focus", handleFocus);
     };
-  }, []);
+  }, [authLoading, currentUser]);
 
   useEffect(() => {
     if (!destinationSameAsMain) {
@@ -649,11 +816,15 @@ export default function App() {
   ]);
 
   async function refreshOperations(isBackgroundRefresh = true) {
+    if (!currentUser) {
+      return;
+    }
+
     try {
       if (!isBackgroundRefresh) {
         setLoading(true);
       }
-      const response = await fetch(`${apiUrl}/api/operations`);
+      const response = await apiFetch(`${apiUrl}/api/operations`);
       if (!response.ok) {
         throw new Error(`Operations API returned ${response.status}`);
       }
@@ -661,8 +832,13 @@ export default function App() {
       setOperations(data);
       setError("");
     } catch (loadError) {
+      const message =
+        loadError instanceof Error ? loadError.message : "Failed to refresh dashboard";
       if (!operations) {
-        setError(loadError instanceof Error ? loadError.message : "Failed to refresh dashboard");
+        setError(message);
+      }
+      if (message.includes("sign in again")) {
+        setAuthError(message);
       }
     } finally {
       if (!isBackgroundRefresh) {
@@ -680,7 +856,7 @@ export default function App() {
         message: "Creating customer and quotation shell..."
       });
 
-      const response = await fetch(`${apiUrl}/api/actions/enquiries/${enquiryId}/create-customer`, {
+      const response = await apiFetch(`${apiUrl}/api/actions/enquiries/${enquiryId}/create-customer`, {
         method: "POST"
       });
 
@@ -717,7 +893,7 @@ export default function App() {
         message: "Creating final quotation PDF..."
       });
 
-      const response = await fetch(`${apiUrl}/api/actions/quotations/${quotationId}/generate-final-pdf`, {
+      const response = await apiFetch(`${apiUrl}/api/actions/quotations/${quotationId}/generate-final-pdf`, {
         method: "POST"
       });
 
@@ -761,7 +937,7 @@ export default function App() {
             : "Sending quotation on WhatsApp..."
       });
 
-      const response = await fetch(`${apiUrl}/api/actions/quotations/${quotationId}/send-${channel}`, {
+      const response = await apiFetch(`${apiUrl}/api/actions/quotations/${quotationId}/send-${channel}`, {
         method: "POST"
       });
 
@@ -804,7 +980,7 @@ export default function App() {
         message: "Refreshing quotation draft and syncing files..."
       });
 
-      const response = await fetch(`${apiUrl}/api/actions/quotations/${quotationId}/regenerate-draft`, {
+      const response = await apiFetch(`${apiUrl}/api/actions/quotations/${quotationId}/regenerate-draft`, {
         method: "POST"
       });
 
@@ -987,7 +1163,7 @@ export default function App() {
         message: "Saving enquiry to Airtable..."
       });
 
-      const response = await fetch(`${apiUrl}/api/portal/enquiries`, {
+      const response = await apiFetch(`${apiUrl}/api/portal/enquiries`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -1129,7 +1305,7 @@ export default function App() {
         message: "Creating quotation line items..."
       });
 
-      const response = await fetch(`${apiUrl}/api/portal/quotation-line-items`, {
+      const response = await apiFetch(`${apiUrl}/api/portal/quotation-line-items`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -1199,7 +1375,7 @@ export default function App() {
         }))
       );
 
-      const response = await fetch(`${apiUrl}/api/portal/products/${selectedProductId}/documents`, {
+      const response = await apiFetch(`${apiUrl}/api/portal/products/${selectedProductId}/documents`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -1251,7 +1427,7 @@ export default function App() {
         message: "Preparing product documents for email and WhatsApp..."
       });
 
-      const response = await fetch(`${apiUrl}/api/actions/enquiries/${selectedEnquiryId}/send-product-documents`, {
+      const response = await apiFetch(`${apiUrl}/api/actions/enquiries/${selectedEnquiryId}/send-product-documents`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -2230,6 +2406,12 @@ export default function App() {
     const emailActionKey = `quotation-send-email-${quotation.id}`;
     const whatsappActionKey = `quotation-send-whatsapp-${quotation.id}`;
     const regenerateActionKey = `quotation-regenerate-${quotation.id}`;
+    const isEmailLoading =
+      actionState?.key === emailActionKey && actionState.status === "loading";
+    const isWhatsAppLoading =
+      actionState?.key === whatsappActionKey && actionState.status === "loading";
+    const isRegenerateLoading =
+      actionState?.key === regenerateActionKey && actionState.status === "loading";
 
     if (quotation.status === "Parsed") {
       return (
@@ -2260,18 +2442,18 @@ export default function App() {
               type="button"
               title="Send quotation on email"
               onClick={() => void handleSendQuotation(quotation.id, "email")}
-              disabled={actionState?.key === emailActionKey && actionState.status === "loading"}
+              disabled={isEmailLoading}
             >
-              @
+              {isEmailLoading ? "..." : "@"}
             </button>
             <button
               className="icon-action-button whatsapp"
               type="button"
               title="Send quotation on WhatsApp"
               onClick={() => void handleSendQuotation(quotation.id, "whatsapp")}
-              disabled={actionState?.key === whatsappActionKey && actionState.status === "loading"}
+              disabled={isWhatsAppLoading}
             >
-              WA
+              {isWhatsAppLoading ? "..." : "WA"}
             </button>
           </div>
           {quotation.driveFolderUrl ? (
@@ -2298,27 +2480,27 @@ export default function App() {
               type="button"
               title="Send quotation again on email"
               onClick={() => void handleSendQuotation(quotation.id, "email")}
-              disabled={actionState?.key === emailActionKey && actionState.status === "loading"}
+              disabled={isEmailLoading}
             >
-              @
+              {isEmailLoading ? "..." : "@"}
             </button>
             <button
               className="icon-action-button whatsapp"
               type="button"
               title="Send quotation again on WhatsApp"
               onClick={() => void handleSendQuotation(quotation.id, "whatsapp")}
-              disabled={actionState?.key === whatsappActionKey && actionState.status === "loading"}
+              disabled={isWhatsAppLoading}
             >
-              WA
+              {isWhatsAppLoading ? "..." : "WA"}
             </button>
             <button
               className="icon-action-button neutral"
               type="button"
               title="Regenerate quotation draft"
               onClick={() => void handleRegenerateQuotationDraft(quotation.id)}
-              disabled={actionState?.key === regenerateActionKey && actionState.status === "loading"}
+              disabled={isRegenerateLoading}
             >
-              R
+              {isRegenerateLoading ? "..." : "R"}
             </button>
           </div>
           {quotation.driveFolderUrl ? (
@@ -2379,77 +2561,90 @@ export default function App() {
     const filteredQuotations = operations.quotations.filter((quotation) =>
       statuses.length ? statuses.includes(quotation.status) : true
     );
+    const quotationActionState =
+      actionState &&
+      (actionState.key.startsWith("quotation-send-") ||
+        actionState.key.startsWith("quotation-regenerate-") ||
+        actionState.key.startsWith("pdf-generate-"))
+        ? actionState
+        : null;
 
     return (
-      <PaginatedTable
-        eyebrow="Quotations"
-        title={title}
-        subtitle={subtitle}
-        rows={filteredQuotations}
-        columns={
-          <>
-            <th>Quotation</th>
-            <th>Customer</th>
-            <th>Status</th>
-            <th>Channel</th>
-            <th>Items</th>
-            <th>Draft</th>
-            <th>Final PDF</th>
-            <th>Actions</th>
-          </>
-        }
-        emptyTitle="No quotations in this section"
-        emptyBody="As the workflow progresses, matching quotation records will appear here."
-        renderRow={(quotation) => (
-          <tr key={quotation.id}>
-            <td>
-              <strong>{quotation.quotationNumber}</strong>
-              <span>{enquiryLookup.get(quotation.linkedEnquiryId)?.enquiryId || "No enquiry link"}</span>
-            </td>
-            <td>{customerLookup.get(quotation.linkedCustomerId)?.customerName || "Not linked"}</td>
-            <td>
-              <span className={`status-chip ${statusTone(quotation.status)}`}>
-                {quotation.status || "Draft"}
-              </span>
-            </td>
-            <td>{quotation.preferredSendChannel || "Email"}</td>
-            <td>{quotation.lineItemCount || 0}</td>
-            <td>
-              {quotation.draftFileUrl ? (
-                <a
-                  className="action-inline-link"
-                  href={quotation.draftFileUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  onClick={() => handleLinkAction(`draft-${quotation.id}`, "Open Draft")}
-                >
-                  Open draft
-                </a>
-              ) : (
-                "Not generated"
-              )}
-            </td>
-            <td>
-              {quotation.finalPdfUrl ? (
-                <a
-                  className="action-inline-link"
-                  href={quotation.finalPdfUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  onClick={() => handleLinkAction(`pdf-${quotation.id}`, "Open PDF")}
-                >
-                  Open PDF
-                </a>
-              ) : (
-                "Pending"
-              )}
-            </td>
-            <td>
-              {renderQuotationActionButtons(quotation)}
-            </td>
-          </tr>
-        )}
-      />
+      <>
+        {quotationActionState ? (
+          <section className={`action-banner ${quotationActionState.status}`}>
+            <strong>{quotationActionState.label}</strong>
+            <span>{quotationActionState.message}</span>
+          </section>
+        ) : null}
+        <PaginatedTable
+          eyebrow="Quotations"
+          title={title}
+          subtitle={subtitle}
+          rows={filteredQuotations}
+          columns={
+            <>
+              <th>Quotation</th>
+              <th>Customer</th>
+              <th>Status</th>
+              <th>Channel</th>
+              <th>Items</th>
+              <th>Draft</th>
+              <th>Final PDF</th>
+              <th>Actions</th>
+            </>
+          }
+          emptyTitle="No quotations in this section"
+          emptyBody="As the workflow progresses, matching quotation records will appear here."
+          renderRow={(quotation) => (
+            <tr key={quotation.id}>
+              <td>
+                <strong>{quotation.quotationNumber}</strong>
+                <span>{enquiryLookup.get(quotation.linkedEnquiryId)?.enquiryId || "No enquiry link"}</span>
+              </td>
+              <td>{customerLookup.get(quotation.linkedCustomerId)?.customerName || "Not linked"}</td>
+              <td>
+                <span className={`status-chip ${statusTone(quotation.status)}`}>
+                  {quotation.status || "Draft"}
+                </span>
+              </td>
+              <td>{quotation.preferredSendChannel || "Email"}</td>
+              <td>{quotation.lineItemCount || 0}</td>
+              <td>
+                {quotation.draftFileUrl ? (
+                  <a
+                    className="action-inline-link"
+                    href={quotation.draftFileUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={() => handleLinkAction(`draft-${quotation.id}`, "Open Draft")}
+                  >
+                    Open draft
+                  </a>
+                ) : (
+                  "Not generated"
+                )}
+              </td>
+              <td>
+                {quotation.finalPdfUrl ? (
+                  <a
+                    className="action-inline-link"
+                    href={quotation.finalPdfUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={() => handleLinkAction(`pdf-${quotation.id}`, "Open PDF")}
+                  >
+                    Open PDF
+                  </a>
+                ) : (
+                  "Pending"
+                )}
+              </td>
+              <td>{renderQuotationActionButtons(quotation)}</td>
+            </tr>
+          )}
+        />
+      </>
     );
   };
 
@@ -2550,6 +2745,90 @@ export default function App() {
       />
     );
   };
+
+  if (authLoading) {
+    return (
+      <main className="auth-shell">
+        <section className="auth-card auth-card-loading">
+          <img className="auth-logo" src={logoUrl} alt="Resham Sutra" />
+          <p className="eyebrow">Secure Access</p>
+          <h1>Loading your workspace</h1>
+          <p>Checking for an active ReshamSutra session.</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (!currentUser) {
+    return (
+      <main className="auth-shell">
+        <section className="auth-card">
+          <img className="auth-logo" src={logoUrl} alt="Resham Sutra" />
+          <p className="eyebrow">Secure Access</p>
+          <h1>Sign in to ReshamSutra Operations</h1>
+          <p className="auth-copy">
+            Only users listed in the Airtable <strong>ReshamSutra Users</strong> table can access
+            the live dashboard.
+          </p>
+          {authActionState ? (
+            <section className={`action-banner auth-banner ${authActionState.status}`}>
+              <strong>{authActionState.label}</strong>
+              <span>{authActionState.message}</span>
+            </section>
+          ) : null}
+          <div className="auth-form">
+            <label>
+              <span>Email</span>
+              <input
+                type="email"
+                autoComplete="username"
+                value={loginForm.email}
+                onChange={(event) =>
+                  setLoginForm((current) => ({
+                    ...current,
+                    email: event.target.value
+                  }))
+                }
+              />
+            </label>
+            <label>
+              <span>Password</span>
+              <input
+                type="password"
+                autoComplete="current-password"
+                value={loginForm.password}
+                onChange={(event) =>
+                  setLoginForm((current) => ({
+                    ...current,
+                    password: event.target.value
+                  }))
+                }
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    void handleLogin();
+                  }
+                }}
+              />
+            </label>
+          </div>
+          {authError ? <p className="auth-error">{authError}</p> : null}
+          <div className="auth-actions">
+            <span>Your login stays active on this browser for 30 days.</span>
+            <button
+              type="button"
+              className="action-inline-button"
+              onClick={() => void handleLogin()}
+              disabled={authActionState?.key === "auth-login" && authActionState.status === "loading"}
+            >
+              {authActionState?.key === "auth-login" && authActionState.status === "loading"
+                ? "Signing in..."
+                : "Sign In"}
+            </button>
+          </div>
+        </section>
+      </main>
+    );
+  }
 
   let content: ReactNode = null;
 
@@ -2659,6 +2938,30 @@ export default function App() {
               <span className="crumb-sep">›</span>
               <strong>{viewOptions.find((view) => view.key === activeView)?.label ?? "Dashboard"}</strong>
             </div>
+          </div>
+          <div className="workspace-tools" ref={profileMenuRef}>
+            <button className="logout-button" type="button" onClick={() => void handleLogout()}>
+              Logout
+            </button>
+            <button
+              className="profile-button"
+              type="button"
+              title={`${currentUser.name} • ${currentUser.email}`}
+              onClick={() => setProfileOpen((current) => !current)}
+            >
+              {currentUser.name
+                .split(/\s+/)
+                .filter(Boolean)
+                .slice(0, 2)
+                .map((part) => part.charAt(0).toUpperCase())
+                .join("") || "RS"}
+            </button>
+            {profileOpen ? (
+              <div className="profile-card">
+                <strong>{currentUser.name}</strong>
+                <span>{currentUser.email}</span>
+              </div>
+            ) : null}
           </div>
         </header>
 

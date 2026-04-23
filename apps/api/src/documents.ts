@@ -42,6 +42,29 @@ const documentPayloadSchema = z.object({
 
 export type DocumentPayload = z.infer<typeof documentPayloadSchema>;
 
+const COMPANY_LINES = [
+  "Resham Sutra Pvt. Ltd. (Central Silk Board approved)",
+  "738 Ghewra Mod",
+  "Mundka Udhyog Nagar - North",
+  "New Delhi - 110041",
+  "Tel: 9811050909",
+  "Email: info@reshamsutra.com"
+];
+
+const COMPANY_META_LINES = [
+  "GSTIN No.: 07AAHCR4176J1Z0",
+  "CIN No.: U17116JH2015PTC002989"
+];
+
+const BANK_DETAIL_LINES = [
+  "Our Bank Details:",
+  "Bank Name: Canara Bank",
+  "Branch: Connaught Place, New Delhi",
+  "A/C Name: RESHAM SUTRA PVT. LTD.",
+  "A/c No.: 90421400001164",
+  "IFSC Code: CNRB0002009"
+];
+
 function slugify(value: string) {
   return value
     .toLowerCase()
@@ -236,7 +259,10 @@ function formatMoney(value: number) {
 
 function resolveLogoPath() {
   const currentDir = path.dirname(fileURLToPath(import.meta.url));
-  return path.resolve(currentDir, "../../web/src/assets/resham-sutra-logo.png");
+  return [
+    path.resolve(currentDir, "../../web/src/assets/resham-sutra-logo.png"),
+    path.resolve(currentDir, "../../templates/quotation-template-unpacked/xl/media/image3.png")
+  ];
 }
 
 function wrapPdfText(text: string, maxWidth: number, font: PDFFont, size: number) {
@@ -282,12 +308,20 @@ function drawWrappedLines(
 }
 
 async function loadLogo(pdfDoc: PDFDocument) {
-  try {
-    const logoBytes = await readFile(resolveLogoPath());
-    return pdfDoc.embedPng(logoBytes);
-  } catch {
-    return null;
+  for (const logoPath of resolveLogoPath()) {
+    try {
+      const logoBytes = await readFile(logoPath);
+      if (logoPath.toLowerCase().endsWith(".jpg") || logoPath.toLowerCase().endsWith(".jpeg")) {
+        return pdfDoc.embedJpg(logoBytes);
+      }
+
+      return pdfDoc.embedPng(logoBytes);
+    } catch {
+      continue;
+    }
   }
+
+  return null;
 }
 
 function drawTableHeader(
@@ -317,34 +351,40 @@ function drawTableHeader(
 
 function drawTableRow(
   page: PDFPage,
-  cells: Array<{ text: string; x: number; width: number; align?: "left" | "right" }>,
+  cells: Array<{ text: string; x: number; width: number; align?: "left" | "right"; lines?: string[] }>,
   y: number,
-  font: PDFFont
+  font: PDFFont,
+  rowHeight: number
 ) {
   page.drawRectangle({
     x: 40,
-    y: y - 24,
+    y: y - rowHeight,
     width: 515,
-    height: 24,
+    height: rowHeight,
     borderWidth: 0.5,
     borderColor: rgb(0.82, 0.85, 0.9),
     color: rgb(1, 1, 1)
   });
 
   cells.forEach((cell) => {
-    const text = cell.text || "-";
-    const textWidth = font.widthOfTextAtSize(text, 8);
-    const x =
-      cell.align === "right"
-        ? cell.x + cell.width - textWidth - 4
-        : cell.x + 4;
+    const lines = cell.lines?.length ? cell.lines : [cell.text || "-"];
+    let currentY = y - 14;
 
-    page.drawText(text, {
-      x,
-      y: y - 15,
-      font,
-      size: 8,
-      color: rgb(0.16, 0.18, 0.21)
+    lines.forEach((line) => {
+      const textWidth = font.widthOfTextAtSize(line, 8);
+      const x =
+        cell.align === "right"
+          ? cell.x + cell.width - textWidth - 4
+          : cell.x + 4;
+
+      page.drawText(line, {
+        x,
+        y: currentY,
+        font,
+        size: 8,
+        color: rgb(0.16, 0.18, 0.21)
+      });
+      currentY -= 10;
     });
   });
 }
@@ -368,68 +408,75 @@ async function writeSimplePdf(payload: DocumentPayload, outputDir: string) {
     color: rgb(1, 1, 1)
   });
 
-  page.drawRectangle({
-    x: 40,
-    y: 770,
-    width: 515,
-    height: 1,
-    color: rgb(0.9, 0.9, 0.9)
-  });
-
   if (logo) {
-    const dimensions = logo.scale(0.14);
+    const dimensions = logo.scale(0.4);
     page.drawImage(logo, {
       x: 42,
-      y: 770,
+      y: 766,
       width: dimensions.width,
       height: dimensions.height
     });
   }
 
-  page.drawText("Resham Sutra", {
-    x: 118,
-    y: 796,
+  page.drawText(payload.templateCode === "myanmar-proforma" ? "PERFORMA INVOICE" : "Quotation", {
+    x: 372,
+    y: 800,
     font: fontBold,
-    size: 18,
+    size: 16,
     color: brandDark
   });
-  page.drawText("Quotation", {
-    x: 118,
-    y: 777,
-    font: fontRegular,
-    size: 10,
-    color: muted
-  });
-
   page.drawText(payload.quotationNumber, {
-    x: 418,
-    y: 794,
+    x: 372,
+    y: 782,
     font: fontBold,
-    size: 14,
+    size: 13,
     color: brandDark
   });
   page.drawText(`Date: ${formatDateForTemplate()}`, {
-    x: 418,
-    y: 777,
+    x: 372,
+    y: 766,
     font: fontRegular,
     size: 9,
     color: muted
   });
 
+  let companyY = 802;
+  COMPANY_LINES.forEach((line, index) => {
+    page.drawText(line, {
+      x: 150,
+      y: companyY,
+      font: index === 0 ? fontBold : fontRegular,
+      size: index === 0 ? 10 : 9,
+      color: brandDark
+    });
+    companyY -= 12;
+  });
+
+  COMPANY_META_LINES.forEach((line) => {
+    page.drawText(line, {
+      x: 150,
+      y: companyY,
+      font: fontRegular,
+      size: 9,
+      color: brandDark
+    });
+    companyY -= 11;
+  });
+
   page.drawRectangle({
     x: 40,
-    y: 650,
+    y: 640,
     width: 250,
-    height: 95,
+    height: 108,
     borderWidth: 1,
     borderColor: rgb(0.88, 0.89, 0.91),
     color: rgb(0.99, 0.99, 0.99)
   });
   page.drawRectangle({
     x: 305,
-    y: 650,
+    y: 640,
     width: 250,
-    height: 95,
+    height: 108,
     borderWidth: 1,
     borderColor: rgb(0.88, 0.89, 0.91),
     color: rgb(0.99, 0.99, 0.99)
@@ -437,14 +484,14 @@ async function writeSimplePdf(payload: DocumentPayload, outputDir: string) {
 
   page.drawText("Buyer", {
     x: 52,
-    y: 730,
+    y: 732,
     font: fontBold,
     size: 10,
     color: brandDark
   });
   page.drawText("Consignee", {
     x: 317,
-    y: 730,
+    y: 732,
     font: fontBold,
     size: 10,
     color: brandDark
@@ -452,25 +499,25 @@ async function writeSimplePdf(payload: DocumentPayload, outputDir: string) {
 
   const buyerLines = splitLines(
     payload.buyerBlock || `${payload.customerName}\n${payload.company}`,
-    6
+    7
   );
   const consigneeLines = splitLines(
     payload.consigneeBlock || payload.buyerBlock || `${payload.customerName}\n${payload.company}`,
-    6
+    7
   );
 
   drawWrappedLines(page, buyerLines, {
     x: 52,
-    y: 713,
-    lineHeight: 12,
+    y: 715,
+    lineHeight: 11,
     font: fontRegular,
     size: 9,
     color: brandDark
   });
   drawWrappedLines(page, consigneeLines, {
     x: 317,
-    y: 713,
-    lineHeight: 12,
+    y: 715,
+    lineHeight: 11,
     font: fontRegular,
     size: 9,
     color: brandDark
@@ -486,23 +533,24 @@ async function writeSimplePdf(payload: DocumentPayload, outputDir: string) {
     { label: "GST Amt", x: 475, width: 40 },
     { label: "Total", x: 515, width: 40 }
   ];
-  let currentY = 620;
+  let currentY = 610;
   drawTableHeader(page, headers, currentY, fontBold);
   currentY -= 26;
 
   payload.lineItems.slice(0, 12).forEach((item, index) => {
-    const description = wrapPdfText(
+    const descriptionLines = wrapPdfText(
       item.description || "Quotation item",
       196,
       fontRegular,
       8
-    )[0] || "Quotation item";
+    );
+    const rowHeight = Math.max(24, 12 + descriptionLines.length * 10);
 
     drawTableRow(
       page,
       [
         { text: String(item.lineNo ?? index + 1), x: 40, width: 35 },
-        { text: description, x: 75, width: 205 },
+        { text: descriptionLines[0] || "Quotation item", x: 75, width: 205, lines: descriptionLines },
         { text: String(item.qty || 0), x: 280, width: 35, align: "right" },
         { text: formatMoney(item.rate || 0), x: 315, width: 60, align: "right" },
         { text: formatMoney(item.transport || 0), x: 375, width: 60, align: "right" },
@@ -511,35 +559,37 @@ async function writeSimplePdf(payload: DocumentPayload, outputDir: string) {
         { text: formatMoney(item.totalAmount || 0), x: 515, width: 40, align: "right" }
       ],
       currentY,
-      fontRegular
+      fontRegular,
+      rowHeight
     );
-    currentY -= 24;
+    currentY -= rowHeight;
   });
 
   const totalValue = payload.lineItems.reduce((sum, item) => sum + Number(item.totalAmount || 0), 0);
 
   page.drawRectangle({
-    x: 355,
-    y: currentY - 10,
-    width: 200,
-    height: 24,
+    x: 375,
+    y: currentY - 28,
+    width: 180,
+    height: 26,
     color: brandYellow
   });
   page.drawText("Grand Total", {
-    x: 365,
-    y: currentY - 2,
+    x: 387,
+    y: currentY - 18,
     font: fontBold,
     size: 9,
     color: brandDark
   });
+  const totalText = formatMoney(totalValue);
   page.drawText(formatMoney(totalValue), {
-    x: 505,
-    y: currentY - 2,
+    x: 545 - fontBold.widthOfTextAtSize(totalText, 10),
+    y: currentY - 18,
     font: fontBold,
-    size: 9,
+    size: 10,
     color: brandDark
   });
-  currentY -= 46;
+  currentY -= 54;
 
   page.drawText("Terms & Conditions", {
     x: 40,
@@ -566,9 +616,28 @@ async function writeSimplePdf(payload: DocumentPayload, outputDir: string) {
     currentY -= 4;
   });
 
-  page.drawText("Generated by Resham Sutra quotation service", {
-    x: 40,
-    y: 28,
+  let bankY = Math.min(currentY - 8, 120);
+  BANK_DETAIL_LINES.forEach((line, index) => {
+    page.drawText(line, {
+      x: 40,
+      y: bankY,
+      font: index === 0 ? fontBold : fontRegular,
+      size: 8.5,
+      color: brandDark
+    });
+    bankY -= 10;
+  });
+
+  page.drawText("For Resham Sutra Pvt. Ltd.", {
+    x: 400,
+    y: 78,
+    font: fontBold,
+    size: 9,
+    color: brandDark
+  });
+  page.drawText("Authorized Signatory", {
+    x: 427,
+    y: 38,
     font: fontRegular,
     size: 8,
     color: muted

@@ -402,6 +402,46 @@ function buildBuyerBlock(enquiry: AirtableRecord<EnquiryFields>) {
     .join("\n");
 }
 
+function buildConsigneeBlock(enquiry: AirtableRecord<EnquiryFields>) {
+  return [
+    enquiry.fields["Lead Name"] || "",
+    enquiry.fields.Company || "",
+    enquiry.fields["Destination Address"] || enquiry.fields.Address || "",
+    [
+      enquiry.fields["Destination City"] || enquiry.fields.City || "",
+      enquiry.fields["Destination State"] || enquiry.fields.State || "",
+      enquiry.fields["Destination Pincode"] || ""
+    ]
+      .filter(Boolean)
+      .join(", "),
+    enquiry.fields.Phone || "",
+    enquiry.fields.Email || ""
+  ]
+    .map((value) => String(value).trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
+function buildQuotationTerms(templateCode: "domestic-standard" | "myanmar-proforma") {
+  if (templateCode === "myanmar-proforma") {
+    return [
+      "PRICE TERM - Price includes delivery up to destination as agreed.",
+      "Dispatch - 8 - 10 weeks of order confirmation.",
+      "Payment Term - 50% advance with PO and 50% before dispatch.",
+      "Warranty against manufacturing defect for 1 year from date of invoice.",
+      "Quotation valid for 30 days."
+    ];
+  }
+
+  return [
+    "PRICE TERM - Price includes delivery up to destination as agreed.",
+    "Dispatch - 8 - 10 weeks of order confirmation.",
+    "Payment Term - 100% advance before dispatch.",
+    "Warranty against manufacturing defect for 1 year from date of invoice.",
+    "Quotation valid for 30 days."
+  ];
+}
+
 async function syncEnquiryAddressFromCustomer(
   enquiry: AirtableRecord<EnquiryFields>,
   customer: AirtableRecord<CustomerFields>
@@ -690,22 +730,21 @@ async function createDraftForReadyEnquiry(
   const folder = await ensureFolder(customer);
   const draftLineItems = mapDraftLineItems(lineItems);
   const buyerBlock = quotation.fields["Buyer Block"] || buildBuyerBlock(enquiry);
+  const templateCode =
+    customer.fields["Customer Type"] === "Export" ? "myanmar-proforma" : "domestic-standard";
   const quotationNumber = quotation.fields["Quotation Number"] || (await nextQuotationNumber());
 
   const draft = await createDraftDocument({
     quotationRecordId: quotation.id,
     quotationNumber,
-    templateCode: customer.fields["Customer Type"] === "Export" ? "myanmar-proforma" : "domestic-standard",
+    templateCode,
     draftFormat: "XLSX",
     customerName: customer.fields["Customer Name"] || enquiry.fields["Lead Name"] || "",
     customerFolderName: buildCustomerFolderName(customer),
     company: customer.fields.Company || enquiry.fields.Company || "",
     buyerBlock,
-    consigneeBlock: "",
-    terms: [
-      "Price includes delivery as agreed in the quotation.",
-      "Dispatch timeline will be finalized during order confirmation."
-    ],
+    consigneeBlock: buildConsigneeBlock(enquiry),
+    terms: buildQuotationTerms(templateCode),
     driveFolderName: folder.folderUrl,
     lineItems: draftLineItems
   });
@@ -794,22 +833,21 @@ export async function generateFinalPdfForQuotation(quotationId: string) {
   }
 
   const buyerBlock = quotation.fields["Buyer Block"] || buildBuyerBlock(enquiry);
+  const templateCode =
+    customer.fields["Customer Type"] === "Export" ? "myanmar-proforma" : "domestic-standard";
   const folder = await ensureFolder(customer);
   const quotationNumber = quotation.fields["Quotation Number"] || (await nextQuotationNumber());
   const pdf = await createPdfDocument({
     quotationRecordId: quotation.id,
     quotationNumber,
-    templateCode: customer.fields["Customer Type"] === "Export" ? "myanmar-proforma" : "domestic-standard",
+    templateCode,
     draftFormat: "XLSX",
     customerName: customer.fields["Customer Name"] || enquiry.fields["Lead Name"] || "",
     customerFolderName: buildCustomerFolderName(customer),
     company: customer.fields.Company || enquiry.fields.Company || "",
     buyerBlock,
-    consigneeBlock: "",
-    terms: [
-      "Final commercial terms approved after internal review.",
-      "Dispatch timeline will be finalized during order confirmation."
-    ],
+    consigneeBlock: buildConsigneeBlock(enquiry),
+    terms: buildQuotationTerms(templateCode),
     driveFolderName: folder.folderUrl || customer.fields["Drive Folder URL"] || "",
     lineItems: mapDraftLineItems(lineItems)
   });

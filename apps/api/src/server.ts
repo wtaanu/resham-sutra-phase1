@@ -1,6 +1,14 @@
 import cors from "cors";
 import express from "express";
 import path from "node:path";
+import { z } from "zod";
+import {
+  authenticatePortalUser,
+  clearAuthenticatedSession,
+  getAuthenticatedUser,
+  requireAuthenticatedUser,
+  setAuthenticatedSession
+} from "./auth.js";
 import { env } from "./config.js";
 import { checkDatabaseConnection } from "./db.js";
 import { createDraftDocument, createPdfDocument } from "./documents.js";
@@ -26,12 +34,21 @@ import { extractWhatsAppWebhookMessages, processWhatsAppEnquiry } from "./whatsa
 import { isSmtpConfigured, resolveDocumentAttachment, sendMail } from "./mailer.js";
 
 const app = express();
+const loginSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(1)
+});
 
 function logRouteError(route: string, error: unknown) {
   console.error(`[api] ${route}`, error);
 }
 
-app.use(cors());
+app.use(
+  cors({
+    origin: env.PUBLIC_WEB_ORIGIN,
+    credentials: true
+  })
+);
 app.use(express.json());
 app.use(
   "/documents",
@@ -66,6 +83,56 @@ app.get("/api/project", (_request, response) => {
   response.json(getProjectSnapshot());
 });
 
+app.get("/api/auth/session", (request, response) => {
+  const user = getAuthenticatedUser(request);
+  if (!user) {
+    response.status(401).json({
+      status: "error",
+      message: "No active session."
+    });
+    return;
+  }
+
+  response.json({
+    status: "ok",
+    user
+  });
+});
+
+app.post("/api/auth/login", async (request, response) => {
+  try {
+    const credentials = loginSchema.parse(request.body);
+    const user = await authenticatePortalUser(credentials.email, credentials.password);
+
+    if (!user) {
+      response.status(401).json({
+        status: "error",
+        message: "Invalid email or password."
+      });
+      return;
+    }
+
+    setAuthenticatedSession(response, user);
+    response.status(200).json({
+      status: "ok",
+      user
+    });
+  } catch (error) {
+    logRouteError("POST /api/auth/login", error);
+    response.status(400).json({
+      status: "error",
+      message: error instanceof Error ? error.message : "Failed to sign in"
+    });
+  }
+});
+
+app.post("/api/auth/logout", (_request, response) => {
+  clearAuthenticatedSession(response);
+  response.status(200).json({
+    status: "ok"
+  });
+});
+
 app.get("/api/whatsapp/webhook", (request, response) => {
   const mode = String(request.query["hub.mode"] || "");
   const token = String(request.query["hub.verify_token"] || "");
@@ -86,7 +153,7 @@ app.get("/api/whatsapp/webhook", (request, response) => {
   });
 });
 
-app.get("/api/operations", async (_request, response) => {
+app.get("/api/operations", requireAuthenticatedUser, async (_request, response) => {
   try {
     const snapshot = await getOperationsSnapshot();
     response.json(snapshot);
@@ -99,7 +166,7 @@ app.get("/api/operations", async (_request, response) => {
   }
 });
 
-app.post("/api/documents/draft", async (request, response) => {
+app.post("/api/documents/draft", requireAuthenticatedUser, async (request, response) => {
   try {
     const result = await createDraftDocument(request.body);
     response.status(201).json(result);
@@ -112,7 +179,7 @@ app.post("/api/documents/draft", async (request, response) => {
   }
 });
 
-app.post("/api/documents/pdf", async (request, response) => {
+app.post("/api/documents/pdf", requireAuthenticatedUser, async (request, response) => {
   try {
     const result = await createPdfDocument(request.body);
     response.status(201).json(result);
@@ -125,7 +192,7 @@ app.post("/api/documents/pdf", async (request, response) => {
   }
 });
 
-app.post("/api/automation/process-enquiries", async (_request, response) => {
+app.post("/api/automation/process-enquiries", requireAuthenticatedUser, async (_request, response) => {
   try {
     const result = await processPendingEnquiries();
     response.status(200).json(result);
@@ -138,7 +205,7 @@ app.post("/api/automation/process-enquiries", async (_request, response) => {
   }
 });
 
-app.post("/api/portal/enquiries", async (request, response) => {
+app.post("/api/portal/enquiries", requireAuthenticatedUser, async (request, response) => {
   try {
     const result = await createPortalEnquiry(request.body);
     response.status(201).json({
@@ -154,7 +221,7 @@ app.post("/api/portal/enquiries", async (request, response) => {
   }
 });
 
-app.post("/api/portal/quotation-line-items", async (request, response) => {
+app.post("/api/portal/quotation-line-items", requireAuthenticatedUser, async (request, response) => {
   try {
     const result = await createPortalQuotationLineItems(request.body);
     response.status(201).json({
@@ -209,10 +276,11 @@ app.post("/api/whatsapp/webhook", async (request, response) => {
   }
 });
 
-app.post("/api/portal/products/:id/documents", async (request, response) => {
+app.post("/api/portal/products/:id/documents", requireAuthenticatedUser, async (request, response) => {
   try {
+    const productId = String(request.params.id || "");
     const payload = uploadProductDocumentsSchema.parse(request.body);
-    const documents = await uploadProductDocuments(request.params.id, payload);
+    const documents = await uploadProductDocuments(productId, payload);
     response.status(201).json({
       status: "ok",
       uploadedCount: documents.length,
@@ -227,9 +295,10 @@ app.post("/api/portal/products/:id/documents", async (request, response) => {
   }
 });
 
-app.post("/api/actions/enquiries/:id/create-customer", async (request, response) => {
+app.post("/api/actions/enquiries/:id/create-customer", requireAuthenticatedUser, async (request, response) => {
   try {
-    const result = await createCustomerForEnquiry(request.params.id);
+    const enquiryId = String(request.params.id || "");
+    const result = await createCustomerForEnquiry(enquiryId);
     response.status(200).json({
       status: "ok",
       enquiryId: result.enquiry.id,
@@ -251,9 +320,10 @@ app.post("/api/actions/enquiries/:id/create-customer", async (request, response)
   }
 });
 
-app.post("/api/actions/quotations/:id/generate-final-pdf", async (request, response) => {
+app.post("/api/actions/quotations/:id/generate-final-pdf", requireAuthenticatedUser, async (request, response) => {
   try {
-    const result = await generateFinalPdfForQuotation(request.params.id);
+    const quotationId = String(request.params.id || "");
+    const result = await generateFinalPdfForQuotation(quotationId);
     response.status(200).json({
       status: "ok",
       quotationId: result.quotation.id,
@@ -269,9 +339,10 @@ app.post("/api/actions/quotations/:id/generate-final-pdf", async (request, respo
   }
 });
 
-app.post("/api/actions/quotations/:id/regenerate-draft", async (request, response) => {
+app.post("/api/actions/quotations/:id/regenerate-draft", requireAuthenticatedUser, async (request, response) => {
   try {
-    const result = await regenerateQuotationDraft(request.params.id);
+    const quotationId = String(request.params.id || "");
+    const result = await regenerateQuotationDraft(quotationId);
     response.status(200).json({
       status: "ok",
       quotationId: result.quotation.id,
@@ -287,9 +358,10 @@ app.post("/api/actions/quotations/:id/regenerate-draft", async (request, respons
   }
 });
 
-app.post("/api/actions/quotations/:id/send-email", async (request, response) => {
+app.post("/api/actions/quotations/:id/send-email", requireAuthenticatedUser, async (request, response) => {
   try {
-    const result = await sendQuotationEmail(request.params.id);
+    const quotationId = String(request.params.id || "");
+    const result = await sendQuotationEmail(quotationId);
     response.status(200).json({
       status: "ok",
       quotationId: result.quotation.id,
@@ -305,9 +377,10 @@ app.post("/api/actions/quotations/:id/send-email", async (request, response) => 
   }
 });
 
-app.post("/api/actions/quotations/:id/send-whatsapp", async (request, response) => {
+app.post("/api/actions/quotations/:id/send-whatsapp", requireAuthenticatedUser, async (request, response) => {
   try {
-    const result = await sendQuotationWhatsApp(request.params.id);
+    const quotationId = String(request.params.id || "");
+    const result = await sendQuotationWhatsApp(quotationId);
     response.status(200).json({
       status: "ok",
       quotationId: result.quotation.id,
@@ -323,10 +396,11 @@ app.post("/api/actions/quotations/:id/send-whatsapp", async (request, response) 
   }
 });
 
-app.post("/api/actions/enquiries/:id/send-product-documents", async (request, response) => {
+app.post("/api/actions/enquiries/:id/send-product-documents", requireAuthenticatedUser, async (request, response) => {
   try {
+    const enquiryId = String(request.params.id || "");
     const { documentIds } = sendProductDocumentsSchema.parse(request.body);
-    const enquiry = await getRecord<Record<string, unknown>>(env.AIRTABLE_ENQUIRIES_TABLE, request.params.id);
+    const enquiry = await getRecord<Record<string, unknown>>(env.AIRTABLE_ENQUIRIES_TABLE, enquiryId);
     const customerId = Array.isArray(enquiry.fields["Linked Customer"])
       ? String(enquiry.fields["Linked Customer"][0] || "")
       : "";
