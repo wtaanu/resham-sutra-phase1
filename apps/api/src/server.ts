@@ -256,11 +256,21 @@ app.post("/api/whatsapp/enquiries", async (request, response) => {
 app.post("/api/whatsapp/webhook", async (request, response) => {
   try {
     const messages = extractWhatsAppWebhookMessages(request.body);
+    console.log(
+      `[whatsapp-webhook] received payload with ${messages.length} text message(s)`
+    );
 
     const results = [];
     for (const message of messages) {
+      console.log(
+        `[whatsapp-webhook] processing sender=${message.senderPhone || "unknown"} inbound=${message.inboundWhatsappNumber || "unknown"} phoneNumberId=${message.phoneNumberId || "unknown"}`
+      );
       results.push(await processWhatsAppEnquiry(message));
     }
+
+    console.log(
+      `[whatsapp-webhook] processedCount=${results.length}`
+    );
 
     response.status(200).json({
       status: "ok",
