@@ -189,6 +189,7 @@ export async function getOperationsSnapshot() {
     quotationIdsByEnquiryId.set(linkedEnquiryId, existing);
   }
 
+  const quotationById = new Map(quotations.map((record) => [record.id, record]));
   const customersById = new Map(customers.map((record) => [record.id, record.fields]));
   const pdfGeneratedAtEntries = await Promise.all(
     quotations.map(async (record) => {
@@ -201,6 +202,17 @@ export async function getOperationsSnapshot() {
     })
   );
   const pdfGeneratedAtByQuotationId = new Map(pdfGeneratedAtEntries);
+  const enquiryIdsWithoutDraft = enquiries.filter((record) => {
+    const directQuotations = record.fields.Quotations || [];
+    const fallbackQuotations = quotationIdsByEnquiryId.get(record.id) || [];
+    const mergedQuotations = Array.from(new Set([...directQuotations, ...fallbackQuotations]));
+
+    if (!mergedQuotations.length) {
+      return true;
+    }
+
+    return !mergedQuotations.some((quotationId) => Boolean(quotationById.get(quotationId)?.fields["Draft File URL"]));
+  }).length;
 
   return {
     actions: {
@@ -212,7 +224,7 @@ export async function getOperationsSnapshot() {
     metrics: [
       {
         label: "New Enquiries",
-        value: enquiries.filter((record) => statusValue(record.fields) === "New").length
+        value: enquiryIdsWithoutDraft
       },
       {
         label: "Ready For Draft",

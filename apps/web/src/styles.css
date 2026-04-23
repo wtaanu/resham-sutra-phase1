@@ -63,8 +63,8 @@ body {
 }
 
 .auth-logo {
-  width: 72px;
-  height: 72px;
+  width: 64px;
+  height: 64px;
   object-fit: contain;
   border-radius: 18px;
   background: rgba(253, 187, 18, 0.14);
@@ -178,8 +178,8 @@ a:hover {
 }
 
 .brand-logo {
-  width: 44px;
-  height: 44px;
+  width: 36px;
+  height: 36px;
   object-fit: contain;
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.18);

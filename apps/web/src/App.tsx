@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import logoUrl from "./assets/resham-sutra-logo.png";
+import logoUrl from "./assets/resham-sutra-logo-small.png";
 
 type Metric = {
   label: string;
@@ -2250,7 +2250,12 @@ export default function App() {
           <DetailCard
             title="Enquiry Pulse"
             rows={[
-              { label: "Fresh enquiries", value: String(operations.enquiries.length) },
+              {
+                label: "Fresh enquiries",
+                value: String(
+                  operations.metrics.find((item) => item.label === "New Enquiries")?.value ?? 0
+                )
+              },
               {
                 label: "Parsed",
                 value: String(operations.enquiries.filter((item) => item.parserStatus === "Parsed").length)
