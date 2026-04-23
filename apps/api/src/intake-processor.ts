@@ -89,6 +89,7 @@ type QuotationFields = {
   "Reminder Count"?: number;
   "Last Reminder Date"?: string;
   "Next Reminder Date"?: string;
+  "Final PDF Generated At"?: string;
 };
 
 type QuotationLineItemFields = {
@@ -403,14 +404,20 @@ function buildBuyerBlock(enquiry: AirtableRecord<EnquiryFields>) {
 }
 
 function buildConsigneeBlock(enquiry: AirtableRecord<EnquiryFields>) {
+  const hasDestinationAddress =
+    Boolean(String(enquiry.fields["Destination Address"] || "").trim()) ||
+    Boolean(String(enquiry.fields["Destination City"] || "").trim()) ||
+    Boolean(String(enquiry.fields["Destination State"] || "").trim()) ||
+    Boolean(String(enquiry.fields["Destination Pincode"] || "").trim());
+
   return [
     enquiry.fields["Lead Name"] || "",
     enquiry.fields.Company || "",
-    enquiry.fields["Destination Address"] || enquiry.fields.Address || "",
+    hasDestinationAddress ? enquiry.fields["Destination Address"] || "" : "",
     [
-      enquiry.fields["Destination City"] || enquiry.fields.City || "",
-      enquiry.fields["Destination State"] || enquiry.fields.State || "",
-      enquiry.fields["Destination Pincode"] || ""
+      hasDestinationAddress ? enquiry.fields["Destination City"] || "" : "",
+      hasDestinationAddress ? enquiry.fields["Destination State"] || "" : "",
+      hasDestinationAddress ? enquiry.fields["Destination Pincode"] || "" : ""
     ]
       .filter(Boolean)
       .join(", "),
@@ -858,10 +865,13 @@ export async function generateFinalPdfForQuotation(quotationId: string) {
     finalPdfUrl = upload.fileUrl;
   }
 
+  const finalPdfGeneratedAt = new Date().toISOString();
+
   const updatedQuotation = await updateRecord<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
     id: quotation.id,
     fields: {
       "Final PDF URL": finalPdfUrl,
+      "Final PDF Generated At": finalPdfGeneratedAt,
       "Drive Folder URL": folder.folderUrl || quotation.fields["Drive Folder URL"] || null,
       Status: "Approved",
       "Quotation Number": quotationNumber
@@ -967,9 +977,13 @@ async function syncParsedEnquiriesWithLineItems() {
       "Phone",
       "Email",
       "Address",
+      "Destination Address",
       "State",
       "City",
+      "Destination State",
+      "Destination City",
       "Pincode",
+      "Destination Pincode",
       "Parser Status",
       "Linked Customer",
       "Quotations",
@@ -1041,9 +1055,13 @@ async function syncNewEnquiriesWithCustomers() {
       "Phone",
       "Email",
       "Address",
+      "Destination Address",
       "State",
       "City",
+      "Destination State",
+      "Destination City",
       "Pincode",
+      "Destination Pincode",
       "Parser Status",
       "Linked Customer",
       "Quotations",
@@ -1117,9 +1135,13 @@ export async function processPendingEnquiries() {
       "Phone",
       "Email",
       "Address",
+      "Destination Address",
       "State",
       "City",
+      "Destination State",
+      "Destination City",
       "Pincode",
+      "Destination Pincode",
       "Parser Status",
       "Linked Customer",
       "Quotations",

@@ -72,6 +72,7 @@ type QuotationRecord = {
   driveFolderUrl: string;
   preferredSendChannel: string;
   sentDate: string;
+  finalPdfGeneratedAt?: string;
   lineItemCount?: number;
   sendQuotation?: boolean;
   sendReminder?: boolean;
@@ -289,6 +290,22 @@ function formatDate(value: string) {
 
   return new Intl.DateTimeFormat("en-IN", {
     dateStyle: "medium"
+  }).format(date);
+}
+
+function formatDateTime(value: string) {
+  if (!value) {
+    return "";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("en-IN", {
+    dateStyle: "medium",
+    timeStyle: "short"
   }).format(date);
 }
 
@@ -600,6 +617,22 @@ export default function App() {
   const entryModalRef = useRef<HTMLElement | null>(null);
   const profileMenuRef = useRef<HTMLDivElement | null>(null);
 
+  function dismissActionState() {
+    setActionState(null);
+  }
+
+  function dismissAuthActionState() {
+    setAuthActionState(null);
+  }
+
+  function renderBannerCloseButton(onClick: () => void) {
+    return (
+      <button type="button" className="banner-close" onClick={onClick}>
+        Close
+      </button>
+    );
+  }
+
   async function apiFetch(input: string, init?: RequestInit) {
     const response = await fetch(input, {
       ...init,
@@ -735,6 +768,42 @@ export default function App() {
       document.removeEventListener("mousedown", handlePointerDown);
     };
   }, []);
+
+  useEffect(() => {
+    if (!actionState || actionState.status === "loading") {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setActionState((current) => (current === actionState ? null : current));
+    }, 5000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [actionState]);
+
+  useEffect(() => {
+    if (!authActionState || authActionState.status === "loading") {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setAuthActionState((current) => (current === authActionState ? null : current));
+    }, 5000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [authActionState]);
+
+  useEffect(() => {
+    if (!error || !operations) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setError("");
+    }, 5000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [error, operations]);
 
   useEffect(() => {
     if (authLoading || !currentUser) {
@@ -1554,6 +1623,7 @@ export default function App() {
               <section className={`action-banner entry-action-banner ${popupActionState.status}`}>
                 <strong>{popupActionState.label}</strong>
                 <span>{popupActionState.message}</span>
+                {renderBannerCloseButton(dismissActionState)}
               </section>
             ) : null}
 
@@ -1805,6 +1875,7 @@ export default function App() {
               <section className={`action-banner entry-action-banner ${popupActionState.status}`}>
                 <strong>{popupActionState.label}</strong>
                 <span>{popupActionState.message}</span>
+                {renderBannerCloseButton(dismissActionState)}
               </section>
             ) : null}
 
@@ -1887,6 +1958,7 @@ export default function App() {
               <section className={`action-banner entry-action-banner ${popupActionState.status}`}>
                 <strong>{popupActionState.label}</strong>
                 <span>{popupActionState.message}</span>
+                {renderBannerCloseButton(dismissActionState)}
               </section>
             ) : null}
 
@@ -1961,6 +2033,7 @@ export default function App() {
             <section className={`action-banner entry-action-banner ${popupActionState.status}`}>
               <strong>{popupActionState.label}</strong>
               <span>{popupActionState.message}</span>
+              {renderBannerCloseButton(dismissActionState)}
             </section>
           ) : null}
 
@@ -2117,6 +2190,9 @@ export default function App() {
           <section className={`action-banner ${actionState.status}`}>
             <strong>{actionState.label}</strong>
             <span>{actionState.message}</span>
+            <button type="button" className="banner-close" onClick={dismissActionState}>
+              ×
+            </button>
           </section>
         ) : null}
 
@@ -2438,6 +2514,21 @@ export default function App() {
         <div className="action-stack">
           <div className="action-icon-row">
             <button
+              className="icon-action-button neutral"
+              type="button"
+              title="Regenerate final PDF"
+              onClick={() => void handleGenerateFinalPdf(quotation.id)}
+              disabled={
+                actionState?.key === `pdf-generate-${quotation.id}` &&
+                actionState.status === "loading"
+              }
+            >
+              {actionState?.key === `pdf-generate-${quotation.id}` &&
+              actionState.status === "loading"
+                ? "..."
+                : "PDF"}
+            </button>
+            <button
               className="icon-action-button"
               type="button"
               title="Send quotation on email"
@@ -2575,6 +2666,9 @@ export default function App() {
           <section className={`action-banner ${quotationActionState.status}`}>
             <strong>{quotationActionState.label}</strong>
             <span>{quotationActionState.message}</span>
+            <button type="button" className="banner-close" onClick={dismissActionState}>
+              ×
+            </button>
           </section>
         ) : null}
         <PaginatedTable
@@ -2611,7 +2705,21 @@ export default function App() {
               <td>{quotation.preferredSendChannel || "Email"}</td>
               <td>{quotation.lineItemCount || 0}</td>
               <td>
-                {quotation.draftFileUrl ? (
+                {quotation.status === "Approved" ? (
+                  quotation.driveFolderUrl ? (
+                    <a
+                      className="action-inline-link"
+                      href={quotation.driveFolderUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={() => handleLinkAction(`quotation-folder-${quotation.id}`, "Open Folder")}
+                    >
+                      Open Folder
+                    </a>
+                  ) : (
+                    "-"
+                  )
+                ) : quotation.draftFileUrl ? (
                   <a
                     className="action-inline-link"
                     href={quotation.draftFileUrl}
@@ -2627,15 +2735,22 @@ export default function App() {
               </td>
               <td>
                 {quotation.finalPdfUrl ? (
-                  <a
-                    className="action-inline-link"
-                    href={quotation.finalPdfUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    onClick={() => handleLinkAction(`pdf-${quotation.id}`, "Open PDF")}
-                  >
-                    Open PDF
-                  </a>
+                  <div className="table-link-stack">
+                    <a
+                      className="action-inline-link"
+                      href={quotation.finalPdfUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={() => handleLinkAction(`pdf-${quotation.id}`, "Open PDF")}
+                    >
+                      Open PDF
+                    </a>
+                    {quotation.finalPdfGeneratedAt ? (
+                      <span className="table-submeta">
+                        Last generated {formatDateTime(quotation.finalPdfGeneratedAt)}
+                      </span>
+                    ) : null}
+                  </div>
                 ) : (
                   "Pending"
                 )}
@@ -2774,6 +2889,9 @@ export default function App() {
             <section className={`action-banner auth-banner ${authActionState.status}`}>
               <strong>{authActionState.label}</strong>
               <span>{authActionState.message}</span>
+              <button type="button" className="banner-close" onClick={dismissAuthActionState}>
+                ×
+              </button>
             </section>
           ) : null}
           <div className="auth-form">

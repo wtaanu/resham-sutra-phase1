@@ -7,7 +7,6 @@ import {
   StandardFonts,
   rgb,
   type PDFFont,
-  type PDFImage,
   type PDFPage
 } from "pdf-lib";
 import { z } from "zod";
@@ -189,7 +188,7 @@ function applyMyanmarTemplate(
   payload: DocumentPayload
 ) {
   const consigneeLines = splitLines(
-    payload.consigneeBlock || payload.buyerBlock || `${payload.customerName}\n${payload.company}`,
+    payload.consigneeBlock || `${payload.customerName}\n${payload.company}`,
     5
   );
   const item = payload.lineItems[0];
@@ -265,6 +264,11 @@ function resolveLogoPath() {
   ];
 }
 
+function resolveSignaturePath() {
+  const currentDir = path.dirname(fileURLToPath(import.meta.url));
+  return path.resolve(currentDir, "../../templates/quotation-template-unpacked/xl/media/image6.jpeg");
+}
+
 function wrapPdfText(text: string, maxWidth: number, font: PDFFont, size: number) {
   const words = String(text || "").split(/\s+/).filter(Boolean);
   if (!words.length) {
@@ -286,6 +290,20 @@ function wrapPdfText(text: string, maxWidth: number, font: PDFFont, size: number
 
   lines.push(current);
   return lines;
+}
+
+function rightAlignTextX(text: string, rightEdge: number, font: PDFFont, size: number) {
+  return rightEdge - font.widthOfTextAtSize(text, size);
+}
+
+function normalizeAddressBlock(primary: string, fallback: string) {
+  const value = String(primary || fallback || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join("\n");
+
+  return value || "-";
 }
 
 function drawWrappedLines(
@@ -322,6 +340,15 @@ async function loadLogo(pdfDoc: PDFDocument) {
   }
 
   return null;
+}
+
+async function loadSignature(pdfDoc: PDFDocument) {
+  try {
+    const signatureBytes = await readFile(resolveSignaturePath());
+    return pdfDoc.embedJpg(signatureBytes);
+  } catch {
+    return null;
+  }
 }
 
 function drawTableHeader(
@@ -396,6 +423,7 @@ async function writeSimplePdf(payload: DocumentPayload, outputDir: string) {
   const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   const logo = await loadLogo(pdfDoc);
+  const signature = await loadSignature(pdfDoc);
   const brandYellow = rgb(0.95, 0.77, 0.18);
   const brandDark = rgb(0.14, 0.15, 0.18);
   const muted = rgb(0.4, 0.44, 0.5);
@@ -409,58 +437,63 @@ async function writeSimplePdf(payload: DocumentPayload, outputDir: string) {
   });
 
   if (logo) {
-    const dimensions = logo.scale(0.4);
+    const dimensions = logo.scale(0.14);
     page.drawImage(logo, {
       x: 42,
-      y: 766,
+      y: 780,
       width: dimensions.width,
       height: dimensions.height
     });
   }
 
-  page.drawText(payload.templateCode === "myanmar-proforma" ? "PERFORMA INVOICE" : "Quotation", {
-    x: 372,
-    y: 800,
+  const documentTitle = payload.templateCode === "myanmar-proforma" ? "PERFORMA INVOICE" : "Quotation";
+  const titleSize = 9.5;
+  const quotationNumberSize = 8.5;
+  const headerRightEdge = 553;
+  page.drawText(documentTitle, {
+    x: rightAlignTextX(documentTitle, headerRightEdge, fontBold, titleSize),
+    y: 808,
     font: fontBold,
-    size: 16,
+    size: titleSize,
     color: brandDark
   });
   page.drawText(payload.quotationNumber, {
-    x: 372,
-    y: 782,
+    x: rightAlignTextX(payload.quotationNumber, headerRightEdge, fontBold, quotationNumberSize),
+    y: 789,
     font: fontBold,
-    size: 13,
+    size: quotationNumberSize,
     color: brandDark
   });
-  page.drawText(`Date: ${formatDateForTemplate()}`, {
-    x: 372,
-    y: 766,
+  const dateText = `Date: ${formatDateForTemplate()}`;
+  page.drawText(dateText, {
+    x: rightAlignTextX(dateText, headerRightEdge, fontRegular, 8.5),
+    y: 772,
     font: fontRegular,
-    size: 9,
+    size: 8.5,
     color: muted
   });
 
-  let companyY = 802;
+  let companyY = 806;
   COMPANY_LINES.forEach((line, index) => {
     page.drawText(line, {
-      x: 150,
+      x: 118,
       y: companyY,
       font: index === 0 ? fontBold : fontRegular,
-      size: index === 0 ? 10 : 9,
+      size: index === 0 ? 8 : 7.6,
       color: brandDark
     });
-    companyY -= 12;
+    companyY -= 9;
   });
 
   COMPANY_META_LINES.forEach((line) => {
     page.drawText(line, {
-      x: 150,
+      x: 118,
       y: companyY,
       font: fontRegular,
-      size: 9,
+      size: 7.6,
       color: brandDark
     });
-    companyY -= 11;
+    companyY -= 9;
   });
 
   page.drawRectangle({
@@ -498,11 +531,11 @@ async function writeSimplePdf(payload: DocumentPayload, outputDir: string) {
   });
 
   const buyerLines = splitLines(
-    payload.buyerBlock || `${payload.customerName}\n${payload.company}`,
+    normalizeAddressBlock(payload.buyerBlock, `${payload.customerName}\n${payload.company}`),
     7
   );
   const consigneeLines = splitLines(
-    payload.consigneeBlock || payload.buyerBlock || `${payload.customerName}\n${payload.company}`,
+    normalizeAddressBlock(payload.consigneeBlock, "Consignee details not provided"),
     7
   );
 
@@ -533,7 +566,7 @@ async function writeSimplePdf(payload: DocumentPayload, outputDir: string) {
     { label: "GST Amt", x: 475, width: 40 },
     { label: "Total", x: 515, width: 40 }
   ];
-  let currentY = 610;
+  let currentY = 606;
   drawTableHeader(page, headers, currentY, fontBold);
   currentY -= 26;
 
@@ -616,7 +649,7 @@ async function writeSimplePdf(payload: DocumentPayload, outputDir: string) {
     currentY -= 4;
   });
 
-  let bankY = Math.min(currentY - 8, 120);
+  let bankY = Math.min(currentY - 10, 118);
   BANK_DETAIL_LINES.forEach((line, index) => {
     page.drawText(line, {
       x: 40,
@@ -629,15 +662,24 @@ async function writeSimplePdf(payload: DocumentPayload, outputDir: string) {
   });
 
   page.drawText("For Resham Sutra Pvt. Ltd.", {
-    x: 400,
-    y: 78,
+    x: 396,
+    y: 82,
     font: fontBold,
     size: 9,
     color: brandDark
   });
+  if (signature) {
+    const dimensions = signature.scale(0.26);
+    page.drawImage(signature, {
+      x: 414,
+      y: 46,
+      width: dimensions.width,
+      height: dimensions.height
+    });
+  }
   page.drawText("Authorized Signatory", {
-    x: 427,
-    y: 38,
+    x: 420,
+    y: 34,
     font: fontRegular,
     size: 8,
     color: muted

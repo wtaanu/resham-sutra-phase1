@@ -1,5 +1,7 @@
+import { stat } from "node:fs/promises";
 import { listRecords } from "./airtable.js";
 import { env } from "./config.js";
+import { getStoredDocumentArtifact } from "./documents.js";
 import { listProductDocuments } from "./product-documents.js";
 
 type EnquiryFields = {
@@ -44,6 +46,7 @@ type QuotationFields = {
   Status?: string;
   "Draft File URL"?: string;
   "Final PDF URL"?: string;
+  "Final PDF Generated At"?: string;
   "Drive Folder URL"?: string;
   "Preferred Send Channel"?: string;
   "Sent Date"?: string;
@@ -91,6 +94,37 @@ async function safeList<TFields extends Record<string, unknown>>(
     return await listRecords<TFields>(tableName, options);
   } catch {
     return [];
+  }
+}
+
+async function resolvePdfGeneratedAt(
+  quotation: { id: string; fields: QuotationFields },
+  customer: CustomerFields | undefined
+) {
+  const generatedAt = quotation.fields["Final PDF Generated At"];
+  if (generatedAt) {
+    return generatedAt;
+  }
+
+  const quotationNumber = quotation.fields["Quotation Number"];
+  const finalPdfUrl = quotation.fields["Final PDF URL"];
+  const clientId = customer?.["Client ID"];
+  const customerName = customer?.["Customer Name"];
+
+  if (!quotationNumber || !finalPdfUrl || !clientId || !customerName) {
+    return "";
+  }
+
+  try {
+    const artifact = getStoredDocumentArtifact(
+      `${clientId}-${customerName}`,
+      quotationNumber,
+      "pdf"
+    );
+    const fileStats = await stat(artifact.filePath);
+    return fileStats.mtime.toISOString();
+  } catch {
+    return "";
   }
 }
 
@@ -154,6 +188,19 @@ export async function getOperationsSnapshot() {
     existing.push(quotation.id);
     quotationIdsByEnquiryId.set(linkedEnquiryId, existing);
   }
+
+  const customersById = new Map(customers.map((record) => [record.id, record.fields]));
+  const pdfGeneratedAtEntries = await Promise.all(
+    quotations.map(async (record) => {
+      const generatedAt = await resolvePdfGeneratedAt(
+        record,
+        customersById.get(record.fields["Linked Customer"]?.[0] || "")
+      );
+
+      return [record.id, generatedAt] as const;
+    })
+  );
+  const pdfGeneratedAtByQuotationId = new Map(pdfGeneratedAtEntries);
 
   return {
     actions: {
@@ -247,6 +294,7 @@ export async function getOperationsSnapshot() {
       driveFolderUrl: record.fields["Drive Folder URL"] || "",
       preferredSendChannel: record.fields["Preferred Send Channel"] || "",
       sentDate: record.fields["Sent Date"] || "",
+      finalPdfGeneratedAt: pdfGeneratedAtByQuotationId.get(record.id) || "",
       lineItemCount: quotationLineItems.filter((item) => item.fields.Quotation?.includes(record.id)).length,
       sendQuotation: Boolean(record.fields["Send Quotation"]),
       sendReminder: Boolean(record.fields["Send Reminder"]),
