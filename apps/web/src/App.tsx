@@ -2683,7 +2683,7 @@ export default function App() {
               <th>Status</th>
               <th>Channel</th>
               <th>Items</th>
-              <th>Draft</th>
+              {statuses.length === 1 && statuses[0] === "Approved" ? null : <th>Draft</th>}
               <th>Final PDF</th>
               <th>Actions</th>
             </>
@@ -2704,35 +2704,37 @@ export default function App() {
               </td>
               <td>{quotation.preferredSendChannel || "Email"}</td>
               <td>{quotation.lineItemCount || 0}</td>
-              <td>
-                {quotation.status === "Approved" ? (
-                  quotation.driveFolderUrl ? (
+              {statuses.length === 1 && statuses[0] === "Approved" ? null : (
+                <td>
+                  {quotation.status === "Approved" ? (
+                    quotation.driveFolderUrl ? (
+                      <a
+                        className="action-inline-link"
+                        href={quotation.driveFolderUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={() => handleLinkAction(`quotation-folder-${quotation.id}`, "Open Folder")}
+                      >
+                        Open Folder
+                      </a>
+                    ) : (
+                      "-"
+                    )
+                  ) : quotation.draftFileUrl ? (
                     <a
                       className="action-inline-link"
-                      href={quotation.driveFolderUrl}
+                      href={quotation.draftFileUrl}
                       target="_blank"
                       rel="noreferrer"
-                      onClick={() => handleLinkAction(`quotation-folder-${quotation.id}`, "Open Folder")}
+                      onClick={() => handleLinkAction(`draft-${quotation.id}`, "Open Draft")}
                     >
-                      Open Folder
+                      Open draft
                     </a>
                   ) : (
-                    "-"
-                  )
-                ) : quotation.draftFileUrl ? (
-                  <a
-                    className="action-inline-link"
-                    href={quotation.draftFileUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    onClick={() => handleLinkAction(`draft-${quotation.id}`, "Open Draft")}
-                  >
-                    Open draft
-                  </a>
-                ) : (
-                  "Not generated"
-                )}
-              </td>
+                    "Not generated"
+                  )}
+                </td>
+              )}
               <td>
                 {quotation.finalPdfUrl ? (
                   <div className="table-link-stack">

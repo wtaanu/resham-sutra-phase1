@@ -64,6 +64,8 @@ const BANK_DETAIL_LINES = [
   "IFSC Code: CNRB0002009"
 ];
 
+const CONSIGNEE_COMPANY_LINES = [...COMPANY_LINES, ...COMPANY_META_LINES];
+
 function slugify(value: string) {
   return value
     .toLowerCase()
@@ -269,6 +271,16 @@ function resolveSignaturePath() {
   return path.resolve(currentDir, "../../templates/quotation-template-unpacked/xl/media/image6.jpeg");
 }
 
+function resolveFooterBadgePaths() {
+  const currentDir = path.dirname(fileURLToPath(import.meta.url));
+  return [
+    { key: "makeInIndia", path: path.resolve(currentDir, "../../templates/quotation-template-unpacked/xl/media/image2.jpeg") },
+    { key: "iso", path: path.resolve(currentDir, "../../templates/quotation-template-unpacked/xl/media/image4.jpeg") },
+    { key: "msme", path: path.resolve(currentDir, "../../templates/quotation-template-unpacked/xl/media/image5.png") },
+    { key: "startupIndia", path: path.resolve(currentDir, "../../templates/quotation-template-unpacked/xl/media/image3.png") }
+  ];
+}
+
 function wrapPdfText(text: string, maxWidth: number, font: PDFFont, size: number) {
   const words = String(text || "").split(/\s+/).filter(Boolean);
   if (!words.length) {
@@ -351,6 +363,26 @@ async function loadSignature(pdfDoc: PDFDocument) {
   }
 }
 
+async function loadFooterBadges(pdfDoc: PDFDocument) {
+  const badges: Array<{ key: string; image: Awaited<ReturnType<typeof pdfDoc.embedPng>> | Awaited<ReturnType<typeof pdfDoc.embedJpg>> }> = [];
+
+  for (const badge of resolveFooterBadgePaths()) {
+    try {
+      const bytes = await readFile(badge.path);
+      const image =
+        badge.path.toLowerCase().endsWith(".jpg") || badge.path.toLowerCase().endsWith(".jpeg")
+          ? await pdfDoc.embedJpg(bytes)
+          : await pdfDoc.embedPng(bytes);
+
+      badges.push({ key: badge.key, image });
+    } catch {
+      continue;
+    }
+  }
+
+  return badges;
+}
+
 function drawTableHeader(
   page: PDFPage,
   headers: Array<{ label: string; x: number; width: number }>,
@@ -424,6 +456,7 @@ async function writeSimplePdf(payload: DocumentPayload, outputDir: string) {
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   const logo = await loadLogo(pdfDoc);
   const signature = await loadSignature(pdfDoc);
+  const footerBadges = await loadFooterBadges(pdfDoc);
   const brandYellow = rgb(0.95, 0.77, 0.18);
   const brandDark = rgb(0.14, 0.15, 0.18);
   const muted = rgb(0.4, 0.44, 0.5);
@@ -437,10 +470,10 @@ async function writeSimplePdf(payload: DocumentPayload, outputDir: string) {
   });
 
   if (logo) {
-    const dimensions = logo.scale(0.14);
+    const dimensions = logo.scale(0.08);
     page.drawImage(logo, {
-      x: 42,
-      y: 780,
+      x: 40,
+      y: 768,
       width: dimensions.width,
       height: dimensions.height
     });
@@ -473,27 +506,27 @@ async function writeSimplePdf(payload: DocumentPayload, outputDir: string) {
     color: muted
   });
 
-  let companyY = 806;
+  let companyY = 800;
   COMPANY_LINES.forEach((line, index) => {
     page.drawText(line, {
-      x: 118,
+      x: 160,
       y: companyY,
       font: index === 0 ? fontBold : fontRegular,
-      size: index === 0 ? 8 : 7.6,
+      size: index === 0 ? 7.4 : 7.1,
       color: brandDark
     });
-    companyY -= 9;
+    companyY -= 8;
   });
 
   COMPANY_META_LINES.forEach((line) => {
     page.drawText(line, {
-      x: 118,
+      x: 160,
       y: companyY,
       font: fontRegular,
-      size: 7.6,
+      size: 7.1,
       color: brandDark
     });
-    companyY -= 9;
+    companyY -= 8;
   });
 
   page.drawRectangle({
@@ -535,8 +568,8 @@ async function writeSimplePdf(payload: DocumentPayload, outputDir: string) {
     7
   );
   const consigneeLines = splitLines(
-    normalizeAddressBlock(payload.consigneeBlock, "Consignee details not provided"),
-    7
+    normalizeAddressBlock(CONSIGNEE_COMPANY_LINES.join("\n"), "Consignee details not provided"),
+    8
   );
 
   drawWrappedLines(page, buyerLines, {
@@ -550,9 +583,9 @@ async function writeSimplePdf(payload: DocumentPayload, outputDir: string) {
   drawWrappedLines(page, consigneeLines, {
     x: 317,
     y: 715,
-    lineHeight: 11,
+    lineHeight: 10,
     font: fontRegular,
-    size: 9,
+    size: 8,
     color: brandDark
   });
 
@@ -649,39 +682,59 @@ async function writeSimplePdf(payload: DocumentPayload, outputDir: string) {
     currentY -= 4;
   });
 
-  let bankY = Math.min(currentY - 10, 118);
+  let bankY = Math.min(currentY - 8, 92);
   BANK_DETAIL_LINES.forEach((line, index) => {
     page.drawText(line, {
       x: 40,
       y: bankY,
       font: index === 0 ? fontBold : fontRegular,
-      size: 8.5,
+      size: index === 0 ? 7.8 : 7.2,
       color: brandDark
     });
-    bankY -= 10;
+    bankY -= 8;
+  });
+
+  const footerBadgeSpecs: Record<string, { width: number; height: number }> = {
+    makeInIndia: { width: 56, height: 30 },
+    iso: { width: 20, height: 20 },
+    msme: { width: 56, height: 22 },
+    startupIndia: { width: 78, height: 18 }
+  };
+
+  let badgeX = 40;
+  const badgeY = 18;
+  footerBadges.forEach(({ key, image }) => {
+    const spec = footerBadgeSpecs[key] || { width: 36, height: 18 };
+    page.drawImage(image, {
+      x: badgeX,
+      y: badgeY,
+      width: spec.width,
+      height: spec.height
+    });
+    badgeX += spec.width + 8;
   });
 
   page.drawText("For Resham Sutra Pvt. Ltd.", {
-    x: 396,
-    y: 82,
+    x: 404,
+    y: 88,
     font: fontBold,
-    size: 9,
+    size: 8.2,
     color: brandDark
   });
   if (signature) {
-    const dimensions = signature.scale(0.26);
+    const dimensions = signature.scale(0.34);
     page.drawImage(signature, {
-      x: 414,
-      y: 46,
+      x: 404,
+      y: 28,
       width: dimensions.width,
       height: dimensions.height
     });
   }
   page.drawText("Authorized Signatory", {
-    x: 420,
-    y: 34,
+    x: 418,
+    y: 18,
     font: fontRegular,
-    size: 8,
+    size: 7.4,
     color: muted
   });
 
