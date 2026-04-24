@@ -726,6 +726,8 @@ export default function App() {
   const [destinationSameAsMain, setDestinationSameAsMain] = useState(false);
   const [customerSearchTerm, setCustomerSearchTerm] = useState("");
   const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false);
+  const [productSearchTerm, setProductSearchTerm] = useState("");
+  const [productDropdownOpen, setProductDropdownOpen] = useState(false);
   const [selectedQuotationId, setSelectedQuotationId] = useState("");
   const [lineItemRows, setLineItemRows] = useState<LineItemDraftRow[]>([createLineItemRow()]);
   const [selectedProductId, setSelectedProductId] = useState("");
@@ -1344,6 +1346,8 @@ export default function App() {
     setDestinationSameAsMain(false);
     setCustomerSearchTerm("");
     setCustomerDropdownOpen(false);
+    setProductSearchTerm("");
+    setProductDropdownOpen(false);
   }
 
   function openEnquiryEdit(enquiry: EnquiryRecord) {
@@ -1374,6 +1378,13 @@ export default function App() {
       customer ? `${customer.clientId || "No ID"} - ${customer.customerName || "Unnamed customer"}` : ""
     );
     setCustomerDropdownOpen(false);
+    const matchedProduct = (operations?.products || []).find((product) => product.id === enquiry.potentialProduct);
+    setProductSearchTerm(
+      matchedProduct
+        ? matchedProduct.name || matchedProduct.model || matchedProduct.productKey
+        : ""
+    );
+    setProductDropdownOpen(false);
   }
 
   function openLineItemEntry(quotationId = "") {
@@ -1401,6 +1412,8 @@ export default function App() {
     setDestinationSameAsMain(false);
     setCustomerSearchTerm("");
     setCustomerDropdownOpen(false);
+    setProductSearchTerm("");
+    setProductDropdownOpen(false);
   }
 
   const customerLookup = useMemo(() => {
@@ -1442,6 +1455,21 @@ export default function App() {
     );
   }, [customerSearchTerm, sortedCustomers]);
 
+  const filteredProducts = useMemo(() => {
+    const search = productSearchTerm.trim().toLowerCase();
+    const products = operations?.products || [];
+
+    if (!search) {
+      return products;
+    }
+
+    return products.filter((product) =>
+      `${product.productKey} ${product.model} ${product.name} ${product.narration}`
+        .toLowerCase()
+        .includes(search)
+    );
+  }, [operations?.products, productSearchTerm]);
+
   function clearEnquiryFieldError(field: keyof EnquiryFormState) {
     setEnquiryFieldErrors((current) => {
       if (!current[field]) {
@@ -1471,6 +1499,18 @@ export default function App() {
       state: customer?.state || current.state,
       city: customer?.city || current.city,
       pincode: customer?.pincode || current.pincode
+    }));
+  }
+
+  function handleProductAutofill(productId: string) {
+    const product = (operations?.products || []).find((item) => item.id === productId);
+    setProductSearchTerm(product ? product.name || product.model || product.productKey : "");
+    setProductDropdownOpen(false);
+    clearEnquiryFieldError("potentialProduct");
+    setEnquiryForm((current) => ({
+      ...current,
+      potentialProduct: productId,
+      requirementSummary: product ? product.name || product.model || product.productKey : current.requirementSummary
     }));
   }
 
@@ -2191,27 +2231,68 @@ function updateLineItemRow(
             </label>
             <label>
               <span>Product *</span>
-              <select
-                value={enquiryForm.potentialProduct}
-                onChange={(event) => {
-                  clearEnquiryFieldError("potentialProduct");
-                  const productId = event.target.value;
-                  const selectedProductOption = operations?.products.find((product) => product.id === productId);
-                  setEnquiryForm((current) => ({
-                    ...current,
-                    potentialProduct: productId,
-                    requirementSummary:
-                      selectedProductOption?.name || selectedProductOption?.model || selectedProductOption?.productKey || ""
-                  }));
-                }}
-              >
-                <option value="">Select product</option>
-                {(operations?.products || []).map((productOption) => (
-                  <option key={productOption.id} value={productOption.id}>
-                    {productOption.name || productOption.model || productOption.productKey}
-                  </option>
-                ))}
-              </select>
+              <div className="searchable-dropdown">
+                <div className="searchable-dropdown-input">
+                  <input
+                    value={productSearchTerm}
+                    placeholder="Search by product name, model, or key"
+                    onFocus={() => setProductDropdownOpen(true)}
+                    onClick={() => setProductDropdownOpen(true)}
+                    onBlur={() => {
+                      window.setTimeout(() => setProductDropdownOpen(false), 120);
+                    }}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      clearEnquiryFieldError("potentialProduct");
+                      setProductSearchTerm(value);
+                      setProductDropdownOpen(true);
+                      if (!value.trim()) {
+                        setEnquiryForm((current) => ({
+                          ...current,
+                          potentialProduct: ""
+                        }));
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="search-dropdown-toggle"
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => {
+                      setProductDropdownOpen((current) => !current);
+                    }}
+                  >
+                    {productDropdownOpen ? "^" : "v"}
+                  </button>
+                </div>
+                <span className="search-dropdown-hint">
+                  Search and choose the product to map this enquiry.
+                </span>
+                {productDropdownOpen ? (
+                  <div className="search-dropdown-list">
+                    {filteredProducts.length ? (
+                      filteredProducts.slice(0, 8).map((productOption) => (
+                        <button
+                          key={productOption.id}
+                          className="search-dropdown-option"
+                          type="button"
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            handleProductAutofill(productOption.id);
+                          }}
+                        >
+                          <strong>{productOption.name || productOption.model || productOption.productKey}</strong>
+                          <span>
+                            {[productOption.model, productOption.productKey].filter(Boolean).join(" | ") || "Product"}
+                          </span>
+                        </button>
+                      ))
+                    ) : (
+                      <div className="search-dropdown-empty">No matching products found.</div>
+                    )}
+                  </div>
+                ) : null}
+              </div>
               {enquiryFieldErrors.potentialProduct ? (
                 <span className="field-error">{enquiryFieldErrors.potentialProduct}</span>
               ) : null}
