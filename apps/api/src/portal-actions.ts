@@ -21,11 +21,11 @@ type EnquiryFields = {
   Address?: string;
   State?: string;
   City?: string;
-  Pincode?: number;
+  Pincode?: string | number;
   "Destination Address"?: string;
   "Destination State"?: string;
   "Destination City"?: string;
-  "Destination Pincode"?: number;
+  "Destination Pincode"?: string | number;
   "Parser Status"?: string;
   "Linked Customer"?: string[];
   Quotations?: string[];
@@ -45,7 +45,7 @@ type CustomerFields = {
   Address?: string;
   State?: string;
   City?: string;
-  Pincode?: number;
+  Pincode?: string | number;
 };
 
 type QuotationFields = {
@@ -165,6 +165,29 @@ function toPincodeNumber(value: string, fallback?: unknown) {
   return normalized ? Number(normalized) : undefined;
 }
 
+function toPincodeString(value: string, fallback?: unknown) {
+  const normalized = String(value || fallback || "").replace(/\D/g, "").slice(0, 6);
+  return normalized || undefined;
+}
+
+function withStringPincodeFields(
+  fields: Record<string, unknown>,
+  mainPincode: string | undefined,
+  destinationPincode: string | undefined
+) {
+  const next = { ...fields };
+
+  if (mainPincode) {
+    next.Pincode = mainPincode;
+  }
+
+  if (destinationPincode) {
+    next["Destination Pincode"] = destinationPincode;
+  }
+
+  return next;
+}
+
 function omitFieldFromRecords(records: Record<string, unknown>[], fieldName: string) {
   return records.map((record) => {
     const next = { ...record };
@@ -272,6 +295,8 @@ export async function createPortalEnquiry(payload: unknown) {
   const destinationPincode = input.destinationPincode || input.pincode || "";
   const mainPincode = toPincodeNumber(input.pincode, existingCustomer?.fields.Pincode);
   const destinationPincodeNumber = toPincodeNumber(destinationPincode);
+  const mainPincodeText = toPincodeString(input.pincode, existingCustomer?.fields.Pincode);
+  const destinationPincodeText = toPincodeString(destinationPincode);
   const loggedDateTime = new Date().toISOString();
   const enquiryFields = withOptionalNumberField(
     withOptionalNumberField(
@@ -322,9 +347,11 @@ export async function createPortalEnquiry(payload: unknown) {
         );
 
         if (mentionsField(message, "Pincode")) {
-          retryFields = { ...(retryFields ?? fieldsWithId) };
-          delete retryFields.Pincode;
-          delete retryFields["Destination Pincode"];
+          retryFields = withStringPincodeFields(
+            retryFields ?? fieldsWithId,
+            mainPincodeText,
+            destinationPincodeText
+          );
         }
 
         if (!retryFields) {
@@ -369,6 +396,8 @@ export async function updatePortalEnquiry(enquiryId: string, payload: unknown) {
   const destinationPincode = input.destinationPincode || input.pincode || "";
   const mainPincode = toPincodeNumber(input.pincode, existingCustomer?.fields.Pincode);
   const destinationPincodeNumber = toPincodeNumber(destinationPincode);
+  const mainPincodeText = toPincodeString(input.pincode, existingCustomer?.fields.Pincode);
+  const destinationPincodeText = toPincodeString(destinationPincode);
 
   const enquiryFields = withOptionalNumberField(
     withOptionalNumberField(
@@ -412,9 +441,11 @@ export async function updatePortalEnquiry(enquiryId: string, payload: unknown) {
     );
 
     if (mentionsField(message, "Pincode")) {
-      retryFields = { ...(retryFields ?? enquiryFields) };
-      delete retryFields.Pincode;
-      delete retryFields["Destination Pincode"];
+      retryFields = withStringPincodeFields(
+        retryFields ?? enquiryFields,
+        mainPincodeText,
+        destinationPincodeText
+      );
     }
 
     if (!retryFields) {
