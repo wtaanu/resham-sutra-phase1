@@ -376,6 +376,7 @@ export async function processWhatsAppEnquiry(payload: unknown) {
   const addressParts = extractAddressParts(input.rawMessage);
 
   const created = await createPortalEnquiry({
+    source: "whatsapp",
     linkedCustomerId: "",
     leadName: parsed.leadName || input.senderName || "WhatsApp Lead",
     company: parsed.company || "",

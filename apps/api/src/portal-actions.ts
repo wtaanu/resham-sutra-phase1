@@ -80,16 +80,9 @@ type QuotationLineItemFields = {
 
 const airtableRecordIdSchema = z.string().regex(/^rec[a-zA-Z0-9]+$/, "Expected an Airtable record ID");
 const optionalAirtableRecordIdSchema = z.union([airtableRecordIdSchema, z.literal("")]).default("");
-const pincodeSchema = z
-  .string()
-  .trim()
-  .regex(/^\d{6}$/, "Enter a valid 6-digit pincode");
-const optionalPincodeSchema = z.union([pincodeSchema, z.literal("")]).default("");
-const optionalPhoneSchema = z
-  .string()
-  .trim()
-  .transform((value) => value.replace(/\D/g, ""))
-  .refine((value) => value === "" || value.length === 10, "Phone number must be exactly 10 digits");
+const enquirySourceSchema = z.enum(["manual", "whatsapp"]).default("manual");
+const optionalPincodeSchema = z.string().trim().optional().default("");
+const optionalPhoneSchema = z.string().trim().optional().default("");
 const optionalEmailSchema = z
   .string()
   .trim()
@@ -101,6 +94,7 @@ function linkedRecordIds(...recordIds: Array<string | undefined>) {
 }
 
 const enquiryPayloadSchema = z.object({
+  source: enquirySourceSchema,
   linkedCustomerId: optionalAirtableRecordIdSchema,
   leadName: z.string().trim().min(1, "Lead name is required"),
   company: z.string().trim().optional().default(""),
@@ -118,6 +112,47 @@ const enquiryPayloadSchema = z.object({
   requestedAsset: z.string().trim().optional().default(""),
   potentialProduct: z.string().trim().optional().default(""),
   receiverWhatsappNumber: optionalPhoneSchema.default("")
+}).superRefine((input, context) => {
+  if (input.source !== "manual") {
+    return;
+  }
+
+  const normalizedPhone = String(input.phone ?? "").replace(/\D/g, "");
+  const normalizedReceiverWhatsapp = String(input.receiverWhatsappNumber ?? "").replace(/\D/g, "");
+  const normalizedPincode = String(input.pincode ?? "").replace(/\D/g, "");
+  const normalizedDestinationPincode = String(input.destinationPincode ?? "").replace(/\D/g, "");
+
+  if (normalizedPhone && normalizedPhone.length !== 10) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Phone number must be exactly 10 digits",
+      path: ["phone"]
+    });
+  }
+
+  if (normalizedReceiverWhatsapp && normalizedReceiverWhatsapp.length !== 10) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Phone number must be exactly 10 digits",
+      path: ["receiverWhatsappNumber"]
+    });
+  }
+
+  if (normalizedPincode && normalizedPincode.length !== 6) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Enter a valid 6-digit pincode",
+      path: ["pincode"]
+    });
+  }
+
+  if (normalizedDestinationPincode && normalizedDestinationPincode.length !== 6) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Enter a valid 6-digit pincode",
+      path: ["destinationPincode"]
+    });
+  }
 });
 
 const lineItemPayloadSchema = z.object({

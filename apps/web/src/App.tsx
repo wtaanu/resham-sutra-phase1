@@ -289,6 +289,10 @@ function isValidPositiveAmount(value: string) {
   return Number.isFinite(parsed) && parsed > 0;
 }
 
+function firstEnquiryFieldError(errors: EnquiryFieldErrors) {
+  return Object.values(errors).find(Boolean) || "Please fix the highlighted fields.";
+}
+
 function calculateLineItemAmounts(
   product: ProductRecord | undefined,
   qtyInput: string | number,
@@ -1303,97 +1307,66 @@ export default function App() {
     const normalizedEmail = enquiryForm.email.trim();
     const nextFieldErrors: EnquiryFieldErrors = {};
 
+    if (!enquiryForm.leadName.trim()) {
+      nextFieldErrors.leadName = "Lead name is required.";
+    }
+
     if (enquiryForm.phone.trim() && !isValidTenDigitPhone(enquiryForm.phone)) {
       nextFieldErrors.phone = "Phone number must be exactly 10 digits.";
-      setEnquiryFieldErrors(nextFieldErrors);
-      setActionState({
-        key: "portal-enquiry",
-        label: formActionLabel,
-        status: "error",
-        message: nextFieldErrors.phone
-      });
-      return;
     }
 
     if (normalizedEmail && !isValidEmail(normalizedEmail)) {
       nextFieldErrors.email = "Email must include @.";
-      setEnquiryFieldErrors(nextFieldErrors);
-      setActionState({
-        key: "portal-enquiry",
-        label: formActionLabel,
-        status: "error",
-        message: nextFieldErrors.email
-      });
-      return;
     }
 
     if (enquiryForm.receiverWhatsappNumber.trim() && !isValidTenDigitPhone(enquiryForm.receiverWhatsappNumber)) {
       nextFieldErrors.receiverWhatsappNumber = "Receiver WhatsApp number must be exactly 10 digits.";
-      setEnquiryFieldErrors(nextFieldErrors);
-      setActionState({
-        key: "portal-enquiry",
-        label: formActionLabel,
-        status: "error",
-        message: nextFieldErrors.receiverWhatsappNumber
-      });
-      return;
+    }
+
+    if (!enquiryForm.address.trim()) {
+      nextFieldErrors.address = "Address is required.";
+    }
+
+    if (!enquiryForm.state.trim()) {
+      nextFieldErrors.state = "State is required.";
+    }
+
+    if (!enquiryForm.city.trim()) {
+      nextFieldErrors.city = "City is required.";
     }
 
     if (!/^\d{6}$/.test(normalizePincodeInput(enquiryForm.pincode))) {
       nextFieldErrors.pincode = "Main pincode must be a valid 6-digit number.";
-      setEnquiryFieldErrors(nextFieldErrors);
-      setActionState({
-        key: "portal-enquiry",
-        label: formActionLabel,
-        status: "error",
-        message: nextFieldErrors.pincode
-      });
-      return;
+    }
+
+    if (!enquiryForm.destinationAddress.trim()) {
+      nextFieldErrors.destinationAddress = "Destination address is required.";
+    }
+
+    if (!enquiryForm.destinationState.trim()) {
+      nextFieldErrors.destinationState = "Destination state is required.";
+    }
+
+    if (!enquiryForm.destinationCity.trim()) {
+      nextFieldErrors.destinationCity = "Destination city is required.";
     }
 
     if (!/^\d{6}$/.test(normalizePincodeInput(enquiryForm.destinationPincode))) {
       nextFieldErrors.destinationPincode = "Destination pincode must be a valid 6-digit number.";
+    }
+
+    if (Object.keys(nextFieldErrors).length) {
       setEnquiryFieldErrors(nextFieldErrors);
       setActionState({
         key: "portal-enquiry",
         label: formActionLabel,
         status: "error",
-        message: nextFieldErrors.destinationPincode
+        message: firstEnquiryFieldError(nextFieldErrors)
       });
       return;
     }
 
     setEnquiryFieldErrors({});
-
-    if (
-      !enquiryForm.address.trim() ||
-      !enquiryForm.pincode.trim() ||
-      !enquiryForm.state.trim() ||
-      !enquiryForm.city.trim()
-    ) {
-      setActionState({
-        key: "portal-enquiry",
-        label: formActionLabel,
-        status: "error",
-        message: "Address, pincode, state, and city are required."
-      });
-      return;
-    }
-
-    if (
-      !enquiryForm.destinationAddress.trim() ||
-      !enquiryForm.destinationPincode.trim() ||
-      !enquiryForm.destinationState.trim() ||
-      !enquiryForm.destinationCity.trim()
-    ) {
-      setActionState({
-        key: "portal-enquiry",
-        label: formActionLabel,
-        status: "error",
-        message: "Destination address, pincode, state, and city are required."
-      });
-      return;
-    }
 
     try {
       setActionState({
@@ -1463,6 +1436,27 @@ export default function App() {
           : isEditing
             ? "Failed to update enquiry"
             : "Failed to create enquiry";
+      const backendFieldErrors: EnquiryFieldErrors = {};
+
+      if (message.toLowerCase().includes("lead name")) {
+        backendFieldErrors.leadName = "Lead name is required.";
+      }
+      if (message.toLowerCase().includes("phone number")) {
+        backendFieldErrors.phone = "Phone number must be exactly 10 digits.";
+      }
+      if (message.toLowerCase().includes("email")) {
+        backendFieldErrors.email = "Enter a valid email address.";
+      }
+      if (message.toLowerCase().includes("receiver whatsapp")) {
+        backendFieldErrors.receiverWhatsappNumber = "Receiver WhatsApp number must be exactly 10 digits.";
+      }
+      if (message.toLowerCase().includes("destination pincode")) {
+        backendFieldErrors.destinationPincode = "Destination pincode must be a valid 6-digit number.";
+      } else if (message.toLowerCase().includes("pincode")) {
+        backendFieldErrors.pincode = "Main pincode must be a valid 6-digit number.";
+      }
+
+      setEnquiryFieldErrors(backendFieldErrors);
       setActionState({
         key: "portal-enquiry",
         label: formActionLabel,
@@ -1899,10 +1893,12 @@ export default function App() {
               <span>Lead name *</span>
               <input
                 value={enquiryForm.leadName}
-                onChange={(event) =>
-                  setEnquiryForm((current) => ({ ...current, leadName: event.target.value }))
-                }
+                onChange={(event) => {
+                  clearEnquiryFieldError("leadName");
+                  setEnquiryForm((current) => ({ ...current, leadName: event.target.value }));
+                }}
               />
+              {enquiryFieldErrors.leadName ? <span className="field-error">{enquiryFieldErrors.leadName}</span> : null}
             </label>
             <label>
               <span>Company</span>
@@ -1964,10 +1960,12 @@ export default function App() {
               <span>Address *</span>
               <input
                 value={enquiryForm.address}
-                onChange={(event) =>
-                  setEnquiryForm((current) => ({ ...current, address: event.target.value }))
-                }
+                onChange={(event) => {
+                  clearEnquiryFieldError("address");
+                  setEnquiryForm((current) => ({ ...current, address: event.target.value }));
+                }}
               />
+              {enquiryFieldErrors.address ? <span className="field-error">{enquiryFieldErrors.address}</span> : null}
             </label>
             <label>
               <span>Pincode *</span>
@@ -1989,19 +1987,23 @@ export default function App() {
               <span>State *</span>
               <input
                 value={enquiryForm.state}
-                onChange={(event) =>
-                  setEnquiryForm((current) => ({ ...current, state: event.target.value }))
-                }
+                onChange={(event) => {
+                  clearEnquiryFieldError("state");
+                  setEnquiryForm((current) => ({ ...current, state: event.target.value }));
+                }}
               />
+              {enquiryFieldErrors.state ? <span className="field-error">{enquiryFieldErrors.state}</span> : null}
             </label>
             <label>
               <span>City *</span>
               <input
                 value={enquiryForm.city}
-                onChange={(event) =>
-                  setEnquiryForm((current) => ({ ...current, city: event.target.value }))
-                }
+                onChange={(event) => {
+                  clearEnquiryFieldError("city");
+                  setEnquiryForm((current) => ({ ...current, city: event.target.value }));
+                }}
               />
+              {enquiryFieldErrors.city ? <span className="field-error">{enquiryFieldErrors.city}</span> : null}
             </label>
             <label>
               <span>Requested asset</span>
@@ -2058,10 +2060,14 @@ export default function App() {
               <textarea
                 rows={2}
                 value={enquiryForm.destinationAddress}
-                onChange={(event) =>
-                  setEnquiryForm((current) => ({ ...current, destinationAddress: event.target.value }))
-                }
+                onChange={(event) => {
+                  clearEnquiryFieldError("destinationAddress");
+                  setEnquiryForm((current) => ({ ...current, destinationAddress: event.target.value }));
+                }}
               />
+              {enquiryFieldErrors.destinationAddress ? (
+                <span className="field-error">{enquiryFieldErrors.destinationAddress}</span>
+              ) : null}
             </label>
             <label>
               <span>Destination pincode *</span>
@@ -2085,19 +2091,27 @@ export default function App() {
               <span>Destination state *</span>
               <input
                 value={enquiryForm.destinationState}
-                onChange={(event) =>
-                  setEnquiryForm((current) => ({ ...current, destinationState: event.target.value }))
-                }
+                onChange={(event) => {
+                  clearEnquiryFieldError("destinationState");
+                  setEnquiryForm((current) => ({ ...current, destinationState: event.target.value }));
+                }}
               />
+              {enquiryFieldErrors.destinationState ? (
+                <span className="field-error">{enquiryFieldErrors.destinationState}</span>
+              ) : null}
             </label>
             <label>
               <span>Destination city *</span>
               <input
                 value={enquiryForm.destinationCity}
-                onChange={(event) =>
-                  setEnquiryForm((current) => ({ ...current, destinationCity: event.target.value }))
-                }
+                onChange={(event) => {
+                  clearEnquiryFieldError("destinationCity");
+                  setEnquiryForm((current) => ({ ...current, destinationCity: event.target.value }));
+                }}
               />
+              {enquiryFieldErrors.destinationCity ? (
+                <span className="field-error">{enquiryFieldErrors.destinationCity}</span>
+              ) : null}
             </label>
             </div>
 
