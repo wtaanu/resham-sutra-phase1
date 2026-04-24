@@ -698,7 +698,7 @@ a:hover {
 
 .line-item-row {
   display: grid;
-  grid-template-columns: minmax(0, 2fr) 90px 110px 140px 90px minmax(0, 1.4fr) 150px 88px;
+  grid-template-columns: minmax(260px, 2.8fr) 90px 110px 150px 90px 150px 88px;
   gap: 10px;
   align-items: end;
   padding: 10px;
@@ -708,6 +708,7 @@ a:hover {
 }
 
 .line-item-preview {
+  grid-column: 1 / -1;
   min-height: 36px;
   display: grid;
   align-content: center;

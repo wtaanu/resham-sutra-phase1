@@ -2513,16 +2513,6 @@ function updateLineItemRow(
                       onChange={(event) => updateLineItemRow(row.id, "gstPercent", event.target.value)}
                     />
                   </label>
-                  <div className="line-item-preview">
-                    <span>{product?.narration || product?.name || "Product details will auto-fill from the catalog."}</span>
-                    <strong>{product ? formatCurrency(amounts.totalAmount) : "Amount pending"}</strong>
-                    {product ? (
-                      <>
-                        <span>{`Base ${formatCurrency(amounts.unitValue)} | Transport ${formatCurrency(amounts.transport)}`}</span>
-                        <span>{`GST ${amounts.gstPercent}% = ${formatCurrency(amounts.gstAmount)}`}</span>
-                      </>
-                    ) : null}
-                  </div>
                   <label className="line-item-total">
                     <span>Total amount</span>
                     <input
@@ -2536,6 +2526,16 @@ function updateLineItemRow(
                   <button className="ghost-button" type="button" onClick={() => removeLineItemRow(row.id)}>
                     Remove
                   </button>
+                  <div className="line-item-preview">
+                    <span>{product?.narration || product?.name || "Product details will auto-fill from the catalog."}</span>
+                    <strong>{product ? formatCurrency(amounts.totalAmount) : "Amount pending"}</strong>
+                    {product ? (
+                      <>
+                        <span>{`Base ${formatCurrency(amounts.unitValue)} | Transport ${formatCurrency(amounts.transport)}`}</span>
+                        <span>{`GST ${amounts.gstPercent}% = ${formatCurrency(amounts.gstAmount)}`}</span>
+                      </>
+                    ) : null}
+                  </div>
                 </div>
               );
             })}
