@@ -31,6 +31,7 @@ import {
 
 type EnquiryFields = {
   "Enquiry ID"?: string;
+  "Logged Date Time"?: string;
   "Lead Name"?: string;
   Company?: string;
   Phone?: string;
@@ -49,6 +50,7 @@ type EnquiryFields = {
   "Drive Folder URL"?: string;
   "Requirement Summary"?: string;
   "Requested Asset"?: string;
+  "Receiver WhatsApp Number"?: string;
   Quantity?: string | number;
   Qty?: string | number;
   Notes?: string;
@@ -71,17 +73,21 @@ type CustomerFields = {
 
 type QuotationFields = {
   "Quotation Number"?: string;
+  "Logged Date Time"?: string;
   "Linked Enquiry"?: string[];
   "Linked Customer"?: string[];
   Status?: string;
   "Draft Format"?: string;
   "Draft File URL"?: string;
+  "Draft Created Time"?: string;
   "Final PDF URL"?: string;
   "Drive Folder URL"?: string;
   "Reference Number"?: string;
   "Buyer Block"?: string;
   "Preferred Send Channel"?: string;
   "Sent Date"?: string;
+  "WhatsApp Sent Date Time"?: string;
+  "Email Sent Date Time"?: string;
   "Send Quotation"?: boolean;
   "Send Reminder"?: boolean;
   "Mark Accepted"?: boolean;
@@ -116,6 +122,13 @@ type ProcessingResult = {
 };
 
 const customerLocks = new Map<string, Promise<void>>();
+const optionalEnquiryFields = ["Logged Date Time", "Receiver WhatsApp Number"] as const;
+const optionalQuotationFields = [
+  "Logged Date Time",
+  "Draft Created Time",
+  "WhatsApp Sent Date Time",
+  "Email Sent Date Time"
+] as const;
 
 function linkedRecordIds(...recordIds: Array<string | undefined>) {
   return recordIds.filter((value): value is string => Boolean(value));
@@ -152,6 +165,50 @@ function withOptionalNumberField(
   }
 
   return fields;
+}
+
+function mentionsField(errorMessage: string, fieldName: string) {
+  return errorMessage.toLowerCase().includes(fieldName.toLowerCase());
+}
+
+function stripOptionalFields(
+  fields: Record<string, unknown>,
+  fieldNames: readonly string[],
+  errorMessage: string
+) {
+  const next = { ...fields };
+  let removedAny = false;
+
+  fieldNames.forEach((fieldName) => {
+    if (mentionsField(errorMessage, fieldName)) {
+      delete next[fieldName];
+      removedAny = true;
+    }
+  });
+
+  return removedAny ? next : null;
+}
+
+async function updateRecordWithOptionalFieldFallback<TFields extends Record<string, unknown>>(
+  tableName: string,
+  payload: { id: string; fields: Record<string, unknown> },
+  optionalFieldNames: readonly string[]
+) {
+  try {
+    return await updateRecord<TFields>(tableName, payload);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    const retryFields = stripOptionalFields(payload.fields, optionalFieldNames, message);
+
+    if (!retryFields) {
+      throw error;
+    }
+
+    return updateRecord<TFields>(tableName, {
+      ...payload,
+      fields: retryFields
+    });
+  }
 }
 
 function customerLockKeys(enquiry: AirtableRecord<EnquiryFields>) {
@@ -256,6 +313,45 @@ function findMatchingCustomer(
 
 async function ensureCustomer(enquiry: AirtableRecord<EnquiryFields>) {
   return withCustomerLocks(customerLockKeys(enquiry), async () => {
+    const linkedCustomerId = enquiry.fields["Linked Customer"]?.[0] || "";
+    if (linkedCustomerId) {
+      const linkedCustomer = await getCustomerById(linkedCustomerId);
+      const updatedCustomerFields = withOptionalNumberField(
+        {
+          "Customer Name": enquiry.fields["Lead Name"] || linkedCustomer.fields["Customer Name"] || "Unknown Client",
+          Company: enquiry.fields.Company || linkedCustomer.fields.Company || "",
+          Phone: enquiry.fields.Phone || linkedCustomer.fields.Phone || "",
+          WhatsApp: enquiry.fields.Phone || linkedCustomer.fields.WhatsApp || "",
+          Email: enquiry.fields.Email || linkedCustomer.fields.Email || "",
+          Address: enquiry.fields.Address || linkedCustomer.fields.Address || "",
+          State: enquiry.fields.State || linkedCustomer.fields.State || "",
+          City: enquiry.fields.City || linkedCustomer.fields.City || "",
+          "Customer Type": linkedCustomer.fields["Customer Type"] || "Domestic"
+        },
+        "Pincode",
+        toPincodeNumber(enquiry.fields.Pincode) ?? toPincodeNumber(linkedCustomer.fields.Pincode)
+      );
+
+      try {
+        return await updateRecord<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, {
+          id: linkedCustomer.id,
+          fields: updatedCustomerFields
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "";
+        if (!message.toLowerCase().includes("pincode")) {
+          throw error;
+        }
+
+        const retryFields = { ...updatedCustomerFields };
+        delete retryFields.Pincode;
+        return updateRecord<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, {
+          id: linkedCustomer.id,
+          fields: retryFields
+        });
+      }
+    }
+
     const customers = await listRecords<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, {
       fields: [
         "Client ID",
@@ -581,6 +677,7 @@ async function ensureQuotationShell(
     create: (quotationNumber) =>
       createRecord<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
         "Quotation Number": quotationNumber,
+        "Logged Date Time": new Date().toISOString(),
         "Linked Enquiry": linkedRecordIds(enquiry.id),
         "Linked Customer": linkedRecordIds(customer.id),
         Status: "Parsed",
@@ -594,6 +691,35 @@ async function ensureQuotationShell(
         "Mark Accepted": false,
         "Mark Rejected": false,
         "Reminder Count": 0
+      }).catch((error) => {
+        const message = error instanceof Error ? error.message : "";
+        const retryFields = stripOptionalFields(
+          {
+            "Quotation Number": quotationNumber,
+            "Logged Date Time": new Date().toISOString(),
+            "Linked Enquiry": linkedRecordIds(enquiry.id),
+            "Linked Customer": linkedRecordIds(customer.id),
+            Status: "Parsed",
+            "Draft Format": "XLSX",
+            "Drive Folder URL": enquiry.fields["Drive Folder URL"] || "",
+            "Reference Number": enquiryReference,
+            "Buyer Block": buildBuyerBlock(enquiry),
+            "Preferred Send Channel": "Email",
+            "Send Quotation": false,
+            "Send Reminder": false,
+            "Mark Accepted": false,
+            "Mark Rejected": false,
+            "Reminder Count": 0
+          },
+          optionalQuotationFields,
+          message
+        );
+
+        if (!retryFields) {
+          throw error;
+        }
+
+        return createRecord<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, retryFields);
       })
   });
 
@@ -717,15 +843,24 @@ async function markQuotationSent(
   quotation: AirtableRecord<QuotationFields>,
   channel: "Email" | "WhatsApp"
 ) {
-  return updateRecord<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
+  const sentAt = new Date().toISOString();
+  const fields: Record<string, unknown> = {
+    Status: "Draft Sent",
+    "Sent Date": sentAt,
+    "Preferred Send Channel": channel,
+    "Send Quotation": true
+  };
+
+  if (channel === "Email") {
+    fields["Email Sent Date Time"] = sentAt;
+  } else {
+    fields["WhatsApp Sent Date Time"] = sentAt;
+  }
+
+  return updateRecordWithOptionalFieldFallback<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
     id: quotation.id,
-    fields: {
-      Status: "Draft Sent",
-      "Sent Date": new Date().toISOString(),
-      "Preferred Send Channel": channel,
-      "Send Quotation": true
-    }
-  });
+    fields
+  }, optionalQuotationFields);
 }
 
 async function createDraftForReadyEnquiry(
@@ -766,10 +901,33 @@ async function createDraftForReadyEnquiry(
     id: quotation.id,
     fields: {
       "Draft File URL": draftFileUrl,
+      "Draft Created Time": new Date().toISOString(),
       "Drive Folder URL": folder.folderUrl || null,
       Status: "Ready for Review",
       "Quotation Number": quotationNumber
     }
+  }).catch(async (error) => {
+    const message = error instanceof Error ? error.message : "";
+    const retryFields = stripOptionalFields(
+      {
+        "Draft File URL": draftFileUrl,
+        "Draft Created Time": new Date().toISOString(),
+        "Drive Folder URL": folder.folderUrl || null,
+        Status: "Ready for Review",
+        "Quotation Number": quotationNumber
+      },
+      optionalQuotationFields,
+      message
+    );
+
+    if (!retryFields) {
+      throw error;
+    }
+
+    return updateRecord<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
+      id: quotation.id,
+      fields: retryFields
+    });
   });
 
   await updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
@@ -889,14 +1047,16 @@ export async function generateFinalPdfForQuotation(quotationId: string) {
 
 export async function sendQuotationEmail(quotationId: string) {
   if (!isSmtpConfigured()) {
-    throw new Error("SMTP is not configured yet.");
+    throw new Error(
+      "SMTP is not configured yet. Add SMTP_HOST, SMTP_PORT, SMTP_USER, and SMTP_APP_PASSWORD on the API server."
+    );
   }
 
-  const { quotation, customer } = await loadQuotationDeliveryContext(quotationId);
-  const recipientEmail = String(customer.fields.Email || "").trim();
+  const { quotation, customer, enquiry } = await loadQuotationDeliveryContext(quotationId);
+  const recipientEmail = String(customer.fields.Email || enquiry.fields.Email || "").trim();
 
   if (!recipientEmail) {
-    throw new Error("The linked customer does not have an email address yet.");
+    throw new Error("A valid customer email address is required.");
   }
 
   const document = await resolveQuotationSendDocument(quotation, customer);
@@ -933,11 +1093,29 @@ export async function sendQuotationWhatsApp(quotationId: string) {
     throw new Error("WhatsApp outbound is not configured yet.");
   }
 
-  const { quotation, customer } = await loadQuotationDeliveryContext(quotationId);
-  const recipientPhone = String(customer.fields.WhatsApp || customer.fields.Phone || "").trim();
+  const { quotation, customer, enquiry } = await loadQuotationDeliveryContext(quotationId);
+  const recipientPhone = String(
+    customer.fields.WhatsApp || customer.fields.Phone || enquiry.fields.Phone || ""
+  ).trim();
 
   if (!recipientPhone) {
-    throw new Error("The linked customer does not have a WhatsApp or phone number yet.");
+    throw new Error("A valid customer WhatsApp number is required.");
+  }
+
+  if (!customer.fields.WhatsApp || !customer.fields.Phone) {
+    const syncedCustomerFields: Record<string, unknown> = {};
+    if (!customer.fields.WhatsApp) {
+      syncedCustomerFields.WhatsApp = recipientPhone;
+    }
+    if (!customer.fields.Phone) {
+      syncedCustomerFields.Phone = recipientPhone;
+    }
+    if (Object.keys(syncedCustomerFields).length) {
+      await updateRecord<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, {
+        id: customer.id,
+        fields: syncedCustomerFields
+      });
+    }
   }
 
   const document = await resolveQuotationSendDocument(quotation, customer);
@@ -972,6 +1150,7 @@ async function syncParsedEnquiriesWithLineItems() {
   const parsedEnquiries = await listRecords<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
     fields: [
       "Enquiry ID",
+      "Logged Date Time",
       "Lead Name",
       "Company",
       "Phone",
@@ -987,7 +1166,8 @@ async function syncParsedEnquiriesWithLineItems() {
       "Parser Status",
       "Linked Customer",
       "Quotations",
-      "Drive Folder URL"
+      "Drive Folder URL",
+      "Receiver WhatsApp Number"
     ],
     filterByFormula: "{Parser Status}='Parsed'",
     maxRecords: 100
@@ -1050,6 +1230,7 @@ async function syncNewEnquiriesWithCustomers() {
   const newEnquiries = await listRecords<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
     fields: [
       "Enquiry ID",
+      "Logged Date Time",
       "Lead Name",
       "Company",
       "Phone",
@@ -1065,7 +1246,8 @@ async function syncNewEnquiriesWithCustomers() {
       "Parser Status",
       "Linked Customer",
       "Quotations",
-      "Drive Folder URL"
+      "Drive Folder URL",
+      "Receiver WhatsApp Number"
     ],
     filterByFormula: "{Parser Status}='New'",
     maxRecords: 100
@@ -1130,6 +1312,7 @@ export async function processPendingEnquiries() {
   const readyEnquiries = await listRecords<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
     fields: [
       "Enquiry ID",
+      "Logged Date Time",
       "Lead Name",
       "Company",
       "Phone",
@@ -1145,7 +1328,8 @@ export async function processPendingEnquiries() {
       "Parser Status",
       "Linked Customer",
       "Quotations",
-      "Drive Folder URL"
+      "Drive Folder URL",
+      "Receiver WhatsApp Number"
     ],
     filterByFormula:
       "AND({Parser Status}='Ready for Draft', {Linked Customer}!=BLANK(), {Quotations}!=BLANK())",

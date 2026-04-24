@@ -54,17 +54,22 @@ export async function sendMail(input: SendMailInput) {
     throw new Error("No email recipients were provided");
   }
 
-  return transporter.sendMail({
-    from: {
-      name: env.SMTP_FROM_NAME,
-      address: env.SMTP_USER
-    },
-    to: recipients.join(", "),
-    subject: input.subject,
-    text: input.text,
-    html: input.html,
-    attachments: input.attachments
-  });
+  try {
+    return await transporter.sendMail({
+      from: {
+        name: env.SMTP_FROM_NAME,
+        address: env.SMTP_USER
+      },
+      to: recipients.join(", "),
+      subject: input.subject,
+      text: input.text,
+      html: input.html,
+      attachments: input.attachments
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown SMTP error";
+    throw new Error(`SMTP send failed: ${message}`);
+  }
 }
 
 export function resolveDocumentAttachment(relativePath: string, filename: string, contentType?: string) {

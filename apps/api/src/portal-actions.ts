@@ -13,6 +13,7 @@ import { createCustomerForEnquiry, refreshDraftForQuotation } from "./intake-pro
 
 type EnquiryFields = {
   "Enquiry ID"?: string;
+  "Logged Date Time"?: string;
   "Lead Name"?: string;
   Company?: string;
   Phone?: string;
@@ -31,6 +32,7 @@ type EnquiryFields = {
   "Requirement Summary"?: string;
   "Requested Asset"?: string;
   "Potential Product"?: string;
+  "Receiver WhatsApp Number"?: string;
 };
 
 type CustomerFields = {
@@ -83,6 +85,16 @@ const pincodeSchema = z
   .trim()
   .regex(/^\d{6}$/, "Enter a valid 6-digit pincode");
 const optionalPincodeSchema = z.union([pincodeSchema, z.literal("")]).default("");
+const optionalPhoneSchema = z
+  .string()
+  .trim()
+  .transform((value) => value.replace(/\D/g, ""))
+  .refine((value) => value === "" || value.length === 10, "Phone number must be exactly 10 digits");
+const optionalEmailSchema = z
+  .string()
+  .trim()
+  .refine((value) => value === "" || value.includes("@"), "Email must include @");
+const optionalEnquiryFields = ["Logged Date Time", "Receiver WhatsApp Number"] as const;
 
 function linkedRecordIds(...recordIds: Array<string | undefined>) {
   return recordIds.filter((value): value is string => Boolean(value));
@@ -92,8 +104,8 @@ const enquiryPayloadSchema = z.object({
   linkedCustomerId: optionalAirtableRecordIdSchema,
   leadName: z.string().trim().min(1, "Lead name is required"),
   company: z.string().trim().optional().default(""),
-  phone: z.string().trim().optional().default(""),
-  email: z.string().trim().optional().default(""),
+  phone: optionalPhoneSchema.default(""),
+  email: optionalEmailSchema.default(""),
   address: z.string().trim().optional().default(""),
   state: z.string().trim().optional().default(""),
   city: z.string().trim().optional().default(""),
@@ -104,7 +116,8 @@ const enquiryPayloadSchema = z.object({
   destinationPincode: optionalPincodeSchema,
   requirementSummary: z.string().trim().optional().default(""),
   requestedAsset: z.string().trim().optional().default(""),
-  potentialProduct: z.string().trim().optional().default("")
+  potentialProduct: z.string().trim().optional().default(""),
+  receiverWhatsappNumber: optionalPhoneSchema.default("")
 });
 
 const lineItemPayloadSchema = z.object({
@@ -115,6 +128,7 @@ const lineItemPayloadSchema = z.object({
         productId: airtableRecordIdSchema,
         qty: z.coerce.number().positive("Quantity should be greater than zero"),
         totalAmount: z.coerce.number().nonnegative("Total amount should be zero or more").optional()
+          .refine((value) => value === undefined || value > 0, "Total amount should be greater than zero")
       })
     )
     .min(1, "Add at least one line item")
@@ -161,6 +175,24 @@ function omitFieldFromRecords(records: Record<string, unknown>[], fieldName: str
 
 function mentionsField(errorMessage: string, fieldName: string) {
   return errorMessage.toLowerCase().includes(fieldName.toLowerCase());
+}
+
+function stripOptionalFields(
+  fields: Record<string, unknown>,
+  fieldNames: readonly string[],
+  errorMessage: string
+) {
+  const next = { ...fields };
+  let removedAny = false;
+
+  fieldNames.forEach((fieldName) => {
+    if (mentionsField(errorMessage, fieldName)) {
+      delete next[fieldName];
+      removedAny = true;
+    }
+  });
+
+  return removedAny ? next : null;
 }
 
 function withOptionalNumberField(
@@ -240,9 +272,11 @@ export async function createPortalEnquiry(payload: unknown) {
   const destinationPincode = input.destinationPincode || input.pincode || "";
   const mainPincode = toPincodeNumber(input.pincode, existingCustomer?.fields.Pincode);
   const destinationPincodeNumber = toPincodeNumber(destinationPincode);
+  const loggedDateTime = new Date().toISOString();
   const enquiryFields = withOptionalNumberField(
     withOptionalNumberField(
       {
+        "Logged Date Time": loggedDateTime,
         "Lead Name": input.leadName || existingCustomer?.fields["Customer Name"] || "",
         Company: input.company || existingCustomer?.fields.Company || "",
         Phone: input.phone || existingCustomer?.fields.Phone || "",
@@ -257,7 +291,8 @@ export async function createPortalEnquiry(payload: unknown) {
         "Linked Customer": linkedRecordIds(linkedCustomerId),
         "Requirement Summary": input.requirementSummary,
         "Requested Asset": input.requestedAsset,
-        "Potential Product": input.potentialProduct
+        "Potential Product": input.potentialProduct,
+        "Receiver WhatsApp Number": input.receiverWhatsappNumber
       },
       "Pincode",
       mainPincode
@@ -280,13 +315,22 @@ export async function createPortalEnquiry(payload: unknown) {
         return await createRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, fieldsWithId);
       } catch (error) {
         const message = error instanceof Error ? error.message : "";
-        if (!mentionsField(message, "Pincode")) {
+        let retryFields: Record<string, unknown> | null = stripOptionalFields(
+          fieldsWithId,
+          optionalEnquiryFields,
+          message
+        );
+
+        if (mentionsField(message, "Pincode")) {
+          retryFields = { ...(retryFields ?? fieldsWithId) };
+          delete retryFields.Pincode;
+          delete retryFields["Destination Pincode"];
+        }
+
+        if (!retryFields) {
           throw error;
         }
 
-        const retryFields = { ...fieldsWithId };
-        delete retryFields.Pincode;
-        delete retryFields["Destination Pincode"];
         return createRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, retryFields);
       }
     }
@@ -298,6 +342,97 @@ export async function createPortalEnquiry(payload: unknown) {
     enquiryRecordId: provisioned.enquiry.id,
     enquiryId: provisioned.enquiry.fields["Enquiry ID"] || created.fields["Enquiry ID"] || "",
     parserStatus: provisioned.enquiry.fields["Parser Status"] || created.fields["Parser Status"] || parserStatus,
+    linkedCustomerId: provisioned.customer.id,
+    quotationRecordId: provisioned.quotation.id,
+    quotationNumber: provisioned.quotation.fields["Quotation Number"] || "",
+    driveFolderUrl: provisioned.folder?.folderUrl || provisioned.customer.fields["Drive Folder URL"] || ""
+  };
+}
+
+export async function updatePortalEnquiry(enquiryId: string, payload: unknown) {
+  const input = enquiryPayloadSchema.parse(payload);
+  const existingEnquiry = await getRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, enquiryId);
+  const existingCustomer = input.linkedCustomerId
+    ? await getRecord<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, input.linkedCustomerId)
+    : existingEnquiry.fields["Linked Customer"]?.[0]
+      ? await getRecord<CustomerFields>(
+          env.AIRTABLE_CUSTOMERS_TABLE,
+          existingEnquiry.fields["Linked Customer"]?.[0] || ""
+        )
+      : await findExistingCustomerByContact(input);
+  const linkedCustomerId =
+    input.linkedCustomerId || existingEnquiry.fields["Linked Customer"]?.[0] || existingCustomer?.id || "";
+  const parserStatus = existingEnquiry.fields["Parser Status"] || normalizeStatusForEnquiry(linkedCustomerId);
+  const destinationAddress = input.destinationAddress || input.address || "";
+  const destinationState = input.destinationState || input.state || "";
+  const destinationCity = input.destinationCity || input.city || "";
+  const destinationPincode = input.destinationPincode || input.pincode || "";
+  const mainPincode = toPincodeNumber(input.pincode, existingCustomer?.fields.Pincode);
+  const destinationPincodeNumber = toPincodeNumber(destinationPincode);
+
+  const enquiryFields = withOptionalNumberField(
+    withOptionalNumberField(
+      {
+        "Lead Name": input.leadName || existingCustomer?.fields["Customer Name"] || existingEnquiry.fields["Lead Name"] || "",
+        Company: input.company || existingCustomer?.fields.Company || existingEnquiry.fields.Company || "",
+        Phone: input.phone || existingCustomer?.fields.Phone || existingEnquiry.fields.Phone || "",
+        Email: input.email || existingCustomer?.fields.Email || existingEnquiry.fields.Email || "",
+        Address: input.address || existingCustomer?.fields.Address || existingEnquiry.fields.Address || "",
+        State: input.state || existingCustomer?.fields.State || existingEnquiry.fields.State || "",
+        City: input.city || existingCustomer?.fields.City || existingEnquiry.fields.City || "",
+        "Destination Address": destinationAddress,
+        "Destination State": destinationState,
+        "Destination City": destinationCity,
+        "Parser Status": parserStatus,
+        "Linked Customer": linkedRecordIds(linkedCustomerId),
+        "Requirement Summary": input.requirementSummary,
+        "Requested Asset": input.requestedAsset,
+        "Potential Product": input.potentialProduct,
+        "Receiver WhatsApp Number": input.receiverWhatsappNumber
+      },
+      "Pincode",
+      mainPincode
+    ),
+    "Destination Pincode",
+    destinationPincodeNumber
+  );
+
+  let updatedEnquiry: AirtableRecord<EnquiryFields>;
+  try {
+    updatedEnquiry = await updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
+      id: enquiryId,
+      fields: enquiryFields
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    let retryFields: Record<string, unknown> | null = stripOptionalFields(
+      enquiryFields,
+      optionalEnquiryFields,
+      message
+    );
+
+    if (mentionsField(message, "Pincode")) {
+      retryFields = { ...(retryFields ?? enquiryFields) };
+      delete retryFields.Pincode;
+      delete retryFields["Destination Pincode"];
+    }
+
+    if (!retryFields) {
+      throw error;
+    }
+
+    updatedEnquiry = await updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
+      id: enquiryId,
+      fields: retryFields
+    });
+  }
+
+  const provisioned = await createCustomerForEnquiry(updatedEnquiry.id);
+
+  return {
+    enquiryRecordId: provisioned.enquiry.id,
+    enquiryId: provisioned.enquiry.fields["Enquiry ID"] || updatedEnquiry.fields["Enquiry ID"] || "",
+    parserStatus: provisioned.enquiry.fields["Parser Status"] || updatedEnquiry.fields["Parser Status"] || parserStatus,
     linkedCustomerId: provisioned.customer.id,
     quotationRecordId: provisioned.quotation.id,
     quotationNumber: provisioned.quotation.fields["Quotation Number"] || "",

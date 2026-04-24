@@ -21,7 +21,7 @@ import {
   processPendingEnquiries
 } from "./intake-processor.js";
 import { getOperationsSnapshot } from "./operations.js";
-import { createPortalEnquiry, createPortalQuotationLineItems } from "./portal-actions.js";
+import { createPortalEnquiry, createPortalQuotationLineItems, updatePortalEnquiry } from "./portal-actions.js";
 import {
   getProductDocumentsByIds,
   sendProductDocumentsSchema,
@@ -217,6 +217,23 @@ app.post("/api/portal/enquiries", requireAuthenticatedUser, async (request, resp
     response.status(400).json({
       status: "error",
       message: error instanceof Error ? error.message : "Failed to create enquiry"
+    });
+  }
+});
+
+app.patch("/api/portal/enquiries/:id", requireAuthenticatedUser, async (request, response) => {
+  try {
+    const enquiryId = String(request.params.id || "");
+    const result = await updatePortalEnquiry(enquiryId, request.body);
+    response.status(200).json({
+      status: "ok",
+      ...result
+    });
+  } catch (error) {
+    logRouteError("PATCH /api/portal/enquiries/:id", error);
+    response.status(400).json({
+      status: "error",
+      message: error instanceof Error ? error.message : "Failed to update enquiry"
     });
   }
 });

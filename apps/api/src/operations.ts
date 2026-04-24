@@ -6,6 +6,7 @@ import { listProductDocuments } from "./product-documents.js";
 
 type EnquiryFields = {
   "Enquiry ID"?: string;
+  "Logged Date Time"?: string;
   "Lead Name"?: string;
   Company?: string;
   Phone?: string;
@@ -23,6 +24,7 @@ type EnquiryFields = {
   Quotations?: string[];
   "Drive Folder URL"?: string;
   "Requirement Summary"?: string;
+  "Receiver WhatsApp Number"?: string;
 };
 
 type CustomerFields = {
@@ -41,15 +43,19 @@ type CustomerFields = {
 
 type QuotationFields = {
   "Quotation Number"?: string;
+  "Logged Date Time"?: string;
   "Linked Customer"?: string[];
   "Linked Enquiry"?: string[];
   Status?: string;
   "Draft File URL"?: string;
+  "Draft Created Time"?: string;
   "Final PDF URL"?: string;
   "Final PDF Generated At"?: string;
   "Drive Folder URL"?: string;
   "Preferred Send Channel"?: string;
   "Sent Date"?: string;
+  "WhatsApp Sent Date Time"?: string;
+  "Email Sent Date Time"?: string;
   "Send Quotation"?: boolean;
   "Send Reminder"?: boolean;
   "Mark Accepted"?: boolean;
@@ -261,6 +267,7 @@ export async function getOperationsSnapshot() {
       return {
         id: record.id,
         enquiryId: record.fields["Enquiry ID"] || record.id,
+        loggedDateTime: record.fields["Logged Date Time"] || record.createdTime || "",
         leadName: record.fields["Lead Name"] || "",
         company: record.fields.Company || "",
         phone: record.fields.Phone || "",
@@ -278,7 +285,8 @@ export async function getOperationsSnapshot() {
         quotations: mergedQuotations,
         mappedProductDocuments,
         driveFolderUrl: record.fields["Drive Folder URL"] || "",
-        requirementSummary: record.fields["Requirement Summary"] || ""
+        requirementSummary: record.fields["Requirement Summary"] || "",
+        receiverWhatsappNumber: record.fields["Receiver WhatsApp Number"] || ""
       };
     }),
     customers: customers.map((record) => ({
@@ -298,14 +306,18 @@ export async function getOperationsSnapshot() {
     quotations: quotations.map((record) => ({
       id: record.id,
       quotationNumber: record.fields["Quotation Number"] || record.id,
+      loggedDateTime: record.fields["Logged Date Time"] || record.createdTime || "",
       linkedCustomerId: record.fields["Linked Customer"]?.[0] || "",
       linkedEnquiryId: record.fields["Linked Enquiry"]?.[0] || "",
       status: record.fields.Status || "",
       draftFileUrl: record.fields["Draft File URL"] || "",
+      draftCreatedTime: record.fields["Draft Created Time"] || "",
       finalPdfUrl: record.fields["Final PDF URL"] || "",
       driveFolderUrl: record.fields["Drive Folder URL"] || "",
       preferredSendChannel: record.fields["Preferred Send Channel"] || "",
       sentDate: record.fields["Sent Date"] || "",
+      whatsappSentDateTime: record.fields["WhatsApp Sent Date Time"] || "",
+      emailSentDateTime: record.fields["Email Sent Date Time"] || "",
       finalPdfGeneratedAt: pdfGeneratedAtByQuotationId.get(record.id) || "",
       lineItemCount: quotationLineItems.filter((item) => item.fields.Quotation?.includes(record.id)).length,
       sendQuotation: Boolean(record.fields["Send Quotation"]),

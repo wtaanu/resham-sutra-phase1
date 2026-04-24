@@ -26,6 +26,7 @@ type ProductDocument = {
 type EnquiryRecord = {
   id: string;
   enquiryId: string;
+  loggedDateTime: string;
   leadName: string;
   company: string;
   phone: string;
@@ -44,6 +45,7 @@ type EnquiryRecord = {
   mappedProductDocuments: ProductDocument[];
   driveFolderUrl: string;
   requirementSummary: string;
+  receiverWhatsappNumber: string;
 };
 
 type CustomerRecord = {
@@ -64,14 +66,18 @@ type CustomerRecord = {
 type QuotationRecord = {
   id: string;
   quotationNumber: string;
+  loggedDateTime: string;
   linkedCustomerId: string;
   linkedEnquiryId: string;
   status: string;
   draftFileUrl: string;
+  draftCreatedTime: string;
   finalPdfUrl: string;
   driveFolderUrl: string;
   preferredSendChannel: string;
   sentDate: string;
+  whatsappSentDateTime: string;
+  emailSentDateTime: string;
   finalPdfGeneratedAt?: string;
   lineItemCount?: number;
   sendQuotation?: boolean;
@@ -162,6 +168,7 @@ type EnquiryFormState = {
   company: string;
   phone: string;
   email: string;
+  receiverWhatsappNumber: string;
   address: string;
   state: string;
   city: string;
@@ -245,6 +252,41 @@ function normalizePincodeInput(value: string) {
   return value.replace(/\D/g, "").slice(0, 6);
 }
 
+function normalizePhoneInput(value: string) {
+  return value.replace(/\D/g, "").slice(0, 10);
+}
+
+function normalizeDecimalInput(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  const normalized = trimmed.replace(/[^\d.]/g, "");
+  const [whole = "", ...decimals] = normalized.split(".");
+  const decimalPart = decimals.join("").slice(0, 2);
+  return decimalPart ? `${whole}.${decimalPart}` : whole;
+}
+
+function isValidTenDigitPhone(value: string) {
+  return normalizePhoneInput(value).length === 10;
+}
+
+function isValidEmail(value: string) {
+  const trimmed = value.trim();
+  return trimmed.includes("@");
+}
+
+function isValidPositiveAmount(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return true;
+  }
+
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) && parsed > 0;
+}
+
 function calculateLineItemAmounts(
   product: ProductRecord | undefined,
   qtyInput: string | number,
@@ -260,7 +302,7 @@ function calculateLineItemAmounts(
 
   const normalizedInput = String(totalAmountInput ?? "").trim();
   const parsedOverride = Number(normalizedInput);
-  const hasOverride = normalizedInput !== "" && Number.isFinite(parsedOverride) && parsedOverride >= 0;
+  const hasOverride = normalizedInput !== "" && Number.isFinite(parsedOverride) && parsedOverride > 0;
   const totalAmount = hasOverride ? Number(parsedOverride.toFixed(2)) : computedTotalAmount;
   const gstAmount = hasOverride
     ? Number((totalAmount - unitValue - transport).toFixed(2))
@@ -398,6 +440,7 @@ function createBlankEnquiryForm(): EnquiryFormState {
     company: "",
     phone: "",
     email: "",
+    receiverWhatsappNumber: "",
     address: "",
     state: "",
     city: "",
@@ -604,6 +647,7 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [actionState, setActionState] = useState<ActionState | null>(null);
   const [entryMode, setEntryMode] = useState<EntryMode>(null);
+  const [editingEnquiryId, setEditingEnquiryId] = useState("");
   const [enquiryForm, setEnquiryForm] = useState<EnquiryFormState>(createBlankEnquiryForm);
   const [destinationSameAsMain, setDestinationSameAsMain] = useState(false);
   const [customerSearchTerm, setCustomerSearchTerm] = useState("");
@@ -1102,9 +1146,48 @@ export default function App() {
 
   function openEnquiryEntry() {
     setEntryMode("enquiry");
+    setEditingEnquiryId("");
     setEnquiryForm(createBlankEnquiryForm());
     setDestinationSameAsMain(false);
     setCustomerSearchTerm("");
+    setCustomerDropdownOpen(false);
+  }
+
+  function openEnquiryEdit(enquiry: EnquiryRecord) {
+    const customer = customerLookup.get(enquiry.linkedCustomerId);
+    setEntryMode("enquiry");
+    setEditingEnquiryId(enquiry.id);
+    setEnquiryForm({
+      linkedCustomerId: enquiry.linkedCustomerId,
+      leadName: enquiry.leadName,
+      company: enquiry.company,
+      phone: enquiry.phone,
+      email: enquiry.email,
+      receiverWhatsappNumber: enquiry.receiverWhatsappNumber,
+      address: enquiry.address,
+      state: enquiry.state,
+      city: enquiry.city,
+      pincode: enquiry.pincode,
+      destinationAddress: enquiry.destinationAddress,
+      destinationState: enquiry.destinationState,
+      destinationCity: enquiry.destinationCity,
+      destinationPincode: enquiry.destinationPincode,
+      requirementSummary: enquiry.requirementSummary,
+      requestedAsset: "",
+      potentialProduct: ""
+    });
+    setDestinationSameAsMain(
+      Boolean(
+        enquiry.address &&
+          enquiry.address === enquiry.destinationAddress &&
+          enquiry.state === enquiry.destinationState &&
+          enquiry.city === enquiry.destinationCity &&
+          enquiry.pincode === enquiry.destinationPincode
+      )
+    );
+    setCustomerSearchTerm(
+      customer ? `${customer.clientId || "No ID"} - ${customer.customerName || "Unnamed customer"}` : ""
+    );
     setCustomerDropdownOpen(false);
   }
 
@@ -1128,6 +1211,7 @@ export default function App() {
 
   function closeEntryPanel() {
     setEntryMode(null);
+    setEditingEnquiryId("");
     setDestinationSameAsMain(false);
     setCustomerSearchTerm("");
     setCustomerDropdownOpen(false);
@@ -1194,6 +1278,42 @@ export default function App() {
   }
 
   async function handleSubmitEnquiry() {
+    const isEditing = Boolean(editingEnquiryId);
+    const formActionLabel = isEditing ? "Update Enquiry" : "Create Enquiry";
+    const normalizedPhone = normalizePhoneInput(enquiryForm.phone);
+    const normalizedReceiverWhatsapp = normalizePhoneInput(enquiryForm.receiverWhatsappNumber);
+    const normalizedEmail = enquiryForm.email.trim();
+
+    if (enquiryForm.phone.trim() && !isValidTenDigitPhone(enquiryForm.phone)) {
+      setActionState({
+        key: "portal-enquiry",
+        label: formActionLabel,
+        status: "error",
+        message: "Phone number must be exactly 10 digits."
+      });
+      return;
+    }
+
+    if (normalizedEmail && !isValidEmail(normalizedEmail)) {
+      setActionState({
+        key: "portal-enquiry",
+        label: formActionLabel,
+        status: "error",
+        message: "Email must include @."
+      });
+      return;
+    }
+
+    if (enquiryForm.receiverWhatsappNumber.trim() && !isValidTenDigitPhone(enquiryForm.receiverWhatsappNumber)) {
+      setActionState({
+        key: "portal-enquiry",
+        label: formActionLabel,
+        status: "error",
+        message: "Receiver WhatsApp number must be exactly 10 digits."
+      });
+      return;
+    }
+
     if (
       !enquiryForm.address.trim() ||
       !enquiryForm.pincode.trim() ||
@@ -1202,7 +1322,7 @@ export default function App() {
     ) {
       setActionState({
         key: "portal-enquiry",
-        label: "Create Enquiry",
+        label: formActionLabel,
         status: "error",
         message: "Address, pincode, state, and city are required."
       });
@@ -1217,7 +1337,7 @@ export default function App() {
     ) {
       setActionState({
         key: "portal-enquiry",
-        label: "Create Enquiry",
+        label: formActionLabel,
         status: "error",
         message: "Destination address, pincode, state, and city are required."
       });
@@ -1227,47 +1347,59 @@ export default function App() {
     try {
       setActionState({
         key: "portal-enquiry",
-        label: "Create Enquiry",
+        label: formActionLabel,
         status: "loading",
-        message: "Saving enquiry to Airtable..."
+        message: isEditing
+          ? "Updating enquiry and refreshing customer, folder, and quotation flow..."
+          : "Saving enquiry to Airtable..."
       });
 
-      const response = await apiFetch(`${apiUrl}/api/portal/enquiries`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          linkedCustomerId: enquiryForm.linkedCustomerId,
-          leadName: enquiryForm.leadName,
-          company: enquiryForm.company,
-          phone: enquiryForm.phone,
-          email: enquiryForm.email,
-          address: enquiryForm.address,
-          state: enquiryForm.state,
-          city: enquiryForm.city,
-          pincode: normalizePincodeInput(enquiryForm.pincode),
-          destinationAddress: enquiryForm.destinationAddress,
-          destinationState: enquiryForm.destinationState,
-          destinationCity: enquiryForm.destinationCity,
-          destinationPincode: normalizePincodeInput(enquiryForm.destinationPincode),
-          requirementSummary: enquiryForm.requirementSummary,
-          requestedAsset: enquiryForm.requestedAsset,
-          potentialProduct: enquiryForm.potentialProduct
-        })
-      });
+      const response = await apiFetch(
+        isEditing
+          ? `${apiUrl}/api/portal/enquiries/${editingEnquiryId}`
+          : `${apiUrl}/api/portal/enquiries`,
+        {
+          method: isEditing ? "PATCH" : "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            linkedCustomerId: enquiryForm.linkedCustomerId,
+            leadName: enquiryForm.leadName,
+            company: enquiryForm.company,
+            phone: normalizedPhone,
+            email: normalizedEmail,
+            receiverWhatsappNumber: normalizedReceiverWhatsapp,
+            address: enquiryForm.address,
+            state: enquiryForm.state,
+            city: enquiryForm.city,
+            pincode: normalizePincodeInput(enquiryForm.pincode),
+            destinationAddress: enquiryForm.destinationAddress,
+            destinationState: enquiryForm.destinationState,
+            destinationCity: enquiryForm.destinationCity,
+            destinationPincode: normalizePincodeInput(enquiryForm.destinationPincode),
+            requirementSummary: enquiryForm.requirementSummary,
+            requestedAsset: enquiryForm.requestedAsset,
+            potentialProduct: enquiryForm.potentialProduct
+          })
+        }
+      );
 
       const payload = (await response.json()) as { message?: string };
 
       if (!response.ok) {
-        throw new Error(payload.message || "Failed to create enquiry");
+        throw new Error(payload.message || (isEditing ? "Failed to update enquiry" : "Failed to create enquiry"));
       }
 
       setActionState({
         key: "portal-enquiry",
-        label: "Create Enquiry",
+        label: formActionLabel,
         status: "success",
-        message: payload.message || "Enquiry created successfully."
+        message:
+          payload.message ||
+          (isEditing
+            ? "Enquiry updated and provisioning flow refreshed successfully."
+            : "Enquiry created successfully.")
       });
       setEnquiryForm(createBlankEnquiryForm());
       closeEntryPanel();
@@ -1275,10 +1407,14 @@ export default function App() {
       void refreshOperations(true);
     } catch (submitError) {
       const message =
-        submitError instanceof Error ? submitError.message : "Failed to create enquiry";
+        submitError instanceof Error
+          ? submitError.message
+          : isEditing
+            ? "Failed to update enquiry"
+            : "Failed to create enquiry";
       setActionState({
         key: "portal-enquiry",
-        label: "Create Enquiry",
+        label: formActionLabel,
         status: "error",
         message
       });
@@ -1292,7 +1428,8 @@ export default function App() {
           return row;
         }
 
-        const nextRow = { ...row, [field]: value };
+        const nextValue = field === "totalAmount" ? normalizeDecimalInput(value) : value;
+        const nextRow = { ...row, [field]: nextValue };
 
         if (field === "totalAmount") {
           return nextRow;
@@ -1362,6 +1499,20 @@ export default function App() {
         label: "Create Line Items",
         status: "error",
         message: "Select a product for every line item before creating them."
+      });
+      return;
+    }
+
+    if (
+      lineItemRows.some(
+        (row) => row.totalAmount.trim() !== "" && !isValidPositiveAmount(row.totalAmount)
+      )
+    ) {
+      setActionState({
+        key: "portal-line-items",
+        label: "Create Line Items",
+        status: "error",
+        message: "Total amount must be a number greater than zero. Decimals are allowed."
       });
       return;
     }
@@ -1567,7 +1718,10 @@ export default function App() {
   const isSendingProductDocuments =
     actionState?.key === "send-product-documents" && actionState.status === "loading";
   const hasInvalidLineItems = lineItemRows.some(
-    (row) => !row.productId || Number(row.qty || 0) <= 0
+    (row) =>
+      !row.productId ||
+      Number(row.qty || 0) <= 0 ||
+      (row.totalAmount.trim() !== "" && !isValidPositiveAmount(row.totalAmount))
   );
   const popupActionState = useMemo(() => {
     if (!actionState || !entryMode) {
@@ -1611,8 +1765,12 @@ export default function App() {
             <div className="panel-header panel-header-tight">
               <div>
                 <p className="eyebrow">Portal Entry</p>
-                <h2>Create enquiry</h2>
-                <p className="panel-subcopy">Capture the enquiry here and push it straight into Airtable.</p>
+                <h2>{editingEnquiryId ? "Edit enquiry" : "Create enquiry"}</h2>
+                <p className="panel-subcopy">
+                  {editingEnquiryId
+                    ? "Update the enquiry and re-run customer, folder, and quotation provisioning in one save."
+                    : "Capture the enquiry here and push it straight into Airtable."}
+                </p>
               </div>
               <button className="entry-close" type="button" onClick={closeEntryPanel}>
                 Close
@@ -1690,18 +1848,39 @@ export default function App() {
             <label>
               <span>Phone</span>
               <input
+                inputMode="numeric"
+                maxLength={10}
                 value={enquiryForm.phone}
                 onChange={(event) =>
-                  setEnquiryForm((current) => ({ ...current, phone: event.target.value }))
+                  setEnquiryForm((current) => ({
+                    ...current,
+                    phone: normalizePhoneInput(event.target.value)
+                  }))
                 }
               />
             </label>
             <label>
               <span>Email</span>
               <input
+                type="email"
                 value={enquiryForm.email}
                 onChange={(event) =>
                   setEnquiryForm((current) => ({ ...current, email: event.target.value }))
+                }
+              />
+            </label>
+            <label>
+              <span>Receiver WhatsApp Number</span>
+              <input
+                inputMode="numeric"
+                maxLength={10}
+                value={enquiryForm.receiverWhatsappNumber}
+                placeholder="Optional business number"
+                onChange={(event) =>
+                  setEnquiryForm((current) => ({
+                    ...current,
+                    receiverWhatsappNumber: normalizePhoneInput(event.target.value)
+                  }))
                 }
               />
             </label>
@@ -1847,7 +2026,7 @@ export default function App() {
                 onClick={() => void handleSubmitEnquiry()}
                 disabled={isSavingEnquiry}
               >
-                {isSavingEnquiry ? "Saving..." : "Save enquiry"}
+                {isSavingEnquiry ? "Saving..." : editingEnquiryId ? "Update enquiry" : "Save enquiry"}
               </button>
             </div>
           </section>
@@ -2098,7 +2277,7 @@ export default function App() {
                     <span>Total amount</span>
                     <input
                       type="number"
-                      min="0"
+                      min="0.01"
                       step="0.01"
                       value={row.totalAmount}
                       placeholder={product ? formatAmountInput(amounts.computedTotalAmount) : "Select product first"}
@@ -2334,10 +2513,16 @@ export default function App() {
               <td>
                 <strong>{enquiry.enquiryId}</strong>
                 <span>{[enquiry.city, enquiry.state, enquiry.pincode].filter(Boolean).join(", ") || "Address pending"}</span>
+                {enquiry.loggedDateTime ? (
+                  <span className="table-submeta">Logged {formatDateTime(enquiry.loggedDateTime)}</span>
+                ) : null}
               </td>
               <td>
                 <strong>{enquiry.leadName || "Unnamed lead"}</strong>
                 <span>{enquiry.phone || enquiry.email || "Contact missing"}</span>
+                {enquiry.receiverWhatsappNumber ? (
+                  <span className="table-submeta">Receiver WA {enquiry.receiverWhatsappNumber}</span>
+                ) : null}
               </td>
               <td>{enquiry.company || "-"}</td>
               <td>
@@ -2380,51 +2565,60 @@ export default function App() {
                 )}
               </td>
               <td>
-                {(!enquiry.linkedCustomerId || !enquiry.quotations.length) &&
-                (enquiry.parserStatus === "New" || enquiry.parserStatus === "Parsed") ? (
+                <div className="action-stack">
                   <button
                     className="action-inline-button"
                     type="button"
-                    onClick={() => void handleCreateCustomer(enquiry.id)}
-                    disabled={actionState?.key === enquiry.id && actionState.status === "loading"}
+                    onClick={() => openEnquiryEdit(enquiry)}
                   >
-                    {actionState?.key === enquiry.id && actionState.status === "loading"
-                      ? "Creating..."
-                      : "Create Customer"}
+                    Edit
                   </button>
-                ) : enquiry.parserStatus === "Parsed" &&
-                  enquiry.linkedCustomerId &&
-                  enquiry.quotations.length ? (
-                  <button
-                    className="action-inline-button"
-                    type="button"
-                    onClick={() => {
-                      openLineItemEntry(quotation?.id || "");
-                      setActionState({
-                        key: `line-items-${enquiry.id}`,
-                        label: quotation?.quotationNumber
-                          ? `Add Line Items for ${quotation.quotationNumber}`
-                          : "Add Line Items",
-                        status: "success",
-                        message: "Line item entry is ready in the portal."
-                      });
-                    }}
-                  >
-                    {quotation?.quotationNumber ? `Add Items (${quotation.quotationNumber})` : "Add Line Items"}
-                  </button>
-                ) : enquiry.parserStatus === "Ready for Review" && enquiry.driveFolderUrl ? (
-                  <a
-                    className="action-inline-link"
-                    href={enquiry.driveFolderUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    onClick={() => handleLinkAction(`review-${enquiry.id}`, "Open Folder")}
-                  >
-                    Open Folder
-                  </a>
-                ) : (
-                  <span>Auto</span>
-                )}
+                  {(!enquiry.linkedCustomerId || !enquiry.quotations.length) &&
+                  (enquiry.parserStatus === "New" || enquiry.parserStatus === "Parsed") ? (
+                    <button
+                      className="action-inline-button"
+                      type="button"
+                      onClick={() => void handleCreateCustomer(enquiry.id)}
+                      disabled={actionState?.key === enquiry.id && actionState.status === "loading"}
+                    >
+                      {actionState?.key === enquiry.id && actionState.status === "loading"
+                        ? "Creating..."
+                        : "Create Customer"}
+                    </button>
+                  ) : enquiry.parserStatus === "Parsed" &&
+                    enquiry.linkedCustomerId &&
+                    enquiry.quotations.length ? (
+                    <button
+                      className="action-inline-button"
+                      type="button"
+                      onClick={() => {
+                        openLineItemEntry(quotation?.id || "");
+                        setActionState({
+                          key: `line-items-${enquiry.id}`,
+                          label: quotation?.quotationNumber
+                            ? `Add Line Items for ${quotation.quotationNumber}`
+                            : "Add Line Items",
+                          status: "success",
+                          message: "Line item entry is ready in the portal."
+                        });
+                      }}
+                    >
+                      {quotation?.quotationNumber ? `Add Items (${quotation.quotationNumber})` : "Add Line Items"}
+                    </button>
+                  ) : enquiry.parserStatus === "Ready for Review" && enquiry.driveFolderUrl ? (
+                    <a
+                      className="action-inline-link"
+                      href={enquiry.driveFolderUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={() => handleLinkAction(`review-${enquiry.id}`, "Open Folder")}
+                    >
+                      Open Folder
+                    </a>
+                  ) : (
+                    <span>Auto</span>
+                  )}
+                </div>
               </td>
             </tr>
           );
@@ -2700,6 +2894,9 @@ export default function App() {
               <td>
                 <strong>{quotation.quotationNumber}</strong>
                 <span>{enquiryLookup.get(quotation.linkedEnquiryId)?.enquiryId || "No enquiry link"}</span>
+                {quotation.loggedDateTime ? (
+                  <span className="table-submeta">Logged {formatDateTime(quotation.loggedDateTime)}</span>
+                ) : null}
               </td>
               <td>{customerLookup.get(quotation.linkedCustomerId)?.customerName || "Not linked"}</td>
               <td>
@@ -2707,7 +2904,21 @@ export default function App() {
                   {quotation.status || "Draft"}
                 </span>
               </td>
-              <td>{quotation.preferredSendChannel || "Email"}</td>
+              <td>
+                <div className="table-link-stack">
+                  <span>{quotation.preferredSendChannel || "Email"}</span>
+                  {quotation.emailSentDateTime ? (
+                    <span className="table-submeta">
+                      Email {formatDateTime(quotation.emailSentDateTime)}
+                    </span>
+                  ) : null}
+                  {quotation.whatsappSentDateTime ? (
+                    <span className="table-submeta">
+                      WhatsApp {formatDateTime(quotation.whatsappSentDateTime)}
+                    </span>
+                  ) : null}
+                </div>
+              </td>
               <td>{quotation.lineItemCount || 0}</td>
               {statuses.length === 1 && statuses[0] === "Approved" ? null : (
                 <td>
@@ -2757,9 +2968,20 @@ export default function App() {
                         Last generated {formatDateTime(quotation.finalPdfGeneratedAt)}
                       </span>
                     ) : null}
+                    {quotation.draftCreatedTime ? (
+                      <span className="table-submeta">
+                        Draft created {formatDateTime(quotation.draftCreatedTime)}
+                      </span>
+                    ) : null}
                   </div>
                 ) : (
-                  "Pending"
+                  quotation.draftCreatedTime ? (
+                    <span className="table-submeta">
+                      Draft created {formatDateTime(quotation.draftCreatedTime)}
+                    </span>
+                  ) : (
+                    "Pending"
+                  )
                 )}
               </td>
               <td>{renderQuotationActionButtons(quotation)}</td>

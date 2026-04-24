@@ -261,6 +261,7 @@ function formatMoney(value: number) {
 function resolveLogoPath() {
   const currentDir = path.dirname(fileURLToPath(import.meta.url));
   return [
+    path.resolve(currentDir, "../../web/src/assets/resham-sutra-logo-small.png"),
     path.resolve(currentDir, "../../web/src/assets/resham-sutra-logo.png"),
     path.resolve(currentDir, "../../templates/quotation-template-unpacked/xl/media/image3.png")
   ];
@@ -470,12 +471,13 @@ async function writeSimplePdf(payload: DocumentPayload, outputDir: string) {
   });
 
   if (logo) {
-    const dimensions = logo.scale(0.08);
+    const width = 88;
+    const height = (logo.height / logo.width) * width;
     page.drawImage(logo, {
       x: 40,
-      y: 768,
-      width: dimensions.width,
-      height: dimensions.height
+      y: 780,
+      width,
+      height
     });
   }
 
@@ -506,43 +508,43 @@ async function writeSimplePdf(payload: DocumentPayload, outputDir: string) {
     color: muted
   });
 
-  let companyY = 800;
+  let companyY = 804;
   COMPANY_LINES.forEach((line, index) => {
     page.drawText(line, {
-      x: 160,
+      x: 138,
       y: companyY,
       font: index === 0 ? fontBold : fontRegular,
-      size: index === 0 ? 7.4 : 7.1,
+      size: index === 0 ? 7.1 : 6.9,
       color: brandDark
     });
-    companyY -= 8;
+    companyY -= 7.5;
   });
 
   COMPANY_META_LINES.forEach((line) => {
     page.drawText(line, {
-      x: 160,
+      x: 138,
       y: companyY,
       font: fontRegular,
-      size: 7.1,
+      size: 6.9,
       color: brandDark
     });
-    companyY -= 8;
+    companyY -= 7.5;
   });
 
   page.drawRectangle({
     x: 40,
-    y: 640,
+    y: 646,
     width: 250,
-    height: 108,
+    height: 102,
     borderWidth: 1,
     borderColor: rgb(0.88, 0.89, 0.91),
     color: rgb(0.99, 0.99, 0.99)
   });
   page.drawRectangle({
     x: 305,
-    y: 640,
+    y: 646,
     width: 250,
-    height: 108,
+    height: 102,
     borderWidth: 1,
     borderColor: rgb(0.88, 0.89, 0.91),
     color: rgb(0.99, 0.99, 0.99)
@@ -550,14 +552,14 @@ async function writeSimplePdf(payload: DocumentPayload, outputDir: string) {
 
   page.drawText("Buyer", {
     x: 52,
-    y: 732,
+    y: 730,
     font: fontBold,
     size: 10,
     color: brandDark
   });
   page.drawText("Consignee", {
     x: 317,
-    y: 732,
+    y: 730,
     font: fontBold,
     size: 10,
     color: brandDark
@@ -574,18 +576,18 @@ async function writeSimplePdf(payload: DocumentPayload, outputDir: string) {
 
   drawWrappedLines(page, buyerLines, {
     x: 52,
-    y: 715,
-    lineHeight: 11,
+    y: 711,
+    lineHeight: 10,
     font: fontRegular,
-    size: 9,
+    size: 8.5,
     color: brandDark
   });
   drawWrappedLines(page, consigneeLines, {
     x: 317,
-    y: 715,
-    lineHeight: 10,
+    y: 711,
+    lineHeight: 9,
     font: fontRegular,
-    size: 8,
+    size: 7.2,
     color: brandDark
   });
 
@@ -682,23 +684,23 @@ async function writeSimplePdf(payload: DocumentPayload, outputDir: string) {
     currentY -= 4;
   });
 
-  let bankY = Math.min(currentY - 8, 92);
+  let bankY = Math.max(58, Math.min(currentY - 8, 104));
   BANK_DETAIL_LINES.forEach((line, index) => {
     page.drawText(line, {
       x: 40,
       y: bankY,
       font: index === 0 ? fontBold : fontRegular,
-      size: index === 0 ? 7.8 : 7.2,
+      size: index === 0 ? 7.4 : 6.8,
       color: brandDark
     });
-    bankY -= 8;
+    bankY -= 7;
   });
 
   const footerBadgeSpecs: Record<string, { width: number; height: number }> = {
-    makeInIndia: { width: 56, height: 30 },
-    iso: { width: 20, height: 20 },
-    msme: { width: 56, height: 22 },
-    startupIndia: { width: 78, height: 18 }
+    makeInIndia: { width: 46, height: 24 },
+    iso: { width: 16, height: 16 },
+    msme: { width: 46, height: 18 },
+    startupIndia: { width: 64, height: 15 }
   };
 
   let badgeX = 40;
@@ -711,7 +713,7 @@ async function writeSimplePdf(payload: DocumentPayload, outputDir: string) {
       width: spec.width,
       height: spec.height
     });
-    badgeX += spec.width + 8;
+    badgeX += spec.width + 6;
   });
 
   page.drawText("For Resham Sutra Pvt. Ltd.", {
@@ -722,10 +724,10 @@ async function writeSimplePdf(payload: DocumentPayload, outputDir: string) {
     color: brandDark
   });
   if (signature) {
-    const dimensions = signature.scale(0.34);
+    const dimensions = signature.scale(0.28);
     page.drawImage(signature, {
       x: 404,
-      y: 28,
+      y: 30,
       width: dimensions.width,
       height: dimensions.height
     });

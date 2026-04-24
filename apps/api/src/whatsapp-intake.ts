@@ -11,6 +11,7 @@ import { productReferences } from "./phase1-data.js";
 
 type EnquiryFields = {
   "Enquiry ID"?: string;
+  "Logged Date Time"?: string;
   "Lead Name"?: string;
   Company?: string;
   Phone?: string;
@@ -26,6 +27,7 @@ type EnquiryFields = {
   "Requested Asset"?: string;
   Quantity?: number | string;
   Notes?: string;
+  "Receiver WhatsApp Number"?: string;
 };
 
 type ProductFields = {
@@ -389,7 +391,8 @@ export async function processWhatsAppEnquiry(payload: unknown) {
     destinationPincode: "",
     requirementSummary: parsed.productInterest || input.rawMessage,
     requestedAsset: parsed.requestedAsset || "Details",
-    potentialProduct: parsed.productInterest || ""
+    potentialProduct: parsed.productInterest || "",
+    receiverWhatsappNumber: input.inboundWhatsappNumber
   });
 
   await processPendingEnquiries();
