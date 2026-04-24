@@ -607,6 +607,12 @@ export async function createPortalQuotationLineItems(payload: unknown) {
     );
   }
   const draft = await refreshDraftForQuotation(quotation.id);
+  console.log("[portal-line-items] draft refresh result", {
+    quotationId: quotation.id,
+    quotationStatus: draft.quotation.fields.Status || "",
+    draftFileUrl: draft.quotation.fields["Draft File URL"] || "",
+    driveFolderUrl: draft.folder.folderUrl || draft.quotation.fields["Drive Folder URL"] || ""
+  });
 
   return {
     quotationId: quotation.id,

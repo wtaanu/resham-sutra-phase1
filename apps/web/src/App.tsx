@@ -967,6 +967,37 @@ export default function App() {
     }
   }
 
+  function applyDraftStateToQuotation(input: {
+    quotationId: string;
+    quotationStatus?: string;
+    draftFileUrl?: string;
+    driveFolderUrl?: string;
+  }) {
+    setOperations((current) => {
+      if (!current) {
+        return current;
+      }
+
+      return {
+        ...current,
+        quotations: current.quotations.map((quotation) =>
+          quotation.id === input.quotationId
+            ? {
+                ...quotation,
+                status: input.quotationStatus || quotation.status,
+                draftFileUrl: input.draftFileUrl || quotation.draftFileUrl,
+                driveFolderUrl: input.driveFolderUrl || quotation.driveFolderUrl,
+                draftCreatedTime:
+                  input.draftFileUrl && !quotation.draftCreatedTime
+                    ? new Date().toISOString()
+                    : quotation.draftCreatedTime
+              }
+            : quotation
+        )
+      };
+    });
+  }
+
   async function handleCreateCustomer(enquiryId: string) {
     try {
       setActionState({
@@ -1104,11 +1135,22 @@ export default function App() {
         method: "POST"
       });
 
+      const payload = (await response.json()) as {
+        message?: string;
+        draftFileUrl?: string;
+        driveFolderUrl?: string;
+      };
+
       if (!response.ok) {
-        const payload = (await response.json()) as { message?: string };
         throw new Error(payload.message || "Failed to regenerate quotation draft");
       }
 
+      applyDraftStateToQuotation({
+        quotationId,
+        quotationStatus: "Ready for Review",
+        draftFileUrl: payload.draftFileUrl,
+        driveFolderUrl: payload.driveFolderUrl
+      });
       await refreshOperations(false);
       setActiveView("quotationDrafts");
       setActionState({
@@ -1585,22 +1627,41 @@ export default function App() {
         })
       });
 
-      const payload = (await response.json()) as { message?: string; quotationNumber?: string; createdCount?: number };
+      const payload = (await response.json()) as {
+        message?: string;
+        quotationId?: string;
+        quotationNumber?: string;
+        createdCount?: number;
+        quotationStatus?: string;
+        draftFileUrl?: string;
+        driveFolderUrl?: string;
+      };
 
       if (!response.ok) {
         throw new Error(payload.message || "Failed to create line items");
+      }
+
+      if (payload.quotationId) {
+        applyDraftStateToQuotation({
+          quotationId: payload.quotationId,
+          quotationStatus: payload.quotationStatus,
+          draftFileUrl: payload.draftFileUrl,
+          driveFolderUrl: payload.driveFolderUrl
+        });
       }
 
       setActionState({
         key: "portal-line-items",
         label: "Create Line Items",
         status: "success",
-        message: `${payload.createdCount || lineItemRows.length} line items created for ${payload.quotationNumber || "quotation"}.`
+        message: payload.draftFileUrl
+          ? `${payload.createdCount || lineItemRows.length} line items created for ${payload.quotationNumber || "quotation"}. Draft generated automatically.`
+          : `${payload.createdCount || lineItemRows.length} line items created for ${payload.quotationNumber || "quotation"}. If the draft does not appear, use Generate Draft from the quotation row.`
       });
       setLineItemRows([createLineItemRow()]);
       closeEntryPanel();
       setActiveView("quotationDrafts");
-      void refreshOperations(true);
+      await refreshOperations(false);
     } catch (submitError) {
       const message =
         submitError instanceof Error ? submitError.message : "Failed to create line items";
@@ -2889,6 +2950,32 @@ export default function App() {
               {isRegenerateLoading ? "..." : "R"}
             </button>
           </div>
+          {quotation.driveFolderUrl ? (
+            <a
+              className="action-inline-link"
+              href={quotation.driveFolderUrl}
+              target="_blank"
+              rel="noreferrer"
+              onClick={() => handleLinkAction(`quotation-folder-${quotation.id}`, "Open Folder")}
+            >
+              Open Folder
+            </a>
+          ) : null}
+        </div>
+      );
+    }
+
+    if (!quotation.draftFileUrl && !quotation.finalPdfUrl) {
+      return (
+        <div className="action-stack">
+          <button
+            className="action-inline-button"
+            type="button"
+            onClick={() => void handleRegenerateQuotationDraft(quotation.id)}
+            disabled={isRegenerateLoading}
+          >
+            {isRegenerateLoading ? "Generating..." : "Generate Draft"}
+          </button>
           {quotation.driveFolderUrl ? (
             <a
               className="action-inline-link"
