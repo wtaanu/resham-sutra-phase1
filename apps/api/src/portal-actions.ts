@@ -65,6 +65,7 @@ type ProductFields = {
 };
 
 type QuotationLineItemFields = {
+  Name?: string;
   Quotation?: string[];
   "Linked Product"?: string[];
   "Line No."?: number;
@@ -559,6 +560,9 @@ export async function createPortalQuotationLineItems(payload: unknown) {
   let nextLineNo =
     existingItems.filter((item) => item.fields.Quotation?.includes(input.quotationId)).length + 1;
 
+  const quotationIdentifier =
+    String(quotation.fields["Quotation Number"] || quotation.id).trim() || quotation.id;
+
   const lineItemFields = input.items.map((item) => {
     const product = productLookup.get(item.productId);
     if (!product) {
@@ -576,8 +580,10 @@ export async function createPortalQuotationLineItems(payload: unknown) {
     const gstAmount = Number((totalAmount - unitValue - transport).toFixed(2));
 
     return {
+      Name: `${quotationIdentifier}-${String(nextLineNo).padStart(2, "0")}`,
       Quotation: linkedRecordIds(input.quotationId),
       "Linked Product": linkedRecordIds(item.productId),
+      "Line No.": nextLineNo++,
       "Description Override": buildDescription(product),
       Qty: qty,
       "Rate Per Unit": rate,
