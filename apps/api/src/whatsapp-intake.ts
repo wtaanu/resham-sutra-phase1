@@ -102,7 +102,129 @@ function normalizePhone(value: string) {
   return digits.length > 10 ? digits.slice(-10) : digits;
 }
 
-function extractAddressParts(message: string) {
+const knownStates = new Set(
+  [
+    "andhra pradesh",
+    "arunachal pradesh",
+    "assam",
+    "bihar",
+    "chhattisgarh",
+    "goa",
+    "gujarat",
+    "haryana",
+    "himachal pradesh",
+    "jharkhand",
+    "karnataka",
+    "kerala",
+    "madhya pradesh",
+    "maharashtra",
+    "manipur",
+    "meghalaya",
+    "mizoram",
+    "nagaland",
+    "odisha",
+    "punjab",
+    "rajasthan",
+    "sikkim",
+    "tamil nadu",
+    "telangana",
+    "tripura",
+    "uttar pradesh",
+    "uttarakhand",
+    "west bengal",
+    "andaman and nicobar islands",
+    "chandigarh",
+    "dadra and nagar haveli and daman and diu",
+    "delhi",
+    "jammu and kashmir",
+    "ladakh",
+    "lakshadweep",
+    "puducherry"
+  ].map((value) => value.toLowerCase())
+);
+
+const knownCities = new Set(
+  [
+    "nagpur",
+    "hyderabad",
+    "delhi",
+    "new delhi",
+    "mumbai",
+    "pune",
+    "bengaluru",
+    "bangalore",
+    "guwahati",
+    "silchar",
+    "kolkata",
+    "chennai",
+    "ahmedabad",
+    "surat",
+    "jaipur",
+    "lucknow",
+    "kanpur",
+    "bhopal",
+    "indore",
+    "patna",
+    "ranchi",
+    "imphal"
+  ].map((value) => value.toLowerCase())
+);
+
+type AddressParts = {
+  address: string;
+  city: string;
+  state: string;
+  pincode: string;
+};
+
+function isKnownState(value: string) {
+  return knownStates.has(value.trim().toLowerCase());
+}
+
+function isKnownCity(value: string) {
+  return knownCities.has(value.trim().toLowerCase());
+}
+
+function cleanAddressLine(value: string) {
+  return value
+    .replace(/\b\d{6}\b/g, "")
+    .replace(/\s+/g, " ")
+    .replace(/^[,.\-: ]+|[,.\-: ]+$/g, "")
+    .trim();
+}
+
+async function lookupPincodeLocation(pincode: string) {
+  if (!/^\d{6}$/.test(pincode)) {
+    return null;
+  }
+
+  try {
+    const response = await fetch(`https://api.postalpincode.in/pincode/${pincode}`);
+    if (!response.ok) {
+      return null;
+    }
+
+    const payload = (await response.json()) as Array<{
+      Status?: string;
+      PostOffice?: Array<{ District?: string; State?: string }>;
+    }>;
+    const firstResult = payload[0];
+    const firstOffice = firstResult?.PostOffice?.[0];
+
+    if (firstResult?.Status !== "Success" || !firstOffice) {
+      return null;
+    }
+
+    return {
+      city: String(firstOffice.District || "").trim(),
+      state: String(firstOffice.State || "").trim()
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function extractAddressParts(message: string, parsedCityOrState: string | null): Promise<AddressParts> {
   const lines = message
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -110,20 +232,55 @@ function extractAddressParts(message: string) {
 
   const pincodeMatch = message.match(/\b\d{6}\b/);
   const pincode = pincodeMatch?.[0] || "";
+  const locationFromPincode = pincode ? await lookupPincodeLocation(pincode) : null;
 
-  const addressLine = lines.find((line) => /\d/.test(line) && line !== pincode) || "";
-  const locationLine =
-    lines.find((line) => /,/.test(line) && line !== addressLine) ||
-    lines.find((line) => /\b(assam|maharashtra|karnataka|hyderabad|nagpur)\b/i.test(line)) ||
-    "";
+  const ignoredPatterns = [
+    /\b(machine|machines|details|detail|video|videos|send|need|want|price|quotation|quote|catalog|brochure)\b/i,
+    /^(\+?\d[\d\s-]{8,}\d)$/,
+    /^\d{6}$/
+  ];
 
-  const parts = locationLine
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean);
+  const addressLine =
+    lines
+      .map(cleanAddressLine)
+      .find((line) => {
+        if (!line) {
+          return false;
+        }
 
-  const city = parts[0] || "";
-  const state = parts.slice(1).join(", ");
+        if (ignoredPatterns.some((pattern) => pattern.test(line))) {
+          return false;
+        }
+
+        const lower = line.toLowerCase();
+        const hasAddressCue =
+          /\d/.test(line) ||
+          /\b(road|rd|street|st|lane|ln|colony|nagar|gaon|village|post|po|district|dist|near|house|ward|locality)\b/i.test(
+            line
+          );
+
+        if (!hasAddressCue) {
+          return false;
+        }
+
+        if (isKnownState(lower) || isKnownCity(lower)) {
+          return false;
+        }
+
+        return true;
+      }) || "";
+
+  let city = locationFromPincode?.city || "";
+  let state = locationFromPincode?.state || "";
+
+  if (!city && !state && parsedCityOrState) {
+    const candidate = parsedCityOrState.trim();
+    if (isKnownCity(candidate)) {
+      city = candidate;
+    } else if (isKnownState(candidate)) {
+      state = candidate;
+    }
+  }
 
   return {
     address: addressLine,
@@ -373,7 +530,7 @@ export async function processWhatsAppEnquiry(payload: unknown) {
   const input = whatsappPayloadSchema.parse(payload);
   const parsed = parseIncomingEnquiry(input.rawMessage);
   const contactPhone = parsed.phone || normalizePhone(input.senderPhone);
-  const addressParts = extractAddressParts(input.rawMessage);
+  const addressParts = await extractAddressParts(input.rawMessage, parsed.cityOrState);
 
   const created = await createPortalEnquiry({
     source: "whatsapp",
@@ -383,13 +540,13 @@ export async function processWhatsAppEnquiry(payload: unknown) {
     phone: contactPhone,
     email: "",
     address: addressParts.address,
-    state: addressParts.state || parsed.cityOrState || "",
+    state: addressParts.state,
     city: addressParts.city,
     pincode: addressParts.pincode,
     destinationAddress: addressParts.address,
-    destinationState: addressParts.state || parsed.cityOrState || "",
+    destinationState: addressParts.state,
     destinationCity: addressParts.city,
-    destinationPincode: "",
+    destinationPincode: addressParts.pincode,
     requirementSummary: parsed.productInterest || input.rawMessage,
     requestedAsset: parsed.requestedAsset || "Details",
     potentialProduct: parsed.productInterest || "",
