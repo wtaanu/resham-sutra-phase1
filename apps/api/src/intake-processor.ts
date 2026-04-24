@@ -155,12 +155,32 @@ function toPincodeNumber(value: unknown) {
   return normalized ? Number(normalized) : undefined;
 }
 
+function toPincodeString(value: unknown) {
+  const normalized = String(value ?? "")
+    .replace(/\D/g, "")
+    .slice(0, 6);
+
+  return normalized || undefined;
+}
+
 function withOptionalNumberField(
   fields: Record<string, unknown>,
   fieldName: string,
   value: number | undefined
 ) {
   if (typeof value === "number" && Number.isFinite(value)) {
+    fields[fieldName] = value;
+  }
+
+  return fields;
+}
+
+function withOptionalStringField(
+  fields: Record<string, unknown>,
+  fieldName: string,
+  value: string | undefined
+) {
+  if (value) {
     fields[fieldName] = value;
   }
 
@@ -343,8 +363,11 @@ async function ensureCustomer(enquiry: AirtableRecord<EnquiryFields>) {
           throw error;
         }
 
-        const retryFields = { ...updatedCustomerFields };
-        delete retryFields.Pincode;
+        const retryFields = withOptionalStringField(
+          { ...updatedCustomerFields },
+          "Pincode",
+          toPincodeString(enquiry.fields.Pincode) ?? toPincodeString(linkedCustomer.fields.Pincode)
+        );
         return updateRecord<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, {
           id: linkedCustomer.id,
           fields: retryFields
@@ -400,8 +423,11 @@ async function ensureCustomer(enquiry: AirtableRecord<EnquiryFields>) {
         throw error;
       }
 
-      const retryFields = { ...customerFields };
-      delete retryFields.Pincode;
+      const retryFields = withOptionalStringField(
+        { ...customerFields },
+        "Pincode",
+        toPincodeString(enquiry.fields.Pincode)
+      );
       return createRecord<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, retryFields);
     }
   });
@@ -580,8 +606,11 @@ async function syncEnquiryAddressFromCustomer(
       throw error;
     }
 
-    const retryFields = { ...fields };
-    delete retryFields.Pincode;
+    const retryFields = withOptionalStringField(
+      { ...fields },
+      "Pincode",
+      toPincodeString(customer.fields.Pincode) ?? toPincodeString(enquiry.fields.Pincode)
+    );
     return updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
       id: enquiry.id,
       fields: retryFields
