@@ -547,6 +547,32 @@ a:hover {
   position: relative;
 }
 
+.searchable-dropdown-input {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.search-dropdown-toggle {
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #ffffff;
+  color: var(--ink);
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.search-dropdown-hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.68rem;
+  color: var(--muted);
+}
+
 .search-dropdown-list {
   position: absolute;
   top: calc(100% + 6px);
@@ -588,6 +614,12 @@ a:hover {
   background: #eef4ff;
 }
 
+.search-dropdown-empty {
+  padding: 10px;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
 .entry-actions {
   display: flex;
   justify-content: space-between;
@@ -599,6 +631,14 @@ a:hover {
   margin: 0;
   color: var(--muted);
   font-size: 0.74rem;
+}
+
+.field-error {
+  display: block;
+  color: #b42318;
+  font-size: 0.68rem;
+  font-weight: 600;
+  line-height: 1.35;
 }
 
 .line-item-builder {

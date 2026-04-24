@@ -182,6 +182,8 @@ type EnquiryFormState = {
   potentialProduct: string;
 };
 
+type EnquiryFieldErrors = Partial<Record<keyof EnquiryFormState, string>>;
+
 type LineItemDraftRow = {
   id: string;
   productId: string;
@@ -649,6 +651,7 @@ export default function App() {
   const [entryMode, setEntryMode] = useState<EntryMode>(null);
   const [editingEnquiryId, setEditingEnquiryId] = useState("");
   const [enquiryForm, setEnquiryForm] = useState<EnquiryFormState>(createBlankEnquiryForm);
+  const [enquiryFieldErrors, setEnquiryFieldErrors] = useState<EnquiryFieldErrors>({});
   const [destinationSameAsMain, setDestinationSameAsMain] = useState(false);
   const [customerSearchTerm, setCustomerSearchTerm] = useState("");
   const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false);
@@ -1148,6 +1151,7 @@ export default function App() {
     setEntryMode("enquiry");
     setEditingEnquiryId("");
     setEnquiryForm(createBlankEnquiryForm());
+    setEnquiryFieldErrors({});
     setDestinationSameAsMain(false);
     setCustomerSearchTerm("");
     setCustomerDropdownOpen(false);
@@ -1176,6 +1180,7 @@ export default function App() {
       requestedAsset: "",
       potentialProduct: ""
     });
+    setEnquiryFieldErrors({});
     setDestinationSameAsMain(
       Boolean(
         enquiry.address &&
@@ -1212,6 +1217,7 @@ export default function App() {
   function closeEntryPanel() {
     setEntryMode(null);
     setEditingEnquiryId("");
+    setEnquiryFieldErrors({});
     setDestinationSameAsMain(false);
     setCustomerSearchTerm("");
     setCustomerDropdownOpen(false);
@@ -1256,6 +1262,18 @@ export default function App() {
     );
   }, [customerSearchTerm, sortedCustomers]);
 
+  function clearEnquiryFieldError(field: keyof EnquiryFormState) {
+    setEnquiryFieldErrors((current) => {
+      if (!current[field]) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
+  }
+
   function handleCustomerAutofill(customerId: string) {
     const customer = customerLookup.get(customerId);
     if (customer) {
@@ -1283,36 +1301,69 @@ export default function App() {
     const normalizedPhone = normalizePhoneInput(enquiryForm.phone);
     const normalizedReceiverWhatsapp = normalizePhoneInput(enquiryForm.receiverWhatsappNumber);
     const normalizedEmail = enquiryForm.email.trim();
+    const nextFieldErrors: EnquiryFieldErrors = {};
 
     if (enquiryForm.phone.trim() && !isValidTenDigitPhone(enquiryForm.phone)) {
+      nextFieldErrors.phone = "Phone number must be exactly 10 digits.";
+      setEnquiryFieldErrors(nextFieldErrors);
       setActionState({
         key: "portal-enquiry",
         label: formActionLabel,
         status: "error",
-        message: "Phone number must be exactly 10 digits."
+        message: nextFieldErrors.phone
       });
       return;
     }
 
     if (normalizedEmail && !isValidEmail(normalizedEmail)) {
+      nextFieldErrors.email = "Email must include @.";
+      setEnquiryFieldErrors(nextFieldErrors);
       setActionState({
         key: "portal-enquiry",
         label: formActionLabel,
         status: "error",
-        message: "Email must include @."
+        message: nextFieldErrors.email
       });
       return;
     }
 
     if (enquiryForm.receiverWhatsappNumber.trim() && !isValidTenDigitPhone(enquiryForm.receiverWhatsappNumber)) {
+      nextFieldErrors.receiverWhatsappNumber = "Receiver WhatsApp number must be exactly 10 digits.";
+      setEnquiryFieldErrors(nextFieldErrors);
       setActionState({
         key: "portal-enquiry",
         label: formActionLabel,
         status: "error",
-        message: "Receiver WhatsApp number must be exactly 10 digits."
+        message: nextFieldErrors.receiverWhatsappNumber
       });
       return;
     }
+
+    if (!/^\d{6}$/.test(normalizePincodeInput(enquiryForm.pincode))) {
+      nextFieldErrors.pincode = "Main pincode must be a valid 6-digit number.";
+      setEnquiryFieldErrors(nextFieldErrors);
+      setActionState({
+        key: "portal-enquiry",
+        label: formActionLabel,
+        status: "error",
+        message: nextFieldErrors.pincode
+      });
+      return;
+    }
+
+    if (!/^\d{6}$/.test(normalizePincodeInput(enquiryForm.destinationPincode))) {
+      nextFieldErrors.destinationPincode = "Destination pincode must be a valid 6-digit number.";
+      setEnquiryFieldErrors(nextFieldErrors);
+      setActionState({
+        key: "portal-enquiry",
+        label: formActionLabel,
+        status: "error",
+        message: nextFieldErrors.destinationPincode
+      });
+      return;
+    }
+
+    setEnquiryFieldErrors({});
 
     if (
       !enquiryForm.address.trim() ||
@@ -1789,25 +1840,42 @@ export default function App() {
               <label className="form-span-2">
                 <span>Existing customer</span>
                 <div className="searchable-dropdown">
-                  <input
-                    value={customerSearchTerm}
-                    placeholder="Search by Client ID, name, phone, or email"
-                    onFocus={() => setCustomerDropdownOpen(true)}
-                    onBlur={() => {
-                      window.setTimeout(() => setCustomerDropdownOpen(false), 120);
-                    }}
-                    onChange={(event) => {
-                      const value = event.target.value;
-                      setCustomerSearchTerm(value);
-                      setCustomerDropdownOpen(true);
-                      if (!value.trim()) {
-                        setEnquiryForm((current) => ({ ...current, linkedCustomerId: "" }));
-                      }
-                    }}
-                  />
-                  {customerDropdownOpen && filteredCustomers.length ? (
+                  <div className="searchable-dropdown-input">
+                    <input
+                      value={customerSearchTerm}
+                      placeholder="Search by Client ID, name, phone, or email"
+                      onFocus={() => setCustomerDropdownOpen(true)}
+                      onClick={() => setCustomerDropdownOpen(true)}
+                      onBlur={() => {
+                        window.setTimeout(() => setCustomerDropdownOpen(false), 120);
+                      }}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        setCustomerSearchTerm(value);
+                        setCustomerDropdownOpen(true);
+                        if (!value.trim()) {
+                          setEnquiryForm((current) => ({ ...current, linkedCustomerId: "" }));
+                        }
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="search-dropdown-toggle"
+                      aria-label="Browse existing customers"
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                        setCustomerDropdownOpen((current) => !current);
+                      }}
+                    >
+                      {customerDropdownOpen ? "▲" : "▼"}
+                    </button>
+                  </div>
+                  <span className="search-dropdown-hint">
+                    Search or click the arrow to browse existing customers.
+                  </span>
+                  {customerDropdownOpen ? (
                     <div className="search-dropdown-list">
-                      {filteredCustomers.slice(0, 8).map((customer) => (
+                      {filteredCustomers.length ? filteredCustomers.slice(0, 8).map((customer) => (
                         <button
                           key={customer.id}
                           className="search-dropdown-option"
@@ -1822,7 +1890,7 @@ export default function App() {
                             {[customer.phone, customer.email, customer.company].filter(Boolean).join(" • ") || "No extra details"}
                           </span>
                         </button>
-                      ))}
+                      )) : <div className="search-dropdown-empty">No matching customers found.</div>}
                     </div>
                   ) : null}
                 </div>
@@ -1851,23 +1919,27 @@ export default function App() {
                 inputMode="numeric"
                 maxLength={10}
                 value={enquiryForm.phone}
-                onChange={(event) =>
+                onChange={(event) => {
+                  clearEnquiryFieldError("phone");
                   setEnquiryForm((current) => ({
                     ...current,
                     phone: normalizePhoneInput(event.target.value)
-                  }))
-                }
+                  }));
+                }}
               />
+              {enquiryFieldErrors.phone ? <span className="field-error">{enquiryFieldErrors.phone}</span> : null}
             </label>
             <label>
               <span>Email</span>
               <input
                 type="email"
                 value={enquiryForm.email}
-                onChange={(event) =>
-                  setEnquiryForm((current) => ({ ...current, email: event.target.value }))
-                }
+                onChange={(event) => {
+                  clearEnquiryFieldError("email");
+                  setEnquiryForm((current) => ({ ...current, email: event.target.value }));
+                }}
               />
+              {enquiryFieldErrors.email ? <span className="field-error">{enquiryFieldErrors.email}</span> : null}
             </label>
             <label>
               <span>Receiver WhatsApp Number</span>
@@ -1876,13 +1948,17 @@ export default function App() {
                 maxLength={10}
                 value={enquiryForm.receiverWhatsappNumber}
                 placeholder="Optional business number"
-                onChange={(event) =>
+                onChange={(event) => {
+                  clearEnquiryFieldError("receiverWhatsappNumber");
                   setEnquiryForm((current) => ({
                     ...current,
                     receiverWhatsappNumber: normalizePhoneInput(event.target.value)
-                  }))
-                }
+                  }));
+                }}
               />
+              {enquiryFieldErrors.receiverWhatsappNumber ? (
+                <span className="field-error">{enquiryFieldErrors.receiverWhatsappNumber}</span>
+              ) : null}
             </label>
             <label>
               <span>Address *</span>
@@ -1899,6 +1975,7 @@ export default function App() {
                 inputMode="numeric"
                 value={enquiryForm.pincode}
                 onChange={(event) => {
+                  clearEnquiryFieldError("pincode");
                   const value = normalizePincodeInput(event.target.value);
                   setEnquiryForm((current) => ({ ...current, pincode: value }));
                   if (value.length === 6) {
@@ -1906,6 +1983,7 @@ export default function App() {
                   }
                 }}
               />
+              {enquiryFieldErrors.pincode ? <span className="field-error">{enquiryFieldErrors.pincode}</span> : null}
             </label>
             <label>
               <span>State *</span>
@@ -1991,6 +2069,7 @@ export default function App() {
                 inputMode="numeric"
                 value={enquiryForm.destinationPincode}
                 onChange={(event) => {
+                  clearEnquiryFieldError("destinationPincode");
                   const value = normalizePincodeInput(event.target.value);
                   setEnquiryForm((current) => ({ ...current, destinationPincode: value }));
                   if (value.length === 6) {
@@ -1998,6 +2077,9 @@ export default function App() {
                   }
                 }}
               />
+              {enquiryFieldErrors.destinationPincode ? (
+                <span className="field-error">{enquiryFieldErrors.destinationPincode}</span>
+              ) : null}
             </label>
             <label>
               <span>Destination state *</span>
