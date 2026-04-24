@@ -352,6 +352,15 @@ async function ensureCustomer(enquiry: AirtableRecord<EnquiryFields>) {
         toPincodeNumber(enquiry.fields.Pincode) ?? toPincodeNumber(linkedCustomer.fields.Pincode)
       );
 
+      console.log("[ensure-customer:update] preparing Airtable write", {
+        customerId: linkedCustomer.id,
+        enquiryId: enquiry.id,
+        pincodeNumber:
+          toPincodeNumber(enquiry.fields.Pincode) ?? toPincodeNumber(linkedCustomer.fields.Pincode),
+        pincodeText:
+          toPincodeString(enquiry.fields.Pincode) ?? toPincodeString(linkedCustomer.fields.Pincode)
+      });
+
       try {
         return await updateRecord<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, {
           id: linkedCustomer.id,
@@ -359,6 +368,12 @@ async function ensureCustomer(enquiry: AirtableRecord<EnquiryFields>) {
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : "";
+        console.log("[ensure-customer:update] Airtable update failed", {
+          customerId: linkedCustomer.id,
+          enquiryId: enquiry.id,
+          message,
+          pincode: updatedCustomerFields.Pincode
+        });
         if (!message.toLowerCase().includes("pincode")) {
           throw error;
         }
@@ -368,6 +383,11 @@ async function ensureCustomer(enquiry: AirtableRecord<EnquiryFields>) {
           "Pincode",
           toPincodeString(enquiry.fields.Pincode) ?? toPincodeString(linkedCustomer.fields.Pincode)
         );
+        console.log("[ensure-customer:update] retrying with string pincode", {
+          customerId: linkedCustomer.id,
+          enquiryId: enquiry.id,
+          pincode: retryFields.Pincode
+        });
         return updateRecord<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, {
           id: linkedCustomer.id,
           fields: retryFields
@@ -415,10 +435,21 @@ async function ensureCustomer(enquiry: AirtableRecord<EnquiryFields>) {
       toPincodeNumber(enquiry.fields.Pincode)
     );
 
+    console.log("[ensure-customer:create] preparing Airtable write", {
+      enquiryId: enquiry.id,
+      pincodeNumber: toPincodeNumber(enquiry.fields.Pincode),
+      pincodeText: toPincodeString(enquiry.fields.Pincode)
+    });
+
     try {
       return await createRecord<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, customerFields);
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
+      console.log("[ensure-customer:create] Airtable create failed", {
+        enquiryId: enquiry.id,
+        message,
+        pincode: customerFields.Pincode
+      });
       if (!message.toLowerCase().includes("pincode")) {
         throw error;
       }
@@ -428,6 +459,10 @@ async function ensureCustomer(enquiry: AirtableRecord<EnquiryFields>) {
         "Pincode",
         toPincodeString(enquiry.fields.Pincode)
       );
+      console.log("[ensure-customer:create] retrying with string pincode", {
+        enquiryId: enquiry.id,
+        pincode: retryFields.Pincode
+      });
       return createRecord<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, retryFields);
     }
   });
@@ -595,6 +630,13 @@ async function syncEnquiryAddressFromCustomer(
     toPincodeNumber(customer.fields.Pincode) ?? toPincodeNumber(enquiry.fields.Pincode)
   );
 
+  console.log("[sync-enquiry-address] preparing Airtable write", {
+    enquiryId: enquiry.id,
+    customerId: customer.id,
+    pincodeNumber: toPincodeNumber(customer.fields.Pincode) ?? toPincodeNumber(enquiry.fields.Pincode),
+    pincodeText: toPincodeString(customer.fields.Pincode) ?? toPincodeString(enquiry.fields.Pincode)
+  });
+
   try {
     return await updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
       id: enquiry.id,
@@ -602,6 +644,12 @@ async function syncEnquiryAddressFromCustomer(
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
+    console.log("[sync-enquiry-address] Airtable update failed", {
+      enquiryId: enquiry.id,
+      customerId: customer.id,
+      message,
+      pincode: fields.Pincode
+    });
     if (!message.toLowerCase().includes("pincode")) {
       throw error;
     }
@@ -611,6 +659,11 @@ async function syncEnquiryAddressFromCustomer(
       "Pincode",
       toPincodeString(customer.fields.Pincode) ?? toPincodeString(enquiry.fields.Pincode)
     );
+    console.log("[sync-enquiry-address] retrying with string pincode", {
+      enquiryId: enquiry.id,
+      customerId: customer.id,
+      pincode: retryFields.Pincode
+    });
     return updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
       id: enquiry.id,
       fields: retryFields

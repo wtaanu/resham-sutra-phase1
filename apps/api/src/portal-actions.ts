@@ -326,6 +326,14 @@ export async function createPortalEnquiry(payload: unknown) {
     destinationPincodeNumber
   );
 
+  console.log("[enquiry-create] preparing Airtable write", {
+    leadName: input.leadName,
+    mainPincodeNumber: mainPincode,
+    mainPincodeText,
+    destinationPincodeNumber,
+    destinationPincodeText
+  });
+
   const created = await createRecordWithUniqueNumber<EnquiryFields, AirtableRecord<EnquiryFields>>({
     tableName: env.AIRTABLE_ENQUIRIES_TABLE,
     fieldName: "Enquiry ID",
@@ -340,6 +348,11 @@ export async function createPortalEnquiry(payload: unknown) {
         return await createRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, fieldsWithId);
       } catch (error) {
         const message = error instanceof Error ? error.message : "";
+        console.log("[enquiry-create] Airtable create failed", {
+          message,
+          pincode: fieldsWithId.Pincode,
+          destinationPincode: fieldsWithId["Destination Pincode"]
+        });
         let retryFields: Record<string, unknown> | null = stripOptionalFields(
           fieldsWithId,
           optionalEnquiryFields,
@@ -352,6 +365,10 @@ export async function createPortalEnquiry(payload: unknown) {
             mainPincodeText,
             destinationPincodeText
           );
+          console.log("[enquiry-create] retrying with string pincodes", {
+            pincode: retryFields.Pincode,
+            destinationPincode: retryFields["Destination Pincode"]
+          });
         }
 
         if (!retryFields) {
@@ -426,6 +443,14 @@ export async function updatePortalEnquiry(enquiryId: string, payload: unknown) {
     destinationPincodeNumber
   );
 
+  console.log("[enquiry-update] preparing Airtable write", {
+    enquiryId,
+    mainPincodeNumber: mainPincode,
+    mainPincodeText,
+    destinationPincodeNumber,
+    destinationPincodeText
+  });
+
   let updatedEnquiry: AirtableRecord<EnquiryFields>;
   try {
     updatedEnquiry = await updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
@@ -434,6 +459,12 @@ export async function updatePortalEnquiry(enquiryId: string, payload: unknown) {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
+    console.log("[enquiry-update] Airtable update failed", {
+      enquiryId,
+      message,
+      pincode: enquiryFields.Pincode,
+      destinationPincode: enquiryFields["Destination Pincode"]
+    });
     let retryFields: Record<string, unknown> | null = stripOptionalFields(
       enquiryFields,
       optionalEnquiryFields,
@@ -446,6 +477,11 @@ export async function updatePortalEnquiry(enquiryId: string, payload: unknown) {
         mainPincodeText,
         destinationPincodeText
       );
+      console.log("[enquiry-update] retrying with string pincodes", {
+        enquiryId,
+        pincode: retryFields.Pincode,
+        destinationPincode: retryFields["Destination Pincode"]
+      });
     }
 
     if (!retryFields) {
