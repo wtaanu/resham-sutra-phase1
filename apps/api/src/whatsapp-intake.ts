@@ -177,6 +177,18 @@ type AddressParts = {
   pincode: string;
 };
 
+type AddressCandidate = {
+  line: string;
+  score: number;
+};
+
+type AiAddressExtraction = {
+  address?: string;
+  city?: string;
+  state?: string;
+  pincode?: string;
+};
+
 function isKnownState(value: string) {
   return knownStates.has(value.trim().toLowerCase());
 }
@@ -191,6 +203,186 @@ function cleanAddressLine(value: string) {
     .replace(/\s+/g, " ")
     .replace(/^[,.\-: ]+|[,.\-: ]+$/g, "")
     .trim();
+}
+
+function extractJsonObject(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(trimmed) as AiAddressExtraction;
+  } catch {
+    const start = trimmed.indexOf("{");
+    const end = trimmed.lastIndexOf("}");
+    if (start === -1 || end === -1 || end <= start) {
+      return null;
+    }
+
+    try {
+      return JSON.parse(trimmed.slice(start, end + 1)) as AiAddressExtraction;
+    } catch {
+      return null;
+    }
+  }
+}
+
+function normalizeLocationCandidate(value: string) {
+  return value
+    .replace(/\b\d{6}\b/g, "")
+    .replace(/[^\p{L}\s-]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function looksLikePhoneOrIdentityLine(line: string) {
+  const lower = line.toLowerCase();
+  return (
+    /(\+?\d[\d\s-]{8,}\d)/.test(line) ||
+    lower.includes("whatsapp") ||
+    lower.includes("mobile") ||
+    lower.includes("phone")
+  );
+}
+
+function scoreAddressCandidate(line: string): AddressCandidate {
+  const lower = line.toLowerCase();
+  let score = 0;
+
+  if (!line) {
+    return { line, score };
+  }
+
+  if (/\b(machine|machines|details|detail|video|videos|send|need|want|price|quotation|quote|catalog|brochure|share)\b/i.test(line)) {
+    score -= 6;
+  }
+
+  if (looksLikePhoneOrIdentityLine(line)) {
+    score -= 8;
+  }
+
+  if (/\b\d{6}\b/.test(line)) {
+    score += 5;
+  }
+
+  if (/\b(road|rd|street|st|lane|ln|colony|nagar|gaon|village|post|po|district|dist|near|house|ward|locality|school|market)\b/i.test(line)) {
+    score += 4;
+  }
+
+  if (/\d/.test(line)) {
+    score += 2;
+  }
+
+  if (line.includes(",")) {
+    score += 2;
+  }
+
+  if (isKnownState(lower) || isKnownCity(lower)) {
+    score -= 4;
+  }
+
+  return { line, score };
+}
+
+async function extractAddressWithAiFallback(input: {
+  rawMessage: string;
+  heuristic: AddressParts;
+  parsedCityOrState: string | null;
+}) {
+  if (!env.OPENAI_API_KEY) {
+    return null;
+  }
+
+  try {
+    const response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${env.OPENAI_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: env.WHATSAPP_PARSER_OPENAI_MODEL,
+        input: [
+          {
+            role: "system",
+            content: [
+              {
+                type: "input_text",
+                text:
+                  "Extract enquiry address details from a WhatsApp message. Return strict JSON only with keys address, city, state, pincode. Prefer the most address-like line. If a 6-digit pincode exists, keep it. If pincode exists, city/state may still be blank if uncertain. Never put product-request text into address. Never invent missing values."
+              }
+            ]
+          },
+          {
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: JSON.stringify({
+                  rawMessage: input.rawMessage,
+                  heuristic: input.heuristic,
+                  parsedCityOrState: input.parsedCityOrState || ""
+                })
+              }
+            ]
+          }
+        ],
+        text: {
+          format: {
+            type: "json_schema",
+            name: "whatsapp_address_extraction",
+            strict: true,
+            schema: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                address: { type: "string" },
+                city: { type: "string" },
+                state: { type: "string" },
+                pincode: { type: "string" }
+              },
+              required: ["address", "city", "state", "pincode"]
+            }
+          }
+        }
+      })
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const payload = (await response.json()) as {
+      output_text?: string;
+      output?: Array<{
+        type?: string;
+        content?: Array<{ type?: string; text?: string }>;
+      }>;
+    };
+
+    const rawText =
+      payload.output_text ||
+      payload.output
+        ?.flatMap((item) => item.content || [])
+        .find((content) => content.type === "output_text")
+        ?.text ||
+      "";
+
+    const parsed = extractJsonObject(rawText);
+    if (!parsed) {
+      return null;
+    }
+
+    return {
+      address: cleanAddressLine(String(parsed.address || "")),
+      city: normalizeLocationCandidate(String(parsed.city || "")),
+      state: normalizeLocationCandidate(String(parsed.state || "")),
+      pincode: String(parsed.pincode || "").replace(/\D/g, "").slice(0, 6)
+    };
+  } catch {
+    return null;
+  }
 }
 
 async function lookupPincodeLocation(pincode: string) {
@@ -234,41 +426,12 @@ async function extractAddressParts(message: string, parsedCityOrState: string | 
   const pincode = pincodeMatch?.[0] || "";
   const locationFromPincode = pincode ? await lookupPincodeLocation(pincode) : null;
 
-  const ignoredPatterns = [
-    /\b(machine|machines|details|detail|video|videos|send|need|want|price|quotation|quote|catalog|brochure)\b/i,
-    /^(\+?\d[\d\s-]{8,}\d)$/,
-    /^\d{6}$/
-  ];
+  const addressCandidate = lines
+    .map(cleanAddressLine)
+    .map(scoreAddressCandidate)
+    .sort((left, right) => right.score - left.score)[0];
 
-  const addressLine =
-    lines
-      .map(cleanAddressLine)
-      .find((line) => {
-        if (!line) {
-          return false;
-        }
-
-        if (ignoredPatterns.some((pattern) => pattern.test(line))) {
-          return false;
-        }
-
-        const lower = line.toLowerCase();
-        const hasAddressCue =
-          /\d/.test(line) ||
-          /\b(road|rd|street|st|lane|ln|colony|nagar|gaon|village|post|po|district|dist|near|house|ward|locality)\b/i.test(
-            line
-          );
-
-        if (!hasAddressCue) {
-          return false;
-        }
-
-        if (isKnownState(lower) || isKnownCity(lower)) {
-          return false;
-        }
-
-        return true;
-      }) || "";
+  const addressLine = addressCandidate && addressCandidate.score > 0 ? addressCandidate.line : "";
 
   let city = locationFromPincode?.city || "";
   let state = locationFromPincode?.state || "";
@@ -282,11 +445,43 @@ async function extractAddressParts(message: string, parsedCityOrState: string | 
     }
   }
 
-  return {
+  const heuristic = {
     address: addressLine,
     city,
     state,
     pincode
+  };
+
+  const shouldTryAiFallback =
+    !heuristic.address ||
+    (!pincode && !heuristic.city && !heuristic.state) ||
+    looksLikePhoneOrIdentityLine(heuristic.address);
+
+  if (!shouldTryAiFallback) {
+    return heuristic;
+  }
+
+  const aiResult = await extractAddressWithAiFallback({
+    rawMessage: message,
+    heuristic,
+    parsedCityOrState
+  });
+
+  if (!aiResult) {
+    return heuristic;
+  }
+
+  const aiPincode = aiResult.pincode || pincode;
+  const aiLocationFromPincode =
+    aiPincode && aiPincode !== pincode ? await lookupPincodeLocation(aiPincode) : locationFromPincode;
+  const aiCity = aiLocationFromPincode?.city || (isKnownCity(aiResult.city || "") ? aiResult.city || "" : "");
+  const aiState = aiLocationFromPincode?.state || (isKnownState(aiResult.state || "") ? aiResult.state || "" : "");
+
+  return {
+    address: aiResult.address || heuristic.address,
+    city: aiCity,
+    state: aiState,
+    pincode: aiPincode
   };
 }
 

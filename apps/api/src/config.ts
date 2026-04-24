@@ -37,6 +37,8 @@ const envSchema = z.object({
   SMTP_USER: z.string().optional().default(""),
   SMTP_APP_PASSWORD: z.string().optional().default(""),
   SMTP_FROM_NAME: z.string().optional().default("Resham Sutra Sales"),
+  OPENAI_API_KEY: z.string().optional().default(""),
+  WHATSAPP_PARSER_OPENAI_MODEL: z.string().optional().default("gpt-4.1-mini"),
   INTAKE_POLLING_ENABLED: z
     .union([z.string(), z.boolean()])
     .transform((value) => String(value).toLowerCase() === "true")
