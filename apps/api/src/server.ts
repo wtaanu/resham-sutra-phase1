@@ -21,7 +21,12 @@ import {
   processPendingEnquiries
 } from "./intake-processor.js";
 import { getOperationsSnapshot } from "./operations.js";
-import { createPortalEnquiry, createPortalQuotationLineItems, updatePortalEnquiry } from "./portal-actions.js";
+import {
+  createPortalEnquiry,
+  createPortalQuotationLineItems,
+  generateDraftForEnquiry,
+  updatePortalEnquiry
+} from "./portal-actions.js";
 import {
   getProductDocumentsByIds,
   sendProductDocumentsSchema,
@@ -343,6 +348,23 @@ app.post("/api/actions/enquiries/:id/create-customer", requireAuthenticatedUser,
     response.status(400).json({
       status: "error",
       message: friendlyMessage
+    });
+  }
+});
+
+app.post("/api/actions/enquiries/:id/generate-draft", requireAuthenticatedUser, async (request, response) => {
+  try {
+    const enquiryId = String(request.params.id || "");
+    const result = await generateDraftForEnquiry(enquiryId);
+    response.status(200).json({
+      status: "ok",
+      ...result
+    });
+  } catch (error) {
+    logRouteError("POST /api/actions/enquiries/:id/generate-draft", error);
+    response.status(400).json({
+      status: "error",
+      message: error instanceof Error ? error.message : "Failed to generate draft for enquiry"
     });
   }
 });

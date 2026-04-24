@@ -24,6 +24,7 @@ type EnquiryFields = {
   Quotations?: string[];
   "Drive Folder URL"?: string;
   "Requirement Summary"?: string;
+  "Potential Product"?: string;
   "Receiver WhatsApp Number"?: string;
 };
 
@@ -286,6 +287,7 @@ export async function getOperationsSnapshot() {
         mappedProductDocuments,
         driveFolderUrl: record.fields["Drive Folder URL"] || "",
         requirementSummary: record.fields["Requirement Summary"] || "",
+        potentialProduct: record.fields["Potential Product"] || "",
         receiverWhatsappNumber: record.fields["Receiver WhatsApp Number"] || ""
       };
     }),

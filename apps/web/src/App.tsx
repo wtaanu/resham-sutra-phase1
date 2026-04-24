@@ -45,6 +45,7 @@ type EnquiryRecord = {
   mappedProductDocuments: ProductDocument[];
   driveFolderUrl: string;
   requirementSummary: string;
+  potentialProduct: string;
   receiverWhatsappNumber: string;
 };
 
@@ -178,7 +179,6 @@ type EnquiryFormState = {
   destinationCity: string;
   destinationPincode: string;
   requirementSummary: string;
-  requestedAsset: string;
   potentialProduct: string;
 };
 
@@ -188,7 +188,9 @@ type LineItemDraftRow = {
   id: string;
   productId: string;
   qty: string;
-  totalAmount: string;
+  rate: string;
+  transport: string;
+  gstPercent: string;
 };
 
 type PostalLookupResponse = Array<{
@@ -213,6 +215,7 @@ type PaginatedTableProps<T> = {
   eyebrow: string;
   title: string;
   subtitle?: string;
+  headerAction?: ReactNode;
   rows: T[];
   columns: ReactNode;
   renderRow: (row: T) => ReactNode;
@@ -232,6 +235,38 @@ const viewOptions: NavView[] = [
   { key: "customers", label: "Customers" },
   { key: "enquiries", label: "New Enquiries" },
   { key: "products", label: "Products" }
+];
+
+const stateOptions = [
+  "Andhra Pradesh",
+  "Arunachal Pradesh",
+  "Assam",
+  "Bihar",
+  "Chhattisgarh",
+  "Delhi",
+  "Goa",
+  "Gujarat",
+  "Haryana",
+  "Himachal Pradesh",
+  "Jharkhand",
+  "Karnataka",
+  "Kerala",
+  "Madhya Pradesh",
+  "Maharashtra",
+  "Manipur",
+  "Meghalaya",
+  "Mizoram",
+  "Nagaland",
+  "Odisha",
+  "Punjab",
+  "Rajasthan",
+  "Sikkim",
+  "Tamil Nadu",
+  "Telangana",
+  "Tripura",
+  "Uttar Pradesh",
+  "Uttarakhand",
+  "West Bengal"
 ];
 
 function formatCurrency(value: number) {
@@ -296,23 +331,29 @@ function firstEnquiryFieldError(errors: EnquiryFieldErrors) {
 function calculateLineItemAmounts(
   product: ProductRecord | undefined,
   qtyInput: string | number,
-  totalAmountInput?: string
+  rateInput?: string | number,
+  transportInput?: string | number,
+  gstPercentInput?: string | number
 ) {
   const qty = Math.max(1, Number(qtyInput || 0));
-  const rate = Number(product?.bulkSalePrice || product?.mrp || 0);
-  const transport = Number(product?.transportCharge || 0);
-  const gstPercent = Number(product?.gstPercent || 0);
+  const resolvedRate =
+    rateInput !== undefined && String(rateInput).trim() !== ""
+      ? Number(rateInput)
+      : Number(product?.bulkSalePrice || product?.mrp || 0);
+  const resolvedTransport =
+    transportInput !== undefined && String(transportInput).trim() !== ""
+      ? Number(transportInput)
+      : Number(product?.transportCharge || 0);
+  const resolvedGstPercent =
+    gstPercentInput !== undefined && String(gstPercentInput).trim() !== ""
+      ? Number(gstPercentInput)
+      : Number(product?.gstPercent || 0);
+  const rate = Number.isFinite(resolvedRate) ? resolvedRate : 0;
+  const transport = Number.isFinite(resolvedTransport) ? resolvedTransport : 0;
+  const gstPercent = Number.isFinite(resolvedGstPercent) ? resolvedGstPercent : 0;
   const unitValue = Number((rate * qty).toFixed(2));
   const computedGstAmount = Number((((unitValue + transport) * gstPercent) / 100).toFixed(2));
   const computedTotalAmount = Number((unitValue + transport + computedGstAmount).toFixed(2));
-
-  const normalizedInput = String(totalAmountInput ?? "").trim();
-  const parsedOverride = Number(normalizedInput);
-  const hasOverride = normalizedInput !== "" && Number.isFinite(parsedOverride) && parsedOverride > 0;
-  const totalAmount = hasOverride ? Number(parsedOverride.toFixed(2)) : computedTotalAmount;
-  const gstAmount = hasOverride
-    ? Number((totalAmount - unitValue - transport).toFixed(2))
-    : computedGstAmount;
 
   return {
     qty,
@@ -320,8 +361,8 @@ function calculateLineItemAmounts(
     transport,
     gstPercent,
     unitValue,
-    gstAmount,
-    totalAmount,
+    gstAmount: computedGstAmount,
+    totalAmount: computedTotalAmount,
     computedTotalAmount
   };
 }
@@ -456,7 +497,6 @@ function createBlankEnquiryForm(): EnquiryFormState {
     destinationCity: "",
     destinationPincode: "",
     requirementSummary: "",
-    requestedAsset: "",
     potentialProduct: ""
   };
 }
@@ -466,7 +506,9 @@ function createLineItemRow(): LineItemDraftRow {
     id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
     productId: "",
     qty: "1",
-    totalAmount: ""
+    rate: "",
+    transport: "",
+    gstPercent: ""
   };
 }
 
@@ -513,6 +555,7 @@ function PaginatedTable<T>({
   renderRow,
   emptyTitle,
   emptyBody,
+  headerAction,
   pageSize = 8
 }: PaginatedTableProps<T>) {
   const [page, setPage] = useState(1);
@@ -533,7 +576,10 @@ function PaginatedTable<T>({
           <h2>{title}</h2>
           {subtitle ? <p className="panel-subcopy">{subtitle}</p> : null}
         </div>
-        <span className="table-meta">{rows.length} records</span>
+        <div className="table-header-actions">
+          {headerAction}
+          <span className="table-meta">{rows.length} records</span>
+        </div>
       </div>
 
       {rows.length ? (
@@ -1035,6 +1081,43 @@ export default function App() {
     }
   }
 
+  async function handleGenerateDraftFromEnquiry(enquiryId: string) {
+    try {
+      setActionState({
+        key: `enquiry-draft-${enquiryId}`,
+        label: "Generate Draft",
+        status: "loading",
+        message: "Checking customer, quotation, Drive folder, and draft file..."
+      });
+
+      const response = await apiFetch(`${apiUrl}/api/actions/enquiries/${enquiryId}/generate-draft`, {
+        method: "POST"
+      });
+      const payload = (await response.json()) as { message?: string };
+
+      if (!response.ok) {
+        throw new Error(payload.message || "Failed to generate draft");
+      }
+
+      await refreshOperations(false);
+      setActiveView("quotationDrafts");
+      setActionState({
+        key: `enquiry-draft-${enquiryId}`,
+        label: "Generate Draft",
+        status: "success",
+        message: "Draft generated successfully."
+      });
+    } catch (actionError) {
+      const message = actionError instanceof Error ? actionError.message : "Failed to generate draft";
+      setActionState({
+        key: `enquiry-draft-${enquiryId}`,
+        label: "Generate Draft",
+        status: "error",
+        message
+      });
+    }
+  }
+
   async function handleGenerateFinalPdf(quotationId: string) {
     try {
       setActionState({
@@ -1223,19 +1306,10 @@ export default function App() {
       destinationCity: enquiry.destinationCity,
       destinationPincode: enquiry.destinationPincode,
       requirementSummary: enquiry.requirementSummary,
-      requestedAsset: "",
-      potentialProduct: ""
+      potentialProduct: enquiry.potentialProduct
     });
     setEnquiryFieldErrors({});
-    setDestinationSameAsMain(
-      Boolean(
-        enquiry.address &&
-          enquiry.address === enquiry.destinationAddress &&
-          enquiry.state === enquiry.destinationState &&
-          enquiry.city === enquiry.destinationCity &&
-          enquiry.pincode === enquiry.destinationPincode
-      )
-    );
+    setDestinationSameAsMain(false);
     setCustomerSearchTerm(
       customer ? `${customer.clientId || "No ID"} - ${customer.customerName || "Unnamed customer"}` : ""
     );
@@ -1334,7 +1408,6 @@ export default function App() {
       company: customer?.company || current.company,
       phone: customer?.phone || current.phone,
       email: customer?.email || current.email,
-      address: customer?.address || current.address,
       state: customer?.state || current.state,
       city: customer?.city || current.city,
       pincode: customer?.pincode || current.pincode
@@ -1365,10 +1438,6 @@ export default function App() {
       nextFieldErrors.receiverWhatsappNumber = "Receiver WhatsApp number must be exactly 10 digits.";
     }
 
-    if (!enquiryForm.address.trim()) {
-      nextFieldErrors.address = "Address is required.";
-    }
-
     if (!enquiryForm.state.trim()) {
       nextFieldErrors.state = "State is required.";
     }
@@ -1377,24 +1446,16 @@ export default function App() {
       nextFieldErrors.city = "City is required.";
     }
 
-    if (!/^\d{6}$/.test(normalizePincodeInput(enquiryForm.pincode))) {
+    if (enquiryForm.pincode.trim() && !/^\d{6}$/.test(normalizePincodeInput(enquiryForm.pincode))) {
       nextFieldErrors.pincode = "Main pincode must be a valid 6-digit number.";
     }
 
-    if (!enquiryForm.destinationAddress.trim()) {
-      nextFieldErrors.destinationAddress = "Destination address is required.";
-    }
-
-    if (!enquiryForm.destinationState.trim()) {
-      nextFieldErrors.destinationState = "Destination state is required.";
-    }
-
-    if (!enquiryForm.destinationCity.trim()) {
-      nextFieldErrors.destinationCity = "Destination city is required.";
-    }
-
-    if (!/^\d{6}$/.test(normalizePincodeInput(enquiryForm.destinationPincode))) {
+    if (enquiryForm.destinationPincode.trim() && !/^\d{6}$/.test(normalizePincodeInput(enquiryForm.destinationPincode))) {
       nextFieldErrors.destinationPincode = "Destination pincode must be a valid 6-digit number.";
+    }
+
+    if (!enquiryForm.potentialProduct) {
+      nextFieldErrors.potentialProduct = "Product is required.";
     }
 
     if (Object.keys(nextFieldErrors).length) {
@@ -1445,7 +1506,6 @@ export default function App() {
             destinationCity: enquiryForm.destinationCity,
             destinationPincode: normalizePincodeInput(enquiryForm.destinationPincode),
             requirementSummary: enquiryForm.requirementSummary,
-            requestedAsset: enquiryForm.requestedAsset,
             potentialProduct: enquiryForm.potentialProduct
           })
         }
@@ -1492,6 +1552,9 @@ export default function App() {
       if (message.toLowerCase().includes("receiver whatsapp")) {
         backendFieldErrors.receiverWhatsappNumber = "Receiver WhatsApp number must be exactly 10 digits.";
       }
+      if (message.toLowerCase().includes("select a product")) {
+        backendFieldErrors.potentialProduct = "Product is required.";
+      }
       if (message.toLowerCase().includes("destination pincode")) {
         backendFieldErrors.destinationPincode = "Destination pincode must be a valid 6-digit number.";
       } else if (message.toLowerCase().includes("pincode")) {
@@ -1508,27 +1571,31 @@ export default function App() {
     }
   }
 
-  function updateLineItemRow(rowId: string, field: "productId" | "qty" | "totalAmount", value: string) {
+function updateLineItemRow(
+  rowId: string,
+  field: "productId" | "qty" | "rate" | "transport" | "gstPercent",
+  value: string
+) {
     setLineItemRows((current) =>
       current.map((row) => {
         if (row.id !== rowId) {
           return row;
         }
 
-        const nextValue = field === "totalAmount" ? normalizeDecimalInput(value) : value;
+        const nextValue =
+          field === "rate" || field === "transport" || field === "gstPercent"
+            ? normalizeDecimalInput(value)
+            : value;
         const nextRow = { ...row, [field]: nextValue };
 
-        if (field === "totalAmount") {
-          return nextRow;
+        const product = operations?.products.find((item) => item.id === nextRow.productId);
+        if (field === "productId" && product) {
+          nextRow.rate = formatAmountInput(Number(product.bulkSalePrice || product.mrp || 0));
+          nextRow.transport = formatAmountInput(Number(product.transportCharge || 0));
+          nextRow.gstPercent = formatAmountInput(Number(product.gstPercent || 0));
         }
 
-        const product = operations?.products.find((item) => item.id === nextRow.productId);
-        const amounts = calculateLineItemAmounts(product, nextRow.qty);
-
-        return {
-          ...nextRow,
-          totalAmount: nextRow.productId ? formatAmountInput(amounts.totalAmount) : ""
-        };
+        return nextRow;
       })
     );
   }
@@ -1590,16 +1657,12 @@ export default function App() {
       return;
     }
 
-    if (
-      lineItemRows.some(
-        (row) => row.totalAmount.trim() !== "" && !isValidPositiveAmount(row.totalAmount)
-      )
-    ) {
+    if (lineItemRows.some((row) => !isValidPositiveAmount(row.rate))) {
       setActionState({
         key: "portal-line-items",
         label: "Create Line Items",
         status: "error",
-        message: "Total amount must be a number greater than zero. Decimals are allowed."
+        message: "Rate must be a number greater than zero. Decimals are allowed."
       });
       return;
     }
@@ -1622,7 +1685,9 @@ export default function App() {
           items: lineItemRows.map((row) => ({
             productId: row.productId,
             qty: row.qty,
-            totalAmount: row.totalAmount
+            rate: row.rate,
+            transport: row.transport || "0",
+            gstPercent: row.gstPercent || "0"
           }))
         })
       });
@@ -1827,7 +1892,9 @@ export default function App() {
     (row) =>
       !row.productId ||
       Number(row.qty || 0) <= 0 ||
-      (row.totalAmount.trim() !== "" && !isValidPositiveAmount(row.totalAmount))
+      !isValidPositiveAmount(row.rate) ||
+      (row.transport.trim() !== "" && Number(row.transport) < 0) ||
+      (row.gstPercent.trim() !== "" && Number(row.gstPercent) < 0)
   );
   const popupActionState = useMemo(() => {
     if (!actionState || !entryMode) {
@@ -2018,18 +2085,7 @@ export default function App() {
               ) : null}
             </label>
             <label>
-              <span>Address *</span>
-              <input
-                value={enquiryForm.address}
-                onChange={(event) => {
-                  clearEnquiryFieldError("address");
-                  setEnquiryForm((current) => ({ ...current, address: event.target.value }));
-                }}
-              />
-              {enquiryFieldErrors.address ? <span className="field-error">{enquiryFieldErrors.address}</span> : null}
-            </label>
-            <label>
-              <span>Pincode *</span>
+              <span>Pincode</span>
               <input
                 inputMode="numeric"
                 value={enquiryForm.pincode}
@@ -2046,13 +2102,20 @@ export default function App() {
             </label>
             <label>
               <span>State *</span>
-              <input
+              <select
                 value={enquiryForm.state}
                 onChange={(event) => {
                   clearEnquiryFieldError("state");
                   setEnquiryForm((current) => ({ ...current, state: event.target.value }));
                 }}
-              />
+              >
+                <option value="">Select state</option>
+                {stateOptions.map((stateOption) => (
+                  <option key={stateOption} value={stateOption}>
+                    {stateOption}
+                  </option>
+                ))}
+              </select>
               {enquiryFieldErrors.state ? <span className="field-error">{enquiryFieldErrors.state}</span> : null}
             </label>
             <label>
@@ -2067,22 +2130,31 @@ export default function App() {
               {enquiryFieldErrors.city ? <span className="field-error">{enquiryFieldErrors.city}</span> : null}
             </label>
             <label>
-              <span>Requested asset</span>
-              <input
-                value={enquiryForm.requestedAsset}
-                onChange={(event) =>
-                  setEnquiryForm((current) => ({ ...current, requestedAsset: event.target.value }))
-                }
-              />
-            </label>
-            <label>
-              <span>Potential product</span>
-              <input
+              <span>Product *</span>
+              <select
                 value={enquiryForm.potentialProduct}
-                onChange={(event) =>
-                  setEnquiryForm((current) => ({ ...current, potentialProduct: event.target.value }))
-                }
-              />
+                onChange={(event) => {
+                  clearEnquiryFieldError("potentialProduct");
+                  const productId = event.target.value;
+                  const selectedProductOption = operations?.products.find((product) => product.id === productId);
+                  setEnquiryForm((current) => ({
+                    ...current,
+                    potentialProduct: productId,
+                    requirementSummary:
+                      selectedProductOption?.name || selectedProductOption?.model || selectedProductOption?.productKey || ""
+                  }));
+                }}
+              >
+                <option value="">Select product</option>
+                {(operations?.products || []).map((productOption) => (
+                  <option key={productOption.id} value={productOption.id}>
+                    {productOption.name || productOption.model || productOption.productKey}
+                  </option>
+                ))}
+              </select>
+              {enquiryFieldErrors.potentialProduct ? (
+                <span className="field-error">{enquiryFieldErrors.potentialProduct}</span>
+              ) : null}
             </label>
             <label className="form-span-2">
               <span>Requirement summary</span>
@@ -2095,29 +2167,7 @@ export default function App() {
               />
             </label>
             <label className="form-span-2">
-              <span className="checkbox-label">
-                <input
-                  type="checkbox"
-                  checked={destinationSameAsMain}
-                  onChange={(event) => {
-                    const checked = event.target.checked;
-                    setDestinationSameAsMain(checked);
-                    if (checked) {
-                      setEnquiryForm((current) => ({
-                        ...current,
-                        destinationAddress: current.address,
-                        destinationPincode: current.pincode,
-                        destinationState: current.state,
-                        destinationCity: current.city
-                      }));
-                    }
-                  }}
-                />
-                Destination same as main address
-              </span>
-            </label>
-            <label className="form-span-2">
-              <span>Destination address *</span>
+              <span>Destination address</span>
               <textarea
                 rows={2}
                 value={enquiryForm.destinationAddress}
@@ -2131,7 +2181,7 @@ export default function App() {
               ) : null}
             </label>
             <label>
-              <span>Destination pincode *</span>
+              <span>Destination pincode</span>
               <input
                 inputMode="numeric"
                 value={enquiryForm.destinationPincode}
@@ -2149,20 +2199,27 @@ export default function App() {
               ) : null}
             </label>
             <label>
-              <span>Destination state *</span>
-              <input
+              <span>Destination state</span>
+              <select
                 value={enquiryForm.destinationState}
                 onChange={(event) => {
                   clearEnquiryFieldError("destinationState");
                   setEnquiryForm((current) => ({ ...current, destinationState: event.target.value }));
                 }}
-              />
+              >
+                <option value="">Select state</option>
+                {stateOptions.map((stateOption) => (
+                  <option key={stateOption} value={stateOption}>
+                    {stateOption}
+                  </option>
+                ))}
+              </select>
               {enquiryFieldErrors.destinationState ? (
                 <span className="field-error">{enquiryFieldErrors.destinationState}</span>
               ) : null}
             </label>
             <label>
-              <span>Destination city *</span>
+              <span>Destination city</span>
               <input
                 value={enquiryForm.destinationCity}
                 onChange={(event) => {
@@ -2393,7 +2450,13 @@ export default function App() {
           <div className="line-item-builder">
             {lineItemRows.map((row, index) => {
               const product = operations.products.find((item) => item.id === row.productId);
-              const amounts = calculateLineItemAmounts(product, row.qty, row.totalAmount);
+              const amounts = calculateLineItemAmounts(
+                product,
+                row.qty,
+                row.rate,
+                row.transport,
+                row.gstPercent
+              );
 
               return (
                 <div className="line-item-row" key={row.id}>
@@ -2420,9 +2483,39 @@ export default function App() {
                       onChange={(event) => updateLineItemRow(row.id, "qty", event.target.value)}
                     />
                   </label>
+                  <label className="line-item-qty">
+                    <span>Rate</span>
+                    <input
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      value={row.rate}
+                      onChange={(event) => updateLineItemRow(row.id, "rate", event.target.value)}
+                    />
+                  </label>
+                  <label className="line-item-qty">
+                    <span>Packing / Transport</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={row.transport}
+                      onChange={(event) => updateLineItemRow(row.id, "transport", event.target.value)}
+                    />
+                  </label>
+                  <label className="line-item-qty">
+                    <span>GST %</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={row.gstPercent}
+                      onChange={(event) => updateLineItemRow(row.id, "gstPercent", event.target.value)}
+                    />
+                  </label>
                   <div className="line-item-preview">
                     <span>{product?.narration || product?.name || "Product details will auto-fill from the catalog."}</span>
-                    <strong>{product ? formatCurrency(amounts.rate) : "Rate pending"}</strong>
+                    <strong>{product ? formatCurrency(amounts.totalAmount) : "Amount pending"}</strong>
                     {product ? (
                       <>
                         <span>{`Base ${formatCurrency(amounts.unitValue)} | Transport ${formatCurrency(amounts.transport)}`}</span>
@@ -2434,11 +2527,10 @@ export default function App() {
                     <span>Total amount</span>
                     <input
                       type="number"
-                      min="0.01"
+                      readOnly
                       step="0.01"
-                      value={row.totalAmount}
+                      value={row.productId ? formatAmountInput(amounts.totalAmount) : ""}
                       placeholder={product ? formatAmountInput(amounts.computedTotalAmount) : "Select product first"}
-                      onChange={(event) => updateLineItemRow(row.id, "totalAmount", event.target.value)}
                     />
                   </label>
                   <button className="ghost-button" type="button" onClick={() => removeLineItemRow(row.id)}>
@@ -2642,12 +2734,16 @@ export default function App() {
       <PaginatedTable
         eyebrow="Enquiries"
         title="All inbound requests from Airtable forms"
+        headerAction={
+          <button className="action-inline-button" type="button" onClick={openEnquiryEntry}>
+            Create Enquiry
+          </button>
+        }
         rows={operations.enquiries}
         columns={
           <>
             <th>Enquiry</th>
             <th>Lead</th>
-            <th>Company</th>
             <th>Status</th>
             <th>Customer</th>
             <th>Quotation</th>
@@ -2669,7 +2765,6 @@ export default function App() {
             <tr key={enquiry.id}>
               <td>
                 <strong>{enquiry.enquiryId}</strong>
-                <span>{[enquiry.city, enquiry.state, enquiry.pincode].filter(Boolean).join(", ") || "Address pending"}</span>
                 {enquiry.loggedDateTime ? (
                   <span className="table-submeta">Logged {formatDateTime(enquiry.loggedDateTime)}</span>
                 ) : null}
@@ -2677,11 +2772,11 @@ export default function App() {
               <td>
                 <strong>{enquiry.leadName || "Unnamed lead"}</strong>
                 <span>{enquiry.phone || enquiry.email || "Contact missing"}</span>
+                <span className="table-submeta">{enquiry.state || "State pending"}</span>
                 {enquiry.receiverWhatsappNumber ? (
                   <span className="table-submeta">Receiver WA {enquiry.receiverWhatsappNumber}</span>
                 ) : null}
               </td>
-              <td>{enquiry.company || "-"}</td>
               <td>
                 <span className={`status-chip ${statusTone(enquiry.parserStatus)}`}>
                   {enquiry.parserStatus || "New"}
@@ -2690,8 +2785,7 @@ export default function App() {
               <td>{customer?.customerName || "Not linked yet"}</td>
               <td>{quotation?.quotationNumber || "Not created"}</td>
               <td>
-                <strong>{enquiry.requirementSummary || "Requirement not captured"}</strong>
-                <span>{enquiry.address || "Address not captured"}</span>
+                <strong>{enquiry.requirementSummary || "Product not selected"}</strong>
               </td>
               <td>
                 {enquiry.mappedProductDocuments.length ? (
@@ -2714,8 +2808,9 @@ export default function App() {
                     target="_blank"
                     rel="noreferrer"
                     onClick={() => handleLinkAction(`folder-${enquiry.id}`, "Open Folder")}
+                    title="Open Drive folder"
                   >
-                    Open folder
+                    ↗
                   </a>
                 ) : (
                   "Not created"
@@ -2724,11 +2819,22 @@ export default function App() {
               <td>
                 <div className="action-stack">
                   <button
-                    className="action-inline-button"
+                    className="icon-action-button neutral"
                     type="button"
                     onClick={() => openEnquiryEdit(enquiry)}
+                    title="Edit enquiry"
                   >
-                    Edit
+                    ✎
+                  </button>
+                  <button
+                    className="action-inline-button"
+                    type="button"
+                    onClick={() => void handleGenerateDraftFromEnquiry(enquiry.id)}
+                    disabled={actionState?.key === `enquiry-draft-${enquiry.id}` && actionState.status === "loading"}
+                  >
+                    {actionState?.key === `enquiry-draft-${enquiry.id}` && actionState.status === "loading"
+                      ? "Generating..."
+                      : "Generate Draft"}
                   </button>
                   {(!enquiry.linkedCustomerId || !enquiry.quotations.length) &&
                   (enquiry.parserStatus === "New" || enquiry.parserStatus === "Parsed") ? (

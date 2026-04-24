@@ -110,7 +110,6 @@ const enquiryPayloadSchema = z.object({
   destinationCity: z.string().trim().optional().default(""),
   destinationPincode: optionalPincodeSchema,
   requirementSummary: z.string().trim().optional().default(""),
-  requestedAsset: z.string().trim().optional().default(""),
   potentialProduct: z.string().trim().optional().default(""),
   receiverWhatsappNumber: optionalPhoneSchema.default("")
 }).superRefine((input, context) => {
@@ -147,11 +146,11 @@ const enquiryPayloadSchema = z.object({
     });
   }
 
-  if (normalizedDestinationPincode && normalizedDestinationPincode.length !== 6) {
+  if (!input.potentialProduct) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
-      message: "Enter a valid 6-digit pincode",
-      path: ["destinationPincode"]
+      message: "Select a product",
+      path: ["potentialProduct"]
     });
   }
 });
@@ -163,8 +162,9 @@ const lineItemPayloadSchema = z.object({
       z.object({
         productId: airtableRecordIdSchema,
         qty: z.coerce.number().positive("Quantity should be greater than zero"),
-        totalAmount: z.coerce.number().nonnegative("Total amount should be zero or more").optional()
-          .refine((value) => value === undefined || value > 0, "Total amount should be greater than zero")
+        rate: z.coerce.number().positive("Rate should be greater than zero"),
+        transport: z.coerce.number().nonnegative("Packing and transport cannot be negative").default(0),
+        gstPercent: z.coerce.number().nonnegative("GST rate cannot be negative").default(0)
       })
     )
     .min(1, "Add at least one line item")
@@ -318,8 +318,25 @@ async function findExistingCustomerByContact(input: z.infer<typeof enquiryPayloa
   );
 }
 
+async function resolvePotentialProductSummary(productId: string) {
+  if (!productId) {
+    return {
+      productId: "",
+      productName: ""
+    };
+  }
+
+  const product = await getRecord<ProductFields>(env.AIRTABLE_PRODUCTS_TABLE, productId);
+  return {
+    productId,
+    productName:
+      String(product.fields["Product Name"] || product.fields.Model || product.fields["Product Key"] || "").trim()
+  };
+}
+
 export async function createPortalEnquiry(payload: unknown) {
   const input = enquiryPayloadSchema.parse(payload);
+  const productSummary = await resolvePotentialProductSummary(input.potentialProduct);
   const existingCustomer = input.linkedCustomerId
     ? await getRecord<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, input.linkedCustomerId)
     : await findExistingCustomerByContact(input);
@@ -350,9 +367,8 @@ export async function createPortalEnquiry(payload: unknown) {
         "Destination City": destinationCity,
         "Parser Status": parserStatus,
         "Linked Customer": linkedRecordIds(linkedCustomerId),
-        "Requirement Summary": input.requirementSummary,
-        "Requested Asset": input.requestedAsset,
-        "Potential Product": input.potentialProduct,
+        "Requirement Summary": productSummary.productName || input.requirementSummary,
+        "Potential Product": productSummary.productId,
         "Receiver WhatsApp Number": input.receiverWhatsappNumber
       },
       "Pincode",
@@ -431,6 +447,7 @@ export async function createPortalEnquiry(payload: unknown) {
 
 export async function updatePortalEnquiry(enquiryId: string, payload: unknown) {
   const input = enquiryPayloadSchema.parse(payload);
+  const productSummary = await resolvePotentialProductSummary(input.potentialProduct);
   const existingEnquiry = await getRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, enquiryId);
   const existingCustomer = input.linkedCustomerId
     ? await getRecord<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, input.linkedCustomerId)
@@ -467,9 +484,8 @@ export async function updatePortalEnquiry(enquiryId: string, payload: unknown) {
         "Destination City": destinationCity,
         "Parser Status": parserStatus,
         "Linked Customer": linkedRecordIds(linkedCustomerId),
-        "Requirement Summary": input.requirementSummary,
-        "Requested Asset": input.requestedAsset,
-        "Potential Product": input.potentialProduct,
+        "Requirement Summary": productSummary.productName || input.requirementSummary || existingEnquiry.fields["Requirement Summary"] || "",
+        "Potential Product": productSummary.productId || existingEnquiry.fields["Potential Product"] || "",
         "Receiver WhatsApp Number": input.receiverWhatsappNumber
       },
       "Pincode",
@@ -569,15 +585,13 @@ export async function createPortalQuotationLineItems(payload: unknown) {
       throw new Error("One or more selected products could not be found.");
     }
 
-    const rate = toNumericValue(product.fields["Bulk Sale Price"], toNumericValue(product.fields.MRP, 0));
-    const transport = toNumericValue(product.fields["Pkg & Transport"], 0);
-    const gstPercent = toNumericValue(product.fields["GST %"], 0);
     const qty = Number(item.qty || 0);
-    const unitValue = rate * qty;
-    const defaultGstAmount = Number((((unitValue + transport) * gstPercent) / 100).toFixed(2));
-    const defaultTotalAmount = Number((unitValue + transport + defaultGstAmount).toFixed(2));
-    const totalAmount = Number((item.totalAmount ?? defaultTotalAmount).toFixed(2));
-    const gstAmount = Number((totalAmount - unitValue - transport).toFixed(2));
+    const rate = Number(item.rate.toFixed(2));
+    const transport = Number(item.transport.toFixed(2));
+    const gstPercent = Number(item.gstPercent.toFixed(2));
+    const unitValue = Number((rate * qty).toFixed(2));
+    const gstAmount = Number((((unitValue + transport) * gstPercent) / 100).toFixed(2));
+    const totalAmount = Number((unitValue + transport + gstAmount).toFixed(2));
 
     return {
       Name: `${quotationIdentifier}-${String(nextLineNo).padStart(2, "0")}`,
@@ -625,6 +639,19 @@ export async function createPortalQuotationLineItems(payload: unknown) {
     quotationNumber: draft.quotation.fields["Quotation Number"] || quotation.fields["Quotation Number"] || quotation.id,
     createdCount: created.length,
     quotationStatus: draft.quotation.fields.Status || "Ready for Review",
+    draftFileUrl: draft.quotation.fields["Draft File URL"] || "",
+    driveFolderUrl: draft.folder.folderUrl || draft.quotation.fields["Drive Folder URL"] || ""
+  };
+}
+
+export async function generateDraftForEnquiry(enquiryId: string) {
+  const provisioned = await createCustomerForEnquiry(enquiryId);
+  const draft = await refreshDraftForQuotation(provisioned.quotation.id);
+
+  return {
+    enquiryId: provisioned.enquiry.id,
+    quotationId: draft.quotation.id,
+    quotationNumber: draft.quotation.fields["Quotation Number"] || provisioned.quotation.fields["Quotation Number"] || "",
     draftFileUrl: draft.quotation.fields["Draft File URL"] || "",
     driveFolderUrl: draft.folder.folderUrl || draft.quotation.fields["Drive Folder URL"] || ""
   };

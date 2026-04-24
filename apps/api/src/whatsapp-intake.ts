@@ -36,6 +36,10 @@ type ProductFields = {
   Model?: string;
   Narration?: string;
   "Source Sheet"?: string;
+  "Bulk Sale Price"?: number;
+  MRP?: number;
+  "GST %"?: number;
+  "Pkg & Transport"?: number;
 };
 
 type CustomerFields = {
@@ -726,6 +730,8 @@ export async function processWhatsAppEnquiry(payload: unknown) {
   const parsed = parseIncomingEnquiry(input.rawMessage);
   const contactPhone = parsed.phone || normalizePhone(input.senderPhone);
   const addressParts = await extractAddressParts(input.rawMessage, parsed.cityOrState);
+  const matchedProducts = await findProductsForMessage(input.rawMessage, parsed.productInterest);
+  const primaryMatchedProduct = matchedProducts[0];
 
   const created = await createPortalEnquiry({
     source: "whatsapp",
@@ -742,9 +748,12 @@ export async function processWhatsAppEnquiry(payload: unknown) {
     destinationState: addressParts.state,
     destinationCity: addressParts.city,
     destinationPincode: addressParts.pincode,
-    requirementSummary: parsed.productInterest || input.rawMessage,
-    requestedAsset: parsed.requestedAsset || "Details",
-    potentialProduct: parsed.productInterest || "",
+    requirementSummary:
+      primaryMatchedProduct?.fields["Product Name"] ||
+      primaryMatchedProduct?.fields["Product Key"] ||
+      parsed.productInterest ||
+      input.rawMessage,
+    potentialProduct: primaryMatchedProduct?.id || "",
     receiverWhatsappNumber: input.inboundWhatsappNumber
   });
 
@@ -752,14 +761,16 @@ export async function processWhatsAppEnquiry(payload: unknown) {
 
   let enquiry = await getRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, created.enquiryRecordId);
   const quotationId = enquiry.fields.Quotations?.[0] || "";
-  const matchedProducts = await findProductsForMessage(input.rawMessage, parsed.productInterest);
 
   if (quotationId && matchedProducts.length) {
     await createPortalQuotationLineItems({
       quotationId,
       items: matchedProducts.map((product) => ({
         productId: product.id,
-        qty: 1
+        qty: 1,
+        rate: Number(product.fields["Bulk Sale Price"] || product.fields.MRP || 0),
+        transport: Number(product.fields["Pkg & Transport"] || 0),
+        gstPercent: Number(product.fields["GST %"] || 0)
       }))
     });
 
