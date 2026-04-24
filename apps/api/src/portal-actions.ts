@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   createRecord,
   createRecords,
+  deleteRecords,
   getRecord,
   listRecords,
   updateRecord,
@@ -77,6 +78,16 @@ type QuotationLineItemFields = {
   "GST Amount"?: number;
   "Total Amount"?: number;
   "Unit Value"?: number;
+};
+
+type PortalQuotationLineItem = {
+  id: string;
+  productId: string;
+  qty: number;
+  rate: number;
+  transport: number;
+  gstPercent: number;
+  totalAmount: number;
 };
 
 const airtableRecordIdSchema = z.string().regex(/^rec[a-zA-Z0-9]+$/, "Expected an Airtable record ID");
@@ -169,6 +180,47 @@ const lineItemPayloadSchema = z.object({
     )
     .min(1, "Add at least one line item")
 });
+
+function buildPortalLineItemFields(input: {
+  quotation: AirtableRecord<QuotationFields>;
+  productLookup: Map<string, AirtableRecord<ProductFields>>;
+  items: Array<z.infer<typeof lineItemPayloadSchema>["items"][number]>;
+  existingCount: number;
+}) {
+  let nextLineNo = input.existingCount + 1;
+  const quotationIdentifier =
+    String(input.quotation.fields["Quotation Number"] || input.quotation.id).trim() || input.quotation.id;
+
+  return input.items.map((item) => {
+    const product = input.productLookup.get(item.productId);
+    if (!product) {
+      throw new Error("One or more selected products could not be found.");
+    }
+
+    const qty = Number(item.qty || 0);
+    const rate = Number(item.rate.toFixed(2));
+    const transport = Number(item.transport.toFixed(2));
+    const gstPercent = Number(item.gstPercent.toFixed(2));
+    const unitValue = Number((rate * qty).toFixed(2));
+    const gstAmount = Number((((unitValue + transport) * gstPercent) / 100).toFixed(2));
+    const totalAmount = Number((unitValue + transport + gstAmount).toFixed(2));
+
+    return {
+      Name: `${quotationIdentifier}-${String(nextLineNo).padStart(2, "0")}`,
+      Quotation: linkedRecordIds(input.quotation.id),
+      "Linked Product": linkedRecordIds(item.productId),
+      "Line No.": nextLineNo++,
+      "Description Override": buildDescription(product),
+      Qty: qty,
+      "Rate Per Unit": rate,
+      "Pkg & Transport": transport,
+      "GST %": gstPercent,
+      "GST Amount": gstAmount,
+      "Total Amount": totalAmount,
+      "Unit Value": unitValue
+    };
+  });
+}
 
 function buildDescription(product: AirtableRecord<ProductFields>) {
   return (
@@ -573,40 +625,12 @@ export async function createPortalQuotationLineItems(payload: unknown) {
     maxRecords: 500
   });
 
-  let nextLineNo =
-    existingItems.filter((item) => item.fields.Quotation?.includes(input.quotationId)).length + 1;
-
-  const quotationIdentifier =
-    String(quotation.fields["Quotation Number"] || quotation.id).trim() || quotation.id;
-
-  const lineItemFields = input.items.map((item) => {
-    const product = productLookup.get(item.productId);
-    if (!product) {
-      throw new Error("One or more selected products could not be found.");
-    }
-
-    const qty = Number(item.qty || 0);
-    const rate = Number(item.rate.toFixed(2));
-    const transport = Number(item.transport.toFixed(2));
-    const gstPercent = Number(item.gstPercent.toFixed(2));
-    const unitValue = Number((rate * qty).toFixed(2));
-    const gstAmount = Number((((unitValue + transport) * gstPercent) / 100).toFixed(2));
-    const totalAmount = Number((unitValue + transport + gstAmount).toFixed(2));
-
-    return {
-      Name: `${quotationIdentifier}-${String(nextLineNo).padStart(2, "0")}`,
-      Quotation: linkedRecordIds(input.quotationId),
-      "Linked Product": linkedRecordIds(item.productId),
-      "Line No.": nextLineNo++,
-      "Description Override": buildDescription(product),
-      Qty: qty,
-      "Rate Per Unit": rate,
-      "Pkg & Transport": transport,
-      "GST %": gstPercent,
-      "GST Amount": gstAmount,
-      "Total Amount": totalAmount,
-      "Unit Value": unitValue
-    };
+  const existingCount = existingItems.filter((item) => item.fields.Quotation?.includes(input.quotationId)).length;
+  const lineItemFields = buildPortalLineItemFields({
+    quotation,
+    productLookup,
+    items: input.items,
+    existingCount
   });
 
   let created;
@@ -633,6 +657,91 @@ export async function createPortalQuotationLineItems(payload: unknown) {
     draftFileUrl: draft.quotation.fields["Draft File URL"] || "",
     driveFolderUrl: draft.folder.folderUrl || draft.quotation.fields["Drive Folder URL"] || ""
   });
+
+  return {
+    quotationId: quotation.id,
+    quotationNumber: draft.quotation.fields["Quotation Number"] || quotation.fields["Quotation Number"] || quotation.id,
+    createdCount: created.length,
+    quotationStatus: draft.quotation.fields.Status || "Ready for Review",
+    draftFileUrl: draft.quotation.fields["Draft File URL"] || "",
+    driveFolderUrl: draft.folder.folderUrl || draft.quotation.fields["Drive Folder URL"] || ""
+  };
+}
+
+export async function getPortalQuotationLineItems(quotationId: string) {
+  const items = await listRecords<QuotationLineItemFields>(env.AIRTABLE_QUOTATION_LINE_ITEMS_TABLE, {
+    fields: [
+      "Quotation",
+      "Linked Product",
+      "Qty",
+      "Rate Per Unit",
+      "Pkg & Transport",
+      "GST %",
+      "Total Amount"
+    ],
+    maxRecords: 500
+  });
+
+  return items
+    .filter((item) => item.fields.Quotation?.includes(quotationId))
+    .sort((left, right) => Number(left.fields["Line No."] || 0) - Number(right.fields["Line No."] || 0))
+    .map((item) => ({
+      id: item.id,
+      productId: item.fields["Linked Product"]?.[0] || "",
+      qty: Number(item.fields.Qty || 0),
+      rate: Number(item.fields["Rate Per Unit"] || 0),
+      transport: Number(item.fields["Pkg & Transport"] || 0),
+      gstPercent: Number(item.fields["GST %"] || 0),
+      totalAmount: Number(item.fields["Total Amount"] || 0)
+    })) satisfies PortalQuotationLineItem[];
+}
+
+export async function replacePortalQuotationLineItems(payload: unknown) {
+  const input = lineItemPayloadSchema.parse(payload);
+  const quotation = await getRecord<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, input.quotationId);
+  const products = await listRecords<ProductFields>(env.AIRTABLE_PRODUCTS_TABLE, {
+    maxRecords: 500
+  });
+  const productLookup = new Map(products.map((product) => [product.id, product]));
+  const existingItems = await listRecords<QuotationLineItemFields>(env.AIRTABLE_QUOTATION_LINE_ITEMS_TABLE, {
+    fields: ["Quotation"],
+    maxRecords: 500
+  });
+  const existingForQuotation = existingItems.filter((item) => item.fields.Quotation?.includes(input.quotationId));
+
+  if (existingForQuotation.length) {
+    await deleteRecords(
+      env.AIRTABLE_QUOTATION_LINE_ITEMS_TABLE,
+      existingForQuotation.map((item) => item.id)
+    );
+  }
+
+  const lineItemFields = buildPortalLineItemFields({
+    quotation,
+    productLookup,
+    items: input.items,
+    existingCount: 0
+  });
+
+  let created;
+  try {
+    created = await createRecords<QuotationLineItemFields>(
+      env.AIRTABLE_QUOTATION_LINE_ITEMS_TABLE,
+      lineItemFields
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (!mentionsField(message, "Pkg & Transport")) {
+      throw error;
+    }
+
+    created = await createRecords<QuotationLineItemFields>(
+      env.AIRTABLE_QUOTATION_LINE_ITEMS_TABLE,
+      omitFieldFromRecords(lineItemFields, "Pkg & Transport")
+    );
+  }
+
+  const draft = await refreshDraftForQuotation(quotation.id);
 
   return {
     quotationId: quotation.id,

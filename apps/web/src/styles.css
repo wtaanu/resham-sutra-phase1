@@ -644,6 +644,7 @@ a:hover {
 .line-item-builder {
   display: grid;
   gap: 10px;
+  overflow-x: hidden;
 }
 
 .document-list {
@@ -698,7 +699,7 @@ a:hover {
 
 .line-item-row {
   display: grid;
-  grid-template-columns: minmax(260px, 2.8fr) 90px 110px 150px 90px 150px 88px;
+  grid-template-columns: minmax(320px, 3.2fr) 72px 96px 126px 82px 126px 52px;
   gap: 10px;
   align-items: end;
   padding: 10px;
@@ -1139,6 +1140,16 @@ td span {
 
 .icon-action-button.neutral:hover {
   background: #ebeff5;
+}
+
+.icon-action-button.danger {
+  background: #fff1f1;
+  border-color: #f0b7b7;
+  color: #b42318;
+}
+
+.icon-action-button.danger:hover {
+  background: #ffe5e5;
 }
 
 .icon-action-button:disabled {

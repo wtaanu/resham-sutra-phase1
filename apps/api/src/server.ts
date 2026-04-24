@@ -25,6 +25,8 @@ import {
   createPortalEnquiry,
   createPortalQuotationLineItems,
   generateDraftForEnquiry,
+  getPortalQuotationLineItems,
+  replacePortalQuotationLineItems,
   updatePortalEnquiry
 } from "./portal-actions.js";
 import {
@@ -255,6 +257,39 @@ app.post("/api/portal/quotation-line-items", requireAuthenticatedUser, async (re
     response.status(400).json({
       status: "error",
       message: error instanceof Error ? error.message : "Failed to create quotation line items"
+    });
+  }
+});
+
+app.get("/api/portal/quotations/:id/line-items", requireAuthenticatedUser, async (request, response) => {
+  try {
+    const quotationId = String(request.params.id || "");
+    const items = await getPortalQuotationLineItems(quotationId);
+    response.status(200).json({
+      status: "ok",
+      items
+    });
+  } catch (error) {
+    logRouteError("GET /api/portal/quotations/:id/line-items", error);
+    response.status(400).json({
+      status: "error",
+      message: error instanceof Error ? error.message : "Failed to load quotation line items"
+    });
+  }
+});
+
+app.put("/api/portal/quotation-line-items", requireAuthenticatedUser, async (request, response) => {
+  try {
+    const result = await replacePortalQuotationLineItems(request.body);
+    response.status(200).json({
+      status: "ok",
+      ...result
+    });
+  } catch (error) {
+    logRouteError("PUT /api/portal/quotation-line-items", error);
+    response.status(400).json({
+      status: "error",
+      message: error instanceof Error ? error.message : "Failed to replace quotation line items"
     });
   }
 });

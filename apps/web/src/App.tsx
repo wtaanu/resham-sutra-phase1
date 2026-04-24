@@ -193,6 +193,16 @@ type LineItemDraftRow = {
   gstPercent: string;
 };
 
+type PortalLineItemResponse = {
+  id: string;
+  productId: string;
+  qty: number;
+  rate: number;
+  transport: number;
+  gstPercent: number;
+  totalAmount: number;
+};
+
 type PostalLookupResponse = Array<{
   Status: string;
   PostOffice?: Array<{
@@ -509,6 +519,17 @@ function createLineItemRow(): LineItemDraftRow {
     rate: "",
     transport: "",
     gstPercent: ""
+  };
+}
+
+function mapPortalLineItemToDraftRow(item: PortalLineItemResponse): LineItemDraftRow {
+  return {
+    id: item.id || `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    productId: item.productId,
+    qty: String(item.qty || 1),
+    rate: formatAmountInput(item.rate || 0),
+    transport: formatAmountInput(item.transport || 0),
+    gstPercent: formatAmountInput(item.gstPercent || 0)
   };
 }
 
@@ -980,6 +1001,45 @@ export default function App() {
     enquiryForm.state,
     enquiryForm.city
   ]);
+
+  useEffect(() => {
+    if (entryMode !== "lineItems" || !selectedQuotationId || !currentUser) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadQuotationLineItems() {
+      try {
+        const response = await apiFetch(`${apiUrl}/api/portal/quotations/${selectedQuotationId}/line-items`);
+        const payload = (await response.json()) as { message?: string; items?: PortalLineItemResponse[] };
+
+        if (!response.ok) {
+          throw new Error(payload.message || "Failed to load quotation line items");
+        }
+
+        if (cancelled) {
+          return;
+        }
+
+        setLineItemRows(
+          payload.items && payload.items.length
+            ? payload.items.map(mapPortalLineItemToDraftRow)
+            : [createLineItemRow()]
+        );
+      } catch (loadError) {
+        if (!cancelled) {
+          setLineItemRows([createLineItemRow()]);
+        }
+      }
+    }
+
+    void loadQuotationLineItems();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [entryMode, selectedQuotationId, currentUser]);
 
   async function refreshOperations(isBackgroundRefresh = true) {
     if (!currentUser) {
@@ -1676,7 +1736,7 @@ function updateLineItemRow(
       });
 
       const response = await apiFetch(`${apiUrl}/api/portal/quotation-line-items`, {
-        method: "POST",
+        method: "PUT",
         headers: {
           "Content-Type": "application/json"
         },
@@ -1720,8 +1780,8 @@ function updateLineItemRow(
         label: "Create Line Items",
         status: "success",
         message: payload.draftFileUrl
-          ? `${payload.createdCount || lineItemRows.length} line items created for ${payload.quotationNumber || "quotation"}. Draft generated automatically.`
-          : `${payload.createdCount || lineItemRows.length} line items created for ${payload.quotationNumber || "quotation"}. If the draft does not appear, use Generate Draft from the quotation row.`
+          ? `${payload.createdCount || lineItemRows.length} line items saved for ${payload.quotationNumber || "quotation"}. Draft updated automatically.`
+          : `${payload.createdCount || lineItemRows.length} line items saved for ${payload.quotationNumber || "quotation"}. If the draft does not appear, use Generate Draft from the quotation row.`
       });
       setLineItemRows([createLineItemRow()]);
       closeEntryPanel();
@@ -2523,8 +2583,13 @@ function updateLineItemRow(
                       placeholder={product ? formatAmountInput(amounts.computedTotalAmount) : "Select product first"}
                     />
                   </label>
-                  <button className="ghost-button" type="button" onClick={() => removeLineItemRow(row.id)}>
-                    Remove
+                  <button
+                    className="icon-action-button danger"
+                    type="button"
+                    onClick={() => removeLineItemRow(row.id)}
+                    title="Delete line item"
+                  >
+                    🗑
                   </button>
                   <div className="line-item-preview">
                     <span>{product?.narration || product?.name || "Product details will auto-fill from the catalog."}</span>

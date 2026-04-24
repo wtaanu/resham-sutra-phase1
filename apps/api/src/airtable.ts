@@ -19,6 +19,10 @@ type AirtableUpdatePayload = {
   fields: Record<string, unknown>;
 };
 
+type AirtableDeletePayload = {
+  id: string;
+};
+
 const AIRTABLE_API_BASE = `https://api.airtable.com/v0/${env.AIRTABLE_BASE_ID}`;
 
 async function airtableRequest<TResponse>(
@@ -143,4 +147,24 @@ export async function updateRecord<TFields extends Record<string, unknown>>(
   );
 
   return response.records[0];
+}
+
+export async function deleteRecords(
+  tableName: string,
+  recordIds: string[]
+) {
+  for (let index = 0; index < recordIds.length; index += 10) {
+    const batch = recordIds.slice(index, index + 10);
+    const response = await airtableRequest<{ records: AirtableDeletePayload[] }>(
+      `/${encodeURIComponent(tableName)}`,
+      {
+        method: "DELETE",
+        body: JSON.stringify({
+          records: batch.map((id) => ({ id })) satisfies AirtableDeletePayload[]
+        })
+      }
+    );
+
+    void response;
+  }
 }
