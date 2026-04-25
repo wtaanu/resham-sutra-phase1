@@ -698,19 +698,31 @@ function buildMessageFingerprint(input: {
 }
 
 async function findExistingWhatsAppEnquiry(fingerprint: string) {
-  const enquiries = await listRecords<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
-    fields: [
-      "Enquiry ID",
-      "Parser Status",
-      "Linked Customer",
-      "Quotations",
-      "Drive Folder URL",
-      "Requirement Summary",
-      "Potential Product",
-      "Notes"
-    ],
-    maxRecords: 100
-  });
+  let enquiries: AirtableRecord<EnquiryFields>[];
+
+  try {
+    enquiries = await listRecords<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
+      fields: [
+        "Enquiry ID",
+        "Parser Status",
+        "Linked Customer",
+        "Quotations",
+        "Drive Folder URL",
+        "Requirement Summary",
+        "Potential Product",
+        "Notes"
+      ],
+      maxRecords: 100
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (!message.includes('Unknown field name: "Notes"')) {
+      throw error;
+    }
+
+    console.log("[whatsapp-webhook] Notes field missing on Enquiries table; skipping Airtable-backed dedupe");
+    return null;
+  }
 
   return enquiries.find((enquiry) => String(enquiry.fields.Notes || "").includes(fingerprint)) || null;
 }

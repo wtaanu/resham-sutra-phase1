@@ -1354,9 +1354,19 @@ async function syncNewEnquiriesWithCustomers() {
 export async function createCustomerForEnquiry(enquiryId: string) {
   const enquiry = await getRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, enquiryId);
   const customer = await ensureCustomer(enquiry);
-  const syncedEnquiry = await syncEnquiryAddressFromCustomer(enquiry, customer);
-  const quotation = await ensureQuotationShell(syncedEnquiry, customer);
   const folder = await ensureFolder(customer);
+  let syncedEnquiry = await syncEnquiryAddressFromCustomer(enquiry, customer);
+
+  if (folder.folderUrl && syncedEnquiry.fields["Drive Folder URL"] !== folder.folderUrl) {
+    syncedEnquiry = await updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
+      id: syncedEnquiry.id,
+      fields: {
+        "Drive Folder URL": folder.folderUrl
+      }
+    });
+  }
+
+  const quotation = await ensureQuotationShell(syncedEnquiry, customer);
 
   const updatedEnquiry = await updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
     id: syncedEnquiry.id,
