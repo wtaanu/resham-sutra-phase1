@@ -31,6 +31,31 @@ const knownLocations = [
   "Hyderabad"
 ];
 
+const companyKeywords = [
+  "ltd",
+  "limited",
+  "pvt",
+  "private",
+  "llp",
+  "industries",
+  "industry",
+  "enterprise",
+  "enterprises",
+  "traders",
+  "agency",
+  "agencies",
+  "mills",
+  "exports",
+  "export",
+  "textiles",
+  "silks",
+  "silk",
+  "fab",
+  "fabrics",
+  "company",
+  "co."
+];
+
 function normalizePhone(input: string) {
   const digits = input.replace(/\D/g, "");
   if (digits.length < 10) {
@@ -125,14 +150,16 @@ function extractCompany(message: string, leadName: string | null) {
     .filter(Boolean);
 
   for (const line of lines) {
+    const lower = line.toLowerCase();
     if (
       line !== leadName &&
       /^[A-Za-z][A-Za-z\s]+$/.test(line) &&
+      companyKeywords.some((keyword) => lower.includes(keyword)) &&
       !knownLocations.some((location) =>
-        line.toLowerCase().includes(location.toLowerCase())
+        lower.includes(location.toLowerCase())
       ) &&
-      !line.toLowerCase().includes("machine") &&
-      !line.toLowerCase().includes("details")
+      !lower.includes("machine") &&
+      !lower.includes("details")
     ) {
       return toTitleCase(line);
     }

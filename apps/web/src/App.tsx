@@ -1510,7 +1510,13 @@ export default function App() {
     setEnquiryForm((current) => ({
       ...current,
       potentialProduct: productId,
-      requirementSummary: product ? product.name || product.model || product.productKey : current.requirementSummary
+      requirementSummary: product
+        ? [product.model, product.narration].filter(Boolean).join(" - ") ||
+          [product.name, product.narration].filter(Boolean).join(" - ") ||
+          product.model ||
+          product.name ||
+          product.productKey
+        : current.requirementSummary
     }));
   }
 

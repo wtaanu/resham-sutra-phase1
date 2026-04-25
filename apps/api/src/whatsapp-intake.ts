@@ -5,7 +5,7 @@ import { createPortalEnquiry, createPortalQuotationLineItems } from "./portal-ac
 import { listRecords, getRecord, type AirtableRecord } from "./airtable.js";
 import { parseIncomingEnquiry } from "./enquiry-parser.js";
 import { env } from "./config.js";
-import { processPendingEnquiries } from "./intake-processor.js";
+import { createCustomerForEnquiry } from "./intake-processor.js";
 import { isSmtpConfigured, sendMail } from "./mailer.js";
 import { productReferences } from "./phase1-data.js";
 
@@ -50,11 +50,17 @@ type CustomerFields = {
   Email?: string;
 };
 
+type QuotationLineItemFields = {
+  Quotation?: string[];
+  "Linked Product"?: string[];
+};
+
 const whatsappPayloadSchema = z.object({
   rawMessage: z.string().trim().min(1),
   senderPhone: z.string().trim().optional().default(""),
   senderName: z.string().trim().optional().default(""),
-  inboundWhatsappNumber: z.string().trim().optional().default("")
+  inboundWhatsappNumber: z.string().trim().optional().default(""),
+  messageId: z.string().trim().optional().default("")
 });
 
 const metaWebhookSchema = z.object({
@@ -82,6 +88,7 @@ const metaWebhookSchema = z.object({
                 messages: z
                   .array(
                     z.object({
+                      id: z.string().optional(),
                       from: z.string().optional(),
                       type: z.string().optional(),
                       text: z.object({ body: z.string().optional() }).optional()
@@ -96,6 +103,30 @@ const metaWebhookSchema = z.object({
     )
     .default([])
 });
+
+type WhatsAppEnquiryResult = {
+  enquiryRecordId: string;
+  enquiryId: string;
+  parserStatus: string;
+  linkedCustomerId: string;
+  customerName: string;
+  quotationId: string;
+  matchedProducts: Array<{
+    id: string;
+    name: string;
+  }>;
+  salesNotification: {
+    fileName: string;
+    filePath: string;
+    fileUrl: string;
+  };
+  salesEmail: {
+    recipient: string;
+  } | null;
+};
+
+const processedMessageCache = new Map<string, WhatsAppEnquiryResult>();
+const inflightMessageProcessing = new Map<string, Promise<WhatsAppEnquiryResult>>();
 
 function normalizePhone(value: string) {
   const digits = value.replace(/\D/g, "");
@@ -632,6 +663,67 @@ async function findProductsForMessage(rawMessage: string, parsedInterest: string
     .map((entry) => entry.product);
 }
 
+function buildRequirementSummaryFromProduct(product: AirtableRecord<ProductFields> | undefined) {
+  if (!product) {
+    return "";
+  }
+
+  const model = String(product.fields.Model || "").trim();
+  const narration = String(product.fields.Narration || "").trim();
+  const productName = String(product.fields["Product Name"] || "").trim();
+  const productKey = String(product.fields["Product Key"] || "").trim();
+
+  return (
+    [model, narration].filter(Boolean).join(" - ") ||
+    [productName, narration].filter(Boolean).join(" - ") ||
+    model ||
+    productName ||
+    productKey
+  );
+}
+
+function buildMessageFingerprint(input: {
+  messageId: string;
+  senderPhone: string;
+  inboundWhatsappNumber: string;
+  rawMessage: string;
+}) {
+  const normalizedBody = input.rawMessage.replace(/\s+/g, " ").trim();
+  const normalizedSender = normalizePhone(input.senderPhone);
+  const normalizedInbound = normalizePhone(input.inboundWhatsappNumber);
+
+  return input.messageId
+    ? `WA-MSG-ID:${input.messageId}`
+    : `WA-FP:${normalizedSender}:${normalizedInbound}:${normalizedBody}`;
+}
+
+async function findExistingWhatsAppEnquiry(fingerprint: string) {
+  const enquiries = await listRecords<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
+    fields: [
+      "Enquiry ID",
+      "Parser Status",
+      "Linked Customer",
+      "Quotations",
+      "Drive Folder URL",
+      "Requirement Summary",
+      "Potential Product",
+      "Notes"
+    ],
+    maxRecords: 100
+  });
+
+  return enquiries.find((enquiry) => String(enquiry.fields.Notes || "").includes(fingerprint)) || null;
+}
+
+async function quotationHasLineItems(quotationId: string) {
+  const lineItems = await listRecords<QuotationLineItemFields>(env.AIRTABLE_QUOTATION_LINE_ITEMS_TABLE, {
+    fields: ["Quotation"],
+    maxRecords: 500
+  });
+
+  return lineItems.some((item) => item.fields.Quotation?.includes(quotationId));
+}
+
 async function createSalesNotificationArtifact(input: {
   enquiry: AirtableRecord<EnquiryFields>;
   rawMessage: string;
@@ -669,6 +761,7 @@ async function createSalesNotificationArtifact(input: {
   );
 
   return {
+    fileName,
     filePath,
     fileUrl: `${env.PUBLIC_API_BASE_URL}/documents/notifications/${fileName}`
   };
@@ -725,13 +818,60 @@ async function sendSalesTeamNotificationEmail(input: {
   };
 }
 
-export async function processWhatsAppEnquiry(payload: unknown) {
+async function processWhatsAppEnquiryInternal(payload: unknown): Promise<WhatsAppEnquiryResult> {
   const input = whatsappPayloadSchema.parse(payload);
   const parsed = parseIncomingEnquiry(input.rawMessage);
   const contactPhone = parsed.phone || normalizePhone(input.senderPhone);
   const addressParts = await extractAddressParts(input.rawMessage, parsed.cityOrState);
   const matchedProducts = await findProductsForMessage(input.rawMessage, parsed.productInterest);
   const primaryMatchedProduct = matchedProducts[0];
+  const fingerprint = buildMessageFingerprint(input);
+
+  const existingEnquiry = await findExistingWhatsAppEnquiry(fingerprint);
+  if (existingEnquiry) {
+    const provisioned = await createCustomerForEnquiry(existingEnquiry.id);
+    const quotationId = provisioned.enquiry.fields.Quotations?.[0] || provisioned.quotation.id;
+
+    if (quotationId && matchedProducts.length && !(await quotationHasLineItems(quotationId))) {
+      await createPortalQuotationLineItems({
+        quotationId,
+        items: matchedProducts.map((product) => ({
+          productId: product.id,
+          qty: 1,
+          rate: Number(product.fields["Bulk Sale Price"] || product.fields.MRP || 0),
+          transport: Number(product.fields["Pkg & Transport"] || 0),
+          gstPercent: Number(product.fields["GST %"] || 0)
+        }))
+      });
+    }
+
+    const enquiry = await getRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, existingEnquiry.id);
+    const linkedCustomerId = enquiry.fields["Linked Customer"]?.[0] || "";
+    const linkedCustomer = linkedCustomerId
+      ? await getRecord<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, linkedCustomerId)
+      : null;
+    const notification = await createSalesNotificationArtifact({
+      enquiry,
+      rawMessage: input.rawMessage,
+      matchedProducts,
+      inboundWhatsappNumber: input.inboundWhatsappNumber
+    });
+
+    return {
+      enquiryRecordId: enquiry.id,
+      enquiryId: enquiry.fields["Enquiry ID"] || "",
+      parserStatus: enquiry.fields["Parser Status"] || "",
+      linkedCustomerId,
+      customerName: linkedCustomer?.fields["Customer Name"] || "",
+      quotationId: enquiry.fields.Quotations?.[0] || "",
+      matchedProducts: matchedProducts.map((product) => ({
+        id: product.id,
+        name: product.fields["Product Name"] || product.fields["Product Key"] || product.id
+      })),
+      salesNotification: notification,
+      salesEmail: null
+    };
+  }
 
   const created = await createPortalEnquiry({
     source: "whatsapp",
@@ -749,20 +889,19 @@ export async function processWhatsAppEnquiry(payload: unknown) {
     destinationCity: addressParts.city,
     destinationPincode: addressParts.pincode,
     requirementSummary:
-      primaryMatchedProduct?.fields["Product Name"] ||
+      buildRequirementSummaryFromProduct(primaryMatchedProduct) ||
       primaryMatchedProduct?.fields["Product Key"] ||
       parsed.productInterest ||
       input.rawMessage,
     potentialProduct: primaryMatchedProduct?.id || "",
-    receiverWhatsappNumber: input.inboundWhatsappNumber
+    receiverWhatsappNumber: input.inboundWhatsappNumber,
+    notes: [fingerprint, input.rawMessage].filter(Boolean).join("\n")
   });
-
-  await processPendingEnquiries();
 
   let enquiry = await getRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, created.enquiryRecordId);
   const quotationId = enquiry.fields.Quotations?.[0] || "";
 
-  if (quotationId && matchedProducts.length) {
+  if (quotationId && matchedProducts.length && !(await quotationHasLineItems(quotationId))) {
     await createPortalQuotationLineItems({
       quotationId,
       items: matchedProducts.map((product) => ({
@@ -773,8 +912,6 @@ export async function processWhatsAppEnquiry(payload: unknown) {
         gstPercent: Number(product.fields["GST %"] || 0)
       }))
     });
-
-    await processPendingEnquiries();
     enquiry = await getRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, created.enquiryRecordId);
   }
 
@@ -814,6 +951,36 @@ export async function processWhatsAppEnquiry(payload: unknown) {
   };
 }
 
+export async function processWhatsAppEnquiry(payload: unknown) {
+  const input = whatsappPayloadSchema.parse(payload);
+
+  if (input.messageId) {
+    const cached = processedMessageCache.get(input.messageId);
+    if (cached) {
+      return cached;
+    }
+
+    const inFlight = inflightMessageProcessing.get(input.messageId);
+    if (inFlight) {
+      return inFlight;
+    }
+
+    const work = processWhatsAppEnquiryInternal(input)
+      .then((result) => {
+        processedMessageCache.set(input.messageId, result);
+        return result;
+      })
+      .finally(() => {
+        inflightMessageProcessing.delete(input.messageId);
+      });
+
+    inflightMessageProcessing.set(input.messageId, work);
+    return work;
+  }
+
+  return processWhatsAppEnquiryInternal(input);
+}
+
 export function extractWhatsAppWebhookMessages(payload: unknown) {
   const parsed = metaWebhookSchema.parse(payload);
   const messages: Array<{
@@ -822,6 +989,7 @@ export function extractWhatsAppWebhookMessages(payload: unknown) {
     senderName: string;
     inboundWhatsappNumber: string;
     phoneNumberId: string;
+    messageId: string;
   }> = [];
 
   for (const entry of parsed.entry) {
@@ -845,7 +1013,8 @@ export function extractWhatsAppWebhookMessages(payload: unknown) {
           senderPhone: message.from || contact?.wa_id || "",
           senderName: contact?.profile?.name || "",
           inboundWhatsappNumber: displayNumber,
-          phoneNumberId
+          phoneNumberId,
+          messageId: message.id || ""
         });
       }
     }
