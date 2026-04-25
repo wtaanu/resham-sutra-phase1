@@ -41,18 +41,26 @@ function getTransporter() {
   }
 
   if (!cachedTransporter) {
-    cachedTransporter = nodemailer.createTransport({
+    const transportOptions = {
       host: env.SMTP_HOST,
       port: env.SMTP_PORT,
       secure: env.SMTP_PORT === 465,
+      requireTLS: env.SMTP_PORT === 587,
+      family: 4,
       connectionTimeout: 10000,
       greetingTimeout: 10000,
       socketTimeout: 15000,
+      tls: {
+        servername: env.SMTP_HOST,
+        minVersion: "TLSv1.2"
+      },
       auth: {
         user: env.SMTP_USER,
         pass: env.SMTP_APP_PASSWORD
       }
-    });
+    } as Parameters<typeof nodemailer.createTransport>[0];
+
+    cachedTransporter = nodemailer.createTransport(transportOptions);
   }
 
   return cachedTransporter;
