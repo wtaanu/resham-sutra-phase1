@@ -1170,7 +1170,10 @@ export default function App() {
         message: "Draft generated successfully."
       });
     } catch (actionError) {
-      const message = actionError instanceof Error ? actionError.message : "Failed to generate draft";
+      const rawMessage = actionError instanceof Error ? actionError.message : "Failed to generate draft";
+      const message = rawMessage.toLowerCase().includes("line item")
+        ? "Draft could not be generated because no line items exist yet. Add line items first, then try again."
+        : rawMessage;
       setActionState({
         key: `enquiry-draft-${enquiryId}`,
         label: "Generate Draft",
@@ -2882,7 +2885,25 @@ function updateLineItemRow(
       return null;
     }
 
+    const enquiryActionState =
+      actionState &&
+      (actionState.key.startsWith("enquiry-draft-") ||
+        actionState.key.startsWith("line-items-") ||
+        actionState.key === "portal-enquiry" ||
+        actionState.key === "product-documents" ||
+        actionState.key === "send-product-documents")
+        ? actionState
+        : null;
+
     return (
+      <>
+        {enquiryActionState ? (
+          <section className={`action-banner ${enquiryActionState.status}`}>
+            <strong>{enquiryActionState.label}</strong>
+            <span>{enquiryActionState.message}</span>
+            {renderBannerCloseButton(dismissActionState)}
+          </section>
+        ) : null}
       <PaginatedTable
         eyebrow="Enquiries"
         title="All inbound requests from Airtable forms"
@@ -3039,6 +3060,7 @@ function updateLineItemRow(
           );
         }}
       />
+      </>
     );
   };
 

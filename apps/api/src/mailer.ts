@@ -18,13 +18,26 @@ type SendMailInput = {
 
 let cachedTransporter: nodemailer.Transporter | null = null;
 
+export function getSmtpConfigState() {
+  return {
+    host: Boolean(String(env.SMTP_HOST || "").trim()),
+    port: Boolean(env.SMTP_PORT),
+    user: Boolean(String(env.SMTP_USER || "").trim()),
+    password: Boolean(String(env.SMTP_APP_PASSWORD || "").trim())
+  };
+}
+
 export function isSmtpConfigured() {
-  return Boolean(env.SMTP_HOST && env.SMTP_PORT && env.SMTP_USER && env.SMTP_APP_PASSWORD);
+  const state = getSmtpConfigState();
+  return state.host && state.port && state.user && state.password;
 }
 
 function getTransporter() {
   if (!isSmtpConfigured()) {
-    throw new Error("SMTP is not configured");
+    const state = getSmtpConfigState();
+    throw new Error(
+      `SMTP is not configured (host=${state.host}, port=${state.port}, user=${state.user}, password=${state.password})`
+    );
   }
 
   if (!cachedTransporter) {

@@ -906,8 +906,7 @@ async function processWhatsAppEnquiryInternal(payload: unknown): Promise<WhatsAp
       parsed.productInterest ||
       input.rawMessage,
     potentialProduct: primaryMatchedProduct?.id || "",
-    receiverWhatsappNumber: input.inboundWhatsappNumber,
-    notes: [fingerprint, input.rawMessage].filter(Boolean).join("\n")
+    receiverWhatsappNumber: input.inboundWhatsappNumber
   });
 
   let enquiry = await getRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, created.enquiryRecordId);

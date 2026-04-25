@@ -34,7 +34,6 @@ type EnquiryFields = {
   "Requested Asset"?: string;
   "Potential Product"?: string;
   "Receiver WhatsApp Number"?: string;
-  Notes?: string;
 };
 
 type CustomerFields = {
@@ -100,7 +99,7 @@ const optionalEmailSchema = z
   .string()
   .trim()
   .refine((value) => value === "" || value.includes("@"), "Email must include @");
-const optionalEnquiryFields = ["Logged Date Time", "Receiver WhatsApp Number", "Notes"] as const;
+const optionalEnquiryFields = ["Logged Date Time", "Receiver WhatsApp Number"] as const;
 
 function linkedRecordIds(...recordIds: Array<string | undefined>) {
   return recordIds.filter((value): value is string => Boolean(value));
@@ -123,8 +122,7 @@ const enquiryPayloadSchema = z.object({
   destinationPincode: optionalPincodeSchema,
   requirementSummary: z.string().trim().optional().default(""),
   potentialProduct: z.string().trim().optional().default(""),
-  receiverWhatsappNumber: optionalPhoneSchema.default(""),
-  notes: z.string().trim().optional().default("")
+  receiverWhatsappNumber: optionalPhoneSchema.default("")
 }).superRefine((input, context) => {
   if (input.source !== "manual") {
     return;
@@ -434,8 +432,7 @@ export async function createPortalEnquiry(payload: unknown) {
         "Linked Customer": linkedRecordIds(linkedCustomerId),
         "Requirement Summary": productSummary.productName || input.requirementSummary,
         "Potential Product": productSummary.productId,
-        "Receiver WhatsApp Number": input.receiverWhatsappNumber,
-        Notes: input.notes
+        "Receiver WhatsApp Number": input.receiverWhatsappNumber
       },
       "Pincode",
       mainPincode
@@ -552,8 +549,7 @@ export async function updatePortalEnquiry(enquiryId: string, payload: unknown) {
         "Linked Customer": linkedRecordIds(linkedCustomerId),
         "Requirement Summary": productSummary.productName || input.requirementSummary || existingEnquiry.fields["Requirement Summary"] || "",
         "Potential Product": productSummary.productId || existingEnquiry.fields["Potential Product"] || "",
-        "Receiver WhatsApp Number": input.receiverWhatsappNumber,
-        Notes: input.notes || existingEnquiry.fields.Notes || ""
+        "Receiver WhatsApp Number": input.receiverWhatsappNumber
       },
       "Pincode",
       mainPincode

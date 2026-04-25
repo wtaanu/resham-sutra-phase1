@@ -263,22 +263,50 @@ function resolveLogoPath() {
   return [
     path.resolve(currentDir, "../../web/src/assets/resham-sutra-logo-small.png"),
     path.resolve(currentDir, "../../web/src/assets/resham-sutra-logo.png"),
-    path.resolve(currentDir, "../../templates/quotation-template-unpacked/xl/media/image3.png")
+    path.resolve(currentDir, "../../templates/quotation-template-unpacked/xl/media/image3.png"),
+    path.resolve(currentDir, "../../../templates/quotation-template-unpacked/xl/media/image3.png")
   ];
 }
 
 function resolveSignaturePath() {
   const currentDir = path.dirname(fileURLToPath(import.meta.url));
-  return path.resolve(currentDir, "../../templates/quotation-template-unpacked/xl/media/image6.jpeg");
+  return [
+    path.resolve(currentDir, "../../templates/quotation-template-unpacked/xl/media/image6.jpeg"),
+    path.resolve(currentDir, "../../../templates/quotation-template-unpacked/xl/media/image6.jpeg")
+  ];
 }
 
 function resolveFooterBadgePaths() {
   const currentDir = path.dirname(fileURLToPath(import.meta.url));
   return [
-    { key: "makeInIndia", path: path.resolve(currentDir, "../../templates/quotation-template-unpacked/xl/media/image2.jpeg") },
-    { key: "iso", path: path.resolve(currentDir, "../../templates/quotation-template-unpacked/xl/media/image4.jpeg") },
-    { key: "msme", path: path.resolve(currentDir, "../../templates/quotation-template-unpacked/xl/media/image5.png") },
-    { key: "startupIndia", path: path.resolve(currentDir, "../../templates/quotation-template-unpacked/xl/media/image3.png") }
+    {
+      key: "makeInIndia",
+      paths: [
+        path.resolve(currentDir, "../../templates/quotation-template-unpacked/xl/media/image2.jpeg"),
+        path.resolve(currentDir, "../../../templates/quotation-template-unpacked/xl/media/image2.jpeg")
+      ]
+    },
+    {
+      key: "iso",
+      paths: [
+        path.resolve(currentDir, "../../templates/quotation-template-unpacked/xl/media/image4.jpeg"),
+        path.resolve(currentDir, "../../../templates/quotation-template-unpacked/xl/media/image4.jpeg")
+      ]
+    },
+    {
+      key: "msme",
+      paths: [
+        path.resolve(currentDir, "../../templates/quotation-template-unpacked/xl/media/image5.png"),
+        path.resolve(currentDir, "../../../templates/quotation-template-unpacked/xl/media/image5.png")
+      ]
+    },
+    {
+      key: "startupIndia",
+      paths: [
+        path.resolve(currentDir, "../../templates/quotation-template-unpacked/xl/media/image3.png"),
+        path.resolve(currentDir, "../../../templates/quotation-template-unpacked/xl/media/image3.png")
+      ]
+    }
   ];
 }
 
@@ -356,28 +384,35 @@ async function loadLogo(pdfDoc: PDFDocument) {
 }
 
 async function loadSignature(pdfDoc: PDFDocument) {
-  try {
-    const signatureBytes = await readFile(resolveSignaturePath());
-    return pdfDoc.embedJpg(signatureBytes);
-  } catch {
-    return null;
+  for (const signaturePath of resolveSignaturePath()) {
+    try {
+      const signatureBytes = await readFile(signaturePath);
+      return pdfDoc.embedJpg(signatureBytes);
+    } catch {
+      continue;
+    }
   }
+
+  return null;
 }
 
 async function loadFooterBadges(pdfDoc: PDFDocument) {
   const badges: Array<{ key: string; image: Awaited<ReturnType<typeof pdfDoc.embedPng>> | Awaited<ReturnType<typeof pdfDoc.embedJpg>> }> = [];
 
   for (const badge of resolveFooterBadgePaths()) {
-    try {
-      const bytes = await readFile(badge.path);
-      const image =
-        badge.path.toLowerCase().endsWith(".jpg") || badge.path.toLowerCase().endsWith(".jpeg")
-          ? await pdfDoc.embedJpg(bytes)
-          : await pdfDoc.embedPng(bytes);
+    for (const badgePath of badge.paths) {
+      try {
+        const bytes = await readFile(badgePath);
+        const image =
+          badgePath.toLowerCase().endsWith(".jpg") || badgePath.toLowerCase().endsWith(".jpeg")
+            ? await pdfDoc.embedJpg(bytes)
+            : await pdfDoc.embedPng(bytes);
 
-      badges.push({ key: badge.key, image });
-    } catch {
-      continue;
+        badges.push({ key: badge.key, image });
+        break;
+      } catch {
+        continue;
+      }
     }
   }
 

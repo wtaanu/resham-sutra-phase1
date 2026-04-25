@@ -19,7 +19,7 @@ import {
   uploadFileToFolder
 } from "./drive.js";
 import { env } from "./config.js";
-import { isSmtpConfigured, resolveDocumentAttachment, sendMail } from "./mailer.js";
+import { getSmtpConfigState, isSmtpConfigured, resolveDocumentAttachment, sendMail } from "./mailer.js";
 import {
   createRecordWithUniqueNumber,
   nextQuotationNumber as generateNextQuotationNumber
@@ -1129,8 +1129,9 @@ export async function generateFinalPdfForQuotation(quotationId: string) {
 
 export async function sendQuotationEmail(quotationId: string) {
   if (!isSmtpConfigured()) {
+    const state = getSmtpConfigState();
     throw new Error(
-      "SMTP is not configured yet. Add SMTP_HOST, SMTP_PORT, SMTP_USER, and SMTP_APP_PASSWORD on the API server."
+      `SMTP is not configured yet. Add SMTP_HOST, SMTP_PORT, SMTP_USER, and SMTP_APP_PASSWORD on the API server. Loaded state: host=${state.host}, port=${state.port}, user=${state.user}, password=${state.password}`
     );
   }
 
