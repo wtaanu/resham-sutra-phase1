@@ -38,6 +38,13 @@ export async function sendQuotationDocumentOnWhatsApp(input: SendQuotationWhatsA
     throw new Error("A valid customer WhatsApp number is required.");
   }
 
+  console.info("[whatsapp-send] attempting outbound document send", {
+    recipient,
+    phoneNumberId: env.META_WHATSAPP_PHONE_NUMBER_ID,
+    filename: input.filename,
+    documentUrl: input.documentUrl
+  });
+
   const response = await fetch(
     `https://graph.facebook.com/v22.0/${env.META_WHATSAPP_PHONE_NUMBER_ID}/messages`,
     {
@@ -61,8 +68,18 @@ export async function sendQuotationDocumentOnWhatsApp(input: SendQuotationWhatsA
 
   if (!response.ok) {
     const errorText = await response.text();
+    console.error("[whatsapp-send] Meta API returned error", {
+      recipient,
+      status: response.status,
+      body: errorText
+    });
     throw new Error(`WhatsApp send failed: ${errorText}`);
   }
 
-  return response.json();
+  const payload = await response.json();
+  console.info("[whatsapp-send] Meta API accepted outbound document send", {
+    recipient,
+    payload
+  });
+  return payload;
 }

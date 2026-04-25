@@ -1185,6 +1185,14 @@ export async function sendQuotationWhatsApp(quotationId: string) {
     throw new Error("A valid customer WhatsApp number is required.");
   }
 
+  console.info("[quotation-send-whatsapp] resolved delivery context", {
+    quotationId,
+    quotationNumber: quotation.fields["Quotation Number"] || quotation.id,
+    customerId: customer.id,
+    enquiryId: enquiry.id,
+    rawRecipientPhone: recipientPhone
+  });
+
   if (!customer.fields.WhatsApp || !customer.fields.Phone) {
     const syncedCustomerFields: Record<string, unknown> = {};
     if (!customer.fields.WhatsApp) {
@@ -1204,14 +1212,27 @@ export async function sendQuotationWhatsApp(quotationId: string) {
   const document = await resolveQuotationSendDocument(quotation, customer);
   const quotationNumber = quotation.fields["Quotation Number"] || quotation.id;
 
-  await sendQuotationDocumentOnWhatsApp({
+  const sendResult = await sendQuotationDocumentOnWhatsApp({
     to: recipientPhone,
     documentUrl: document.publicUrl,
     filename: document.fileName,
     caption: `Quotation ${quotationNumber} from Resham Sutra`
   });
 
+  console.info("[quotation-send-whatsapp] outbound document send completed", {
+    quotationId,
+    quotationNumber,
+    recipientPhone,
+    documentUrl: document.publicUrl,
+    sendResult
+  });
+
   const updatedQuotation = await markQuotationSent(quotation, "WhatsApp");
+  console.info("[quotation-send-whatsapp] quotation marked as sent", {
+    quotationId,
+    quotationNumber,
+    recipientPhone
+  });
   return {
     quotation: updatedQuotation,
     recipient: recipientPhone,

@@ -1236,9 +1236,28 @@ export default function App() {
             : "Sending quotation on WhatsApp..."
       });
 
-      const response = await apiFetch(`${apiUrl}/api/actions/quotations/${quotationId}/send-${channel}`, {
-        method: "POST"
-      });
+      const requestController = new AbortController();
+      const requestTimeout = window.setTimeout(() => requestController.abort(), 20000);
+      let response: Response;
+
+      try {
+        response = await apiFetch(`${apiUrl}/api/actions/quotations/${quotationId}/send-${channel}`, {
+          method: "POST",
+          signal: requestController.signal
+        });
+      } catch (requestError) {
+        if (requestError instanceof DOMException && requestError.name === "AbortError") {
+          throw new Error(
+            channel === "email"
+              ? "Email sending is taking too long. Please check SMTP connectivity and try again."
+              : "WhatsApp sending is taking too long. Please try again."
+          );
+        }
+
+        throw requestError;
+      } finally {
+        window.clearTimeout(requestTimeout);
+      }
 
       if (!response.ok) {
         const payload = (await response.json()) as { message?: string };
