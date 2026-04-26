@@ -514,6 +514,28 @@ a:hover {
   gap: 6px;
 }
 
+.locked-field {
+  min-height: 44px;
+  border: 1px solid rgba(31, 41, 55, 0.12);
+  border-radius: 12px;
+  background: rgba(148, 163, 184, 0.12);
+  padding: 0.7rem 0.85rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.18rem;
+}
+
+.locked-field strong {
+  font-size: 0.95rem;
+  color: #1f2937;
+}
+
+.locked-field span {
+  font-size: 0.76rem;
+  color: #64748b;
+}
+
 .form-grid span,
 .line-item-row span {
   font-size: 0.72rem;

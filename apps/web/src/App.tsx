@@ -238,6 +238,7 @@ type LineItemDraftRow = {
   rate: string;
   transport: string;
   gstPercent: string;
+  existing: boolean;
 };
 
 type PortalLineItemResponse = {
@@ -567,7 +568,8 @@ function createLineItemRow(): LineItemDraftRow {
     qty: "1",
     rate: "",
     transport: "",
-    gstPercent: ""
+    gstPercent: "",
+    existing: false
   };
 }
 
@@ -612,7 +614,8 @@ function mapPortalLineItemToDraftRow(item: PortalLineItemResponse): LineItemDraf
     qty: String(item.qty || 1),
     rate: formatAmountInput(item.rate || 0),
     transport: formatAmountInput(item.transport || 0),
-    gstPercent: formatAmountInput(item.gstPercent || 0)
+    gstPercent: formatAmountInput(item.gstPercent || 0),
+    existing: true
   };
 }
 
@@ -3198,17 +3201,24 @@ function updateLineItemRow(
                 <div className="line-item-row" key={row.id}>
                   <label className="line-item-product">
                     <span>Product {index + 1}</span>
-                    <select
-                      value={row.productId}
-                      onChange={(event) => updateLineItemRow(row.id, "productId", event.target.value)}
-                    >
-                      <option value="">Select product</option>
-                          {operations.products.map((productOption) => (
-                            <option key={productOption.id} value={productOption.id}>
-                              {productOption.name || productOption.model || productOption.productKey}
-                        </option>
-                      ))}
-                    </select>
+                    {row.existing ? (
+                      <div className="locked-field">
+                        <strong>{product?.name || product?.model || product?.productKey || "Selected product"}</strong>
+                        <span>{[product?.model, product?.productKey].filter(Boolean).join(" | ") || "Product locked after insertion"}</span>
+                      </div>
+                    ) : (
+                      <select
+                        value={row.productId}
+                        onChange={(event) => updateLineItemRow(row.id, "productId", event.target.value)}
+                      >
+                        <option value="">Select product</option>
+                        {operations.products.map((productOption) => (
+                          <option key={productOption.id} value={productOption.id}>
+                            {productOption.name || productOption.model || productOption.productKey}
+                          </option>
+                        ))}
+                      </select>
+                    )}
                   </label>
                   <label className="line-item-qty">
                     <span>Qty</span>

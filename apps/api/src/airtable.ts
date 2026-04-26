@@ -155,13 +155,12 @@ export async function deleteRecords(
 ) {
   for (let index = 0; index < recordIds.length; index += 10) {
     const batch = recordIds.slice(index, index + 10);
+    const params = new URLSearchParams();
+    batch.forEach((id) => params.append("records[]", id));
     const response = await airtableRequest<{ records: AirtableDeletePayload[] }>(
-      `/${encodeURIComponent(tableName)}`,
+      `/${encodeURIComponent(tableName)}?${params.toString()}`,
       {
-        method: "DELETE",
-        body: JSON.stringify({
-          records: batch.map((id) => ({ id })) satisfies AirtableDeletePayload[]
-        })
+        method: "DELETE"
       }
     );
 
