@@ -228,7 +228,6 @@ type OrderFormState = {
   totalAmount: string;
   orderNotes: string;
   paymentStatus: "Paid" | "Pending" | "Half Payment";
-  deliveryStatus: "Confirmed" | "Processing" | "Shipped" | "Delivered" | "Cancelled";
 };
 
 type LineItemDraftRow = {
@@ -602,8 +601,7 @@ function createBlankOrderForm(): OrderFormState {
     orderStatus: "Confirmed",
     totalAmount: "",
     orderNotes: "",
-    paymentStatus: "Pending",
-    deliveryStatus: "Confirmed"
+    paymentStatus: "Pending"
   };
 }
 
@@ -1517,8 +1515,7 @@ export default function App() {
             orderStatus: (order.orderStatus as OrderFormState["orderStatus"]) || "Confirmed",
             totalAmount: formatAmountInput(order.totalAmount || order.orderValue || 0),
             orderNotes: order.orderNotes || "",
-            paymentStatus: (order.paymentStatus as OrderFormState["paymentStatus"]) || "Pending",
-            deliveryStatus: (order.deliveryStatus as OrderFormState["deliveryStatus"]) || "Confirmed"
+            paymentStatus: (order.paymentStatus as OrderFormState["paymentStatus"]) || "Pending"
           }
         : {
             quotationId: quotation?.id || "",
@@ -1528,8 +1525,7 @@ export default function App() {
             orderStatus: "Confirmed",
             totalAmount: formatAmountInput(quotation?.quotationGrandTotal || 0),
             orderNotes: "",
-            paymentStatus: "Pending",
-            deliveryStatus: "Confirmed"
+            paymentStatus: "Pending"
           }
     );
   }
@@ -1996,8 +1992,7 @@ export default function App() {
               orderStatus: orderForm.orderStatus,
               totalAmount: Number(orderForm.totalAmount || 0),
               orderNotes: orderForm.orderNotes,
-              paymentStatus: orderForm.paymentStatus,
-              deliveryStatus: orderForm.deliveryStatus
+              paymentStatus: orderForm.paymentStatus
             })
           : undefined
       });
@@ -3039,16 +3034,6 @@ function updateLineItemRow(
                 <span>Payment status</span>
                 <select value={orderForm.paymentStatus} onChange={(event) => setOrderForm((current) => ({ ...current, paymentStatus: event.target.value as OrderFormState["paymentStatus"] }))}>
                   {["Paid", "Pending", "Half Payment"].map((status) => (
-                    <option key={status} value={status}>
-                      {status}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                <span>Delivery status</span>
-                <select value={orderForm.deliveryStatus} onChange={(event) => setOrderForm((current) => ({ ...current, deliveryStatus: event.target.value as OrderFormState["deliveryStatus"] }))}>
-                  {["Confirmed", "Processing", "Shipped", "Delivered", "Cancelled"].map((status) => (
                     <option key={status} value={status}>
                       {status}
                     </option>
