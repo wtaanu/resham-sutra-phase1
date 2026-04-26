@@ -103,7 +103,10 @@ type ProductFields = {
   "Bulk Sale Price"?: number;
   MRP?: number;
   "GST %"?: number;
+  "GST Amount"?: number;
   "Pkg & Transport"?: number;
+  "Freight Amount"?: number;
+  Freight?: number;
   "Source Sheet"?: string;
 };
 
@@ -382,8 +385,12 @@ export async function getOperationsSnapshot() {
       narration: record.fields.Narration || "",
       bulkSalePrice: record.fields["Bulk Sale Price"] || 0,
       mrp: record.fields.MRP || 0,
-      gstPercent: record.fields["GST %"] || 0,
-      transportCharge: record.fields["Pkg & Transport"] || 0,
+      gstPercent: record.fields["GST Amount"] || record.fields["GST %"] || 0,
+      transportCharge:
+        record.fields["Freight Amount"] ||
+        record.fields.Freight ||
+        record.fields["Pkg & Transport"] ||
+        0,
       sourceSheet: record.fields["Source Sheet"] || "",
       documents: (productDocumentsByProductId.get(record.id) || []).map((document) => ({
         id: document.id,

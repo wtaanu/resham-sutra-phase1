@@ -227,8 +227,8 @@ type OrderFormState = {
   orderStatus: "Confirmed" | "Processing" | "Shipped" | "Delivered" | "Cancelled";
   totalAmount: string;
   orderNotes: string;
-  paymentStatus: string;
-  deliveryStatus: string;
+  paymentStatus: "Paid" | "Pending" | "Half Payment";
+  deliveryStatus: "Confirmed" | "Processing" | "Shipped" | "Delivered" | "Cancelled";
 };
 
 type LineItemDraftRow = {
@@ -600,8 +600,8 @@ function createBlankOrderForm(): OrderFormState {
     orderStatus: "Confirmed",
     totalAmount: "",
     orderNotes: "",
-    paymentStatus: "",
-    deliveryStatus: ""
+    paymentStatus: "Pending",
+    deliveryStatus: "Confirmed"
   };
 }
 
@@ -1514,8 +1514,8 @@ export default function App() {
             orderStatus: (order.orderStatus as OrderFormState["orderStatus"]) || "Confirmed",
             totalAmount: formatAmountInput(order.totalAmount || order.orderValue || 0),
             orderNotes: order.orderNotes || "",
-            paymentStatus: order.paymentStatus || "",
-            deliveryStatus: order.deliveryStatus || ""
+            paymentStatus: (order.paymentStatus as OrderFormState["paymentStatus"]) || "Pending",
+            deliveryStatus: (order.deliveryStatus as OrderFormState["deliveryStatus"]) || "Confirmed"
           }
         : {
             quotationId: quotation?.id || "",
@@ -1525,8 +1525,8 @@ export default function App() {
             orderStatus: "Confirmed",
             totalAmount: formatAmountInput(quotation?.quotationGrandTotal || 0),
             orderNotes: "",
-            paymentStatus: "",
-            deliveryStatus: ""
+            paymentStatus: "Pending",
+            deliveryStatus: "Confirmed"
           }
     );
   }
@@ -1622,9 +1622,11 @@ export default function App() {
   }, [operations?.orders]);
 
   const availableQuotationOptions = useMemo(() => {
-    return (operations?.quotations ?? []).filter((quotation) =>
-      ["Parsed", "Ready for Draft", "Draft", "Under Review"].includes(quotation.status || "")
-    );
+    return [...(operations?.quotations ?? [])].sort((left, right) => {
+      const leftNumber = left.quotationNumber || "";
+      const rightNumber = right.quotationNumber || "";
+      return rightNumber.localeCompare(leftNumber);
+    });
   }, [operations?.quotations]);
 
   const filteredCustomers = useMemo(() => {
@@ -2654,7 +2656,7 @@ function updateLineItemRow(
                 {productDropdownOpen ? (
                   <div className="search-dropdown-list">
                     {filteredProducts.length ? (
-                      filteredProducts.slice(0, 8).map((productOption) => (
+                      filteredProducts.map((productOption) => (
                         <button
                           key={productOption.id}
                           className="search-dropdown-option"
@@ -2666,7 +2668,9 @@ function updateLineItemRow(
                         >
                           <strong>{productOption.name || productOption.model || productOption.productKey}</strong>
                           <span>
-                            {[productOption.model, productOption.productKey].filter(Boolean).join(" | ") || "Product"}
+                            {[productOption.model, productOption.productKey, productOption.narration]
+                              .filter(Boolean)
+                              .join(" | ") || "Product"}
                           </span>
                         </button>
                       ))
@@ -3030,11 +3034,23 @@ function updateLineItemRow(
               </label>
               <label>
                 <span>Payment status</span>
-                <input value={orderForm.paymentStatus} onChange={(event) => setOrderForm((current) => ({ ...current, paymentStatus: event.target.value }))} />
+                <select value={orderForm.paymentStatus} onChange={(event) => setOrderForm((current) => ({ ...current, paymentStatus: event.target.value as OrderFormState["paymentStatus"] }))}>
+                  {["Paid", "Pending", "Half Payment"].map((status) => (
+                    <option key={status} value={status}>
+                      {status}
+                    </option>
+                  ))}
+                </select>
               </label>
               <label>
                 <span>Delivery status</span>
-                <input value={orderForm.deliveryStatus} onChange={(event) => setOrderForm((current) => ({ ...current, deliveryStatus: event.target.value }))} />
+                <select value={orderForm.deliveryStatus} onChange={(event) => setOrderForm((current) => ({ ...current, deliveryStatus: event.target.value as OrderFormState["deliveryStatus"] }))}>
+                  {["Confirmed", "Processing", "Shipped", "Delivered", "Cancelled"].map((status) => (
+                    <option key={status} value={status}>
+                      {status}
+                    </option>
+                  ))}
+                </select>
               </label>
               <label className="form-span-2">
                 <span>Order notes</span>

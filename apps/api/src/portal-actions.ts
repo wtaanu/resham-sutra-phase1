@@ -83,7 +83,10 @@ type ProductFields = {
   "Bulk Sale Price"?: number;
   MRP?: number;
   "GST %"?: number;
+  "GST Amount"?: number;
   "Pkg & Transport"?: number;
+  "Freight Amount"?: number;
+  Freight?: number;
 };
 
 type QuotationLineItemFields = {
@@ -268,8 +271,8 @@ const orderPayloadSchema = z.object({
   orderStatus: z.enum(["Confirmed", "Processing", "Shipped", "Delivered", "Cancelled"]).default("Confirmed"),
   totalAmount: z.coerce.number().nonnegative().optional().default(0),
   orderNotes: z.string().trim().optional().default(""),
-  paymentStatus: z.string().trim().optional().default(""),
-  deliveryStatus: z.string().trim().optional().default("")
+  paymentStatus: z.enum(["Paid", "Pending", "Half Payment"]).default("Pending"),
+  deliveryStatus: z.enum(["Confirmed", "Processing", "Shipped", "Delivered", "Cancelled"]).default("Confirmed")
 });
 
 function buildPortalLineItemFields(input: {
@@ -293,10 +296,13 @@ function buildPortalLineItemFields(input: {
       parseOptionalAmount(item.rate, Number(product.fields["Bulk Sale Price"] || product.fields.MRP || 0)).toFixed(2)
     );
     const transport = Number(
-      parseOptionalAmount(item.transport, Number(product.fields["Pkg & Transport"] || 0)).toFixed(2)
+      parseOptionalAmount(
+        item.transport,
+        Number(product.fields["Freight Amount"] || product.fields.Freight || product.fields["Pkg & Transport"] || 0)
+      ).toFixed(2)
     );
     const gstPercent = Number(
-      parseOptionalAmount(item.gstPercent, Number(product.fields["GST %"] || 0)).toFixed(2)
+      parseOptionalAmount(item.gstPercent, Number(product.fields["GST Amount"] || product.fields["GST %"] || 0)).toFixed(2)
     );
     const unitValue = Number((rate * qty).toFixed(2));
     const freightAmount = Number((transport * qty).toFixed(2));
@@ -1291,7 +1297,7 @@ export async function createOrderFromQuotation(quotationId: string, actor?: Auth
     "Order Notes": "",
     "Order Value": metrics.quotationGrandTotal,
     "Payment Status": "Pending",
-    "Delivery Status": "Pending"
+    "Delivery Status": "Confirmed"
   });
 
   await createChangeLogEntry(env.AIRTABLE_ORDER_CHANGE_LOG_TABLE, {

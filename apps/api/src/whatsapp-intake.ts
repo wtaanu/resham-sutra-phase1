@@ -39,7 +39,10 @@ type ProductFields = {
   "Bulk Sale Price"?: number;
   MRP?: number;
   "GST %"?: number;
+  "GST Amount"?: number;
   "Pkg & Transport"?: number;
+  "Freight Amount"?: number;
+  Freight?: number;
 };
 
 type CustomerFields = {
@@ -851,8 +854,8 @@ async function processWhatsAppEnquiryInternal(payload: unknown): Promise<WhatsAp
           productId: product.id,
           qty: 1,
           rate: Number(product.fields["Bulk Sale Price"] || product.fields.MRP || 0),
-          transport: Number(product.fields["Pkg & Transport"] || 0),
-          gstPercent: Number(product.fields["GST %"] || 0)
+              transport: Number(product.fields["Freight Amount"] || product.fields.Freight || product.fields["Pkg & Transport"] || 0),
+              gstPercent: Number(product.fields["GST Amount"] || product.fields["GST %"] || 0)
         }))
       });
     }
@@ -919,8 +922,8 @@ async function processWhatsAppEnquiryInternal(payload: unknown): Promise<WhatsAp
         productId: product.id,
         qty: 1,
         rate: Number(product.fields["Bulk Sale Price"] || product.fields.MRP || 0),
-        transport: Number(product.fields["Pkg & Transport"] || 0),
-        gstPercent: Number(product.fields["GST %"] || 0)
+              transport: Number(product.fields["Freight Amount"] || product.fields.Freight || product.fields["Pkg & Transport"] || 0),
+              gstPercent: Number(product.fields["GST Amount"] || product.fields["GST %"] || 0)
       }))
     });
     enquiry = await getRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, created.enquiryRecordId);
