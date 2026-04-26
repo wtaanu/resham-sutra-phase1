@@ -237,8 +237,8 @@ const lineItemPayloadSchema = z.object({
         productId: airtableRecordIdSchema,
         qty: z.coerce.number().positive("Quantity should be greater than zero"),
         rate: z.union([z.coerce.number().positive("Rate should be greater than zero"), z.literal(""), z.undefined()]).optional(),
-        transport: z.union([z.coerce.number().nonnegative("Packing and transport cannot be negative"), z.literal(""), z.undefined()]).optional(),
-        gstPercent: z.union([z.coerce.number().nonnegative("GST rate cannot be negative"), z.literal(""), z.undefined()]).optional()
+        transport: z.union([z.coerce.number().nonnegative("Freight amount cannot be negative"), z.literal(""), z.undefined()]).optional(),
+        gstPercent: z.union([z.coerce.number().nonnegative("GST amount cannot be negative"), z.literal(""), z.undefined()]).optional()
       })
     )
     .min(1, "Add at least one line item")
@@ -299,8 +299,9 @@ function buildPortalLineItemFields(input: {
       parseOptionalAmount(item.gstPercent, Number(product.fields["GST %"] || 0)).toFixed(2)
     );
     const unitValue = Number((rate * qty).toFixed(2));
-    const gstAmount = Number((((unitValue + transport) * gstPercent) / 100).toFixed(2));
-    const totalAmount = Number((unitValue + transport + gstAmount).toFixed(2));
+    const freightAmount = Number((transport * qty).toFixed(2));
+    const gstAmount = Number((gstPercent * qty).toFixed(2));
+    const totalAmount = Number((unitValue + freightAmount + gstAmount).toFixed(2));
 
     return {
       Name: `${quotationIdentifier}-${String(nextLineNo).padStart(2, "0")}`,
@@ -659,7 +660,7 @@ async function createQuotationShellForEnquiry(
   return quotationNumberResult;
 }
 
-async function loadQuotationLineItemMetrics(quotationId: string) {
+export async function loadQuotationLineItemMetrics(quotationId: string) {
   const items = await getPortalQuotationLineItems(quotationId);
   return {
     items,

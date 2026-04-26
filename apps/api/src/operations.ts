@@ -2,6 +2,7 @@ import { stat } from "node:fs/promises";
 import { listRecords } from "./airtable.js";
 import { env } from "./config.js";
 import { getStoredDocumentArtifact } from "./documents.js";
+import { loadQuotationLineItemMetrics } from "./portal-actions.js";
 import { listProductDocuments } from "./product-documents.js";
 
 type EnquiryFields = {
@@ -211,6 +212,10 @@ export async function getOperationsSnapshot() {
 
   const quotationById = new Map(quotations.map((record) => [record.id, record]));
   const customersById = new Map(customers.map((record) => [record.id, record.fields]));
+  const quotationMetricEntries = await Promise.all(
+    quotations.map(async (record) => [record.id, await loadQuotationLineItemMetrics(record.id)] as const)
+  );
+  const quotationMetricsById = new Map(quotationMetricEntries);
   const pdfGeneratedAtEntries = await Promise.all(
     quotations.map(async (record) => {
       const generatedAt = await resolvePdfGeneratedAt(
@@ -333,7 +338,8 @@ export async function getOperationsSnapshot() {
       whatsappSentDateTime: record.fields["WhatsApp Sent Date Time"] || "",
       emailSentDateTime: record.fields["Email Sent Date Time"] || "",
       finalPdfGeneratedAt: pdfGeneratedAtByQuotationId.get(record.id) || "",
-      lineItemCount: quotationLineItems.filter((item) => item.fields.Quotation?.includes(record.id)).length,
+      lineItemCount: quotationMetricsById.get(record.id)?.lineItemCount || quotationLineItems.filter((item) => item.fields.Quotation?.includes(record.id)).length,
+      quotationGrandTotal: quotationMetricsById.get(record.id)?.quotationGrandTotal || 0,
       sendQuotation: Boolean(record.fields["Send Quotation"]),
       sendReminder: Boolean(record.fields["Send Reminder"]),
       markAccepted: Boolean(record.fields["Mark Accepted"]),

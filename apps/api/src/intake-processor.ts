@@ -1051,20 +1051,6 @@ export async function refreshDraftForQuotation(quotationId: string) {
     throw new Error("Quotation line items not found for draft generation.");
   }
 
-  await updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
-    id: enquiry.id,
-    fields: {
-      ...enquiryStatusFields("Ready for Draft")
-    }
-  });
-
-  await updateRecord<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
-    id: quotation.id,
-    fields: {
-      Status: "Ready for Draft"
-    }
-  });
-
   return createDraftForReadyEnquiry(enquiry, customer, quotation, lineItems);
 }
 

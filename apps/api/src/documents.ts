@@ -631,10 +631,10 @@ async function writeSimplePdf(payload: DocumentPayload, outputDir: string) {
     { label: "Description", x: 75, width: 205 },
     { label: "Qty", x: 280, width: 35 },
     { label: "Rate", x: 315, width: 60 },
-    { label: "Transport", x: 375, width: 60 },
-    { label: "GST %", x: 435, width: 40 },
-    { label: "GST Amt", x: 475, width: 40 },
-    { label: "Total", x: 515, width: 40 }
+    { label: "Freight", x: 375, width: 50 },
+    { label: "GST Amount", x: 425, width: 55 },
+    { label: "GST Total", x: 480, width: 45 },
+    { label: "Total", x: 525, width: 35 }
   ];
   let currentY = 606;
   drawTableHeader(page, headers, currentY, fontBold);
@@ -656,10 +656,10 @@ async function writeSimplePdf(payload: DocumentPayload, outputDir: string) {
         { text: descriptionLines[0] || "Quotation item", x: 75, width: 205, lines: descriptionLines },
         { text: String(item.qty || 0), x: 280, width: 35, align: "right" },
         { text: formatMoney(item.rate || 0), x: 315, width: 60, align: "right" },
-        { text: formatMoney(item.transport || 0), x: 375, width: 60, align: "right" },
-        { text: formatMoney(item.gstPercent || 0), x: 435, width: 40, align: "right" },
-        { text: formatMoney(item.gstAmount || 0), x: 475, width: 40, align: "right" },
-        { text: formatMoney(item.totalAmount || 0), x: 515, width: 40, align: "right" }
+        { text: formatMoney(item.transport || 0), x: 375, width: 50, align: "right" },
+        { text: formatMoney(item.gstPercent || 0), x: 425, width: 55, align: "right" },
+        { text: formatMoney(item.gstAmount || 0), x: 480, width: 45, align: "right" },
+        { text: formatMoney(item.totalAmount || 0), x: 525, width: 35, align: "right" }
       ],
       currentY,
       fontRegular,
@@ -819,9 +819,9 @@ function renderHtml(payload: DocumentPayload, title: string, subtitle: string) {
           <th>Description</th>
           <th>Qty</th>
           <th>Rate</th>
-          <th>Pkg & Transport</th>
-          <th>GST %</th>
-          <th>GST Amt</th>
+          <th>Freight</th>
+          <th>GST Amount</th>
+          <th>GST Total</th>
           <th>Total Amount</th>
         </tr>
       </thead>

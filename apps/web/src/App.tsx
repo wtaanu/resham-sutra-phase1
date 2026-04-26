@@ -80,6 +80,7 @@ type QuotationRecord = {
   emailSentDateTime: string;
   finalPdfGeneratedAt?: string;
   lineItemCount?: number;
+  quotationGrandTotal?: number;
   sendQuotation?: boolean;
   sendReminder?: boolean;
   markAccepted?: boolean;
@@ -408,8 +409,9 @@ function calculateLineItemAmounts(
   const transport = Number.isFinite(resolvedTransport) ? resolvedTransport : 0;
   const gstPercent = Number.isFinite(resolvedGstPercent) ? resolvedGstPercent : 0;
   const unitValue = Number((rate * qty).toFixed(2));
-  const computedGstAmount = Number((((unitValue + transport) * gstPercent) / 100).toFixed(2));
-  const computedTotalAmount = Number((unitValue + transport + computedGstAmount).toFixed(2));
+  const freightAmount = Number((transport * qty).toFixed(2));
+  const computedGstAmount = Number((gstPercent * qty).toFixed(2));
+  const computedTotalAmount = Number((unitValue + freightAmount + computedGstAmount).toFixed(2));
 
   return {
     qty,
@@ -417,6 +419,7 @@ function calculateLineItemAmounts(
     transport,
     gstPercent,
     unitValue,
+    freightAmount,
     gstAmount: computedGstAmount,
     totalAmount: computedTotalAmount,
     computedTotalAmount
@@ -1520,7 +1523,7 @@ export default function App() {
             enquiryId: quotation?.linkedEnquiryId || "",
             orderDate: new Date().toISOString().slice(0, 10),
             orderStatus: "Confirmed",
-            totalAmount: formatAmountInput(quotation?.lineItemCount ? 0 : 0),
+            totalAmount: formatAmountInput(quotation?.quotationGrandTotal || 0),
             orderNotes: "",
             paymentStatus: "",
             deliveryStatus: ""
@@ -3211,7 +3214,7 @@ function updateLineItemRow(
                     />
                   </label>
                   <label className="line-item-qty">
-                    <span>Packing / Transport</span>
+                    <span>Freight Amount</span>
                     <input
                       type="number"
                       min="0"
@@ -3221,7 +3224,7 @@ function updateLineItemRow(
                     />
                   </label>
                   <label className="line-item-qty">
-                    <span>GST %</span>
+                    <span>GST Amount</span>
                     <input
                       type="number"
                       min="0"
@@ -3253,8 +3256,8 @@ function updateLineItemRow(
                     <strong>{product ? formatCurrency(amounts.totalAmount) : "Amount pending"}</strong>
                     {product ? (
                       <>
-                        <span>{`Base ${formatCurrency(amounts.unitValue)} | Transport ${formatCurrency(amounts.transport)}`}</span>
-                        <span>{`GST ${amounts.gstPercent}% = ${formatCurrency(amounts.gstAmount)}`}</span>
+                        <span>{`Base ${formatCurrency(amounts.unitValue)} | Freight ${formatCurrency(amounts.freightAmount)}`}</span>
+                        <span>{`GST Amount ${formatCurrency(amounts.gstAmount)}`}</span>
                       </>
                     ) : null}
                   </div>
@@ -3693,12 +3696,9 @@ function updateLineItemRow(
   };
 
   const renderQuotationActionButtons = (quotation: QuotationRecord) => {
-    const emailActionKey = `quotation-send-email-${quotation.id}`;
     const whatsappActionKey = `quotation-send-whatsapp-${quotation.id}`;
     const regenerateActionKey = `quotation-regenerate-${quotation.id}`;
     const markSentActionKey = `quotation-mark-sent-${quotation.id}`;
-    const isEmailLoading =
-      actionState?.key === emailActionKey && actionState.status === "loading";
     const isWhatsAppLoading =
       actionState?.key === whatsappActionKey && actionState.status === "loading";
     const isRegenerateLoading =
@@ -3747,15 +3747,6 @@ function updateLineItemRow(
                 : "PDF"}
             </button>
             <button
-              className="icon-action-button"
-              type="button"
-              title="Send quotation on email"
-              onClick={() => void handleSendQuotation(quotation.id, "email")}
-              disabled={isEmailLoading}
-            >
-              {isEmailLoading ? "..." : "@"}
-            </button>
-            <button
               className="icon-action-button whatsapp"
               type="button"
               title="Send quotation on WhatsApp"
@@ -3793,15 +3784,6 @@ function updateLineItemRow(
       return (
         <div className="action-stack">
           <div className="action-icon-row">
-            <button
-              className="icon-action-button"
-              type="button"
-              title="Send quotation again on email"
-              onClick={() => void handleSendQuotation(quotation.id, "email")}
-              disabled={isEmailLoading}
-            >
-              {isEmailLoading ? "..." : "@"}
-            </button>
             <button
               className="icon-action-button whatsapp"
               type="button"
@@ -3870,23 +3852,56 @@ function updateLineItemRow(
       );
     }
 
-    if (quotation.draftFileUrl || quotation.status === "Ready for Review") {
+    if (
+      quotation.draftFileUrl ||
+      quotation.status === "Ready for Review" ||
+      quotation.status === "Ready for Draft" ||
+      quotation.status === "Under Review"
+    ) {
       return (
         <div className="action-stack">
-          <button
-            className="action-inline-button"
-            type="button"
-            onClick={() => void handleGenerateFinalPdf(quotation.id)}
-            disabled={
-              actionState?.key === `pdf-generate-${quotation.id}` &&
+          <div className="action-icon-row">
+            <button
+              className="icon-action-button neutral"
+              type="button"
+              title="Add or edit line items"
+              onClick={() => {
+                openLineItemEntry(quotation.id);
+                setActionState({
+                  key: `quotation-line-items-${quotation.id}`,
+                  label: `Edit Line Items for ${quotation.quotationNumber}`,
+                  status: "success",
+                  message: "Line item entry is ready in the portal."
+                });
+              }}
+            >
+              LI
+            </button>
+            <button
+              className="icon-action-button neutral"
+              type="button"
+              title="Regenerate quotation draft"
+              onClick={() => void handleRegenerateQuotationDraft(quotation.id)}
+              disabled={isRegenerateLoading}
+            >
+              {isRegenerateLoading ? "..." : "R"}
+            </button>
+            <button
+              className="icon-action-button neutral"
+              type="button"
+              title="Generate final PDF"
+              onClick={() => void handleGenerateFinalPdf(quotation.id)}
+              disabled={
+                actionState?.key === `pdf-generate-${quotation.id}` &&
+                actionState.status === "loading"
+              }
+            >
+              {actionState?.key === `pdf-generate-${quotation.id}` &&
               actionState.status === "loading"
-            }
-          >
-            {actionState?.key === `pdf-generate-${quotation.id}` &&
-            actionState.status === "loading"
-              ? "Generating..."
-              : "Generate Final PDF"}
-          </button>
+                ? "..."
+                : "PDF"}
+            </button>
+          </div>
           {quotation.driveFolderUrl ? (
             <a
               className="action-inline-link"
