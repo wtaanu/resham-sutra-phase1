@@ -1078,15 +1078,34 @@ export async function replacePortalQuotationLineItems(payload: unknown) {
 
 export async function generateDraftForEnquiry(enquiryId: string) {
   const provisioned = await createCustomerForEnquiry(enquiryId);
-  const draft = await refreshDraftForQuotation(provisioned.quotation.id);
+  try {
+    const draft = await refreshDraftForQuotation(provisioned.quotation.id);
 
-  return {
-    enquiryId: provisioned.enquiry.id,
-    quotationId: draft.quotation.id,
-    quotationNumber: draft.quotation.fields["Quotation Number"] || provisioned.quotation.fields["Quotation Number"] || "",
-    draftFileUrl: draft.quotation.fields["Draft File URL"] || "",
-    driveFolderUrl: draft.folder.folderUrl || draft.quotation.fields["Drive Folder URL"] || ""
-  };
+    return {
+      enquiryId: provisioned.enquiry.id,
+      quotationId: draft.quotation.id,
+      quotationNumber: draft.quotation.fields["Quotation Number"] || provisioned.quotation.fields["Quotation Number"] || "",
+      draftFileUrl: draft.quotation.fields["Draft File URL"] || "",
+      driveFolderUrl: draft.folder.folderUrl || draft.quotation.fields["Drive Folder URL"] || "",
+      generated: true,
+      message: "Draft generated successfully."
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to generate draft";
+    if (!message.toLowerCase().includes("line item")) {
+      throw error;
+    }
+
+    return {
+      enquiryId: provisioned.enquiry.id,
+      quotationId: provisioned.quotation.id,
+      quotationNumber: provisioned.quotation.fields["Quotation Number"] || "",
+      draftFileUrl: "",
+      driveFolderUrl: provisioned.folder?.folderUrl || provisioned.quotation.fields["Drive Folder URL"] || "",
+      generated: false,
+      message: "Quotation shell is ready. Add line items to generate the draft."
+    };
+  }
 }
 
 export async function createPortalCustomer(payload: unknown, actor?: AuthenticatedUser | null) {

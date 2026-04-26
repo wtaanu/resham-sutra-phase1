@@ -1241,7 +1241,14 @@ export default function App() {
       const response = await apiFetch(`${apiUrl}/api/actions/enquiries/${enquiryId}/generate-draft`, {
         method: "POST"
       });
-      const payload = (await response.json()) as { message?: string };
+      const payload = (await response.json()) as {
+        message?: string;
+        quotationNumber?: string;
+        draftFileUrl?: string;
+        driveFolderUrl?: string;
+        quotationId?: string;
+        generated?: boolean;
+      };
 
       if (!response.ok) {
         throw new Error(payload.message || "Failed to generate draft");
@@ -1252,8 +1259,16 @@ export default function App() {
       setActionState({
         key: `enquiry-draft-${enquiryId}`,
         label: "Generate Draft",
-        status: "success",
-        message: "Draft generated successfully."
+        status: payload.generated === false ? "error" : "success",
+        message:
+          payload.message ||
+          (payload.generated === false
+            ? payload.quotationNumber
+              ? `${payload.quotationNumber} is ready. Add line items to generate the draft.`
+              : "Quotation shell is ready. Add line items to generate the draft."
+            : payload.quotationNumber
+              ? `Draft generated successfully for ${payload.quotationNumber}.`
+              : "Draft generated successfully.")
       });
     } catch (actionError) {
       const rawMessage = actionError instanceof Error ? actionError.message : "Failed to generate draft";
