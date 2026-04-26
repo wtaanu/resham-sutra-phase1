@@ -95,7 +95,18 @@ type OrderRecord = {
   orderNumber: string;
   linkedCustomerId: string;
   linkedQuotationId: string;
+  linkedEnquiryId?: string;
   orderDate: string;
+  orderStatus?: string;
+  totalAmount?: number;
+  orderNotes?: string;
+  quotationGrandTotal?: number;
+  quotationStatus?: string;
+  orderLineItemCount?: number;
+  orderValuePerItem?: string;
+  orderFulfillmentProgress?: string;
+  orderSummary?: string;
+  orderRiskAttentionFlag?: string;
   orderValue: number;
   paymentStatus: string;
   deliveryStatus: string;
@@ -161,7 +172,15 @@ type LoginFormState = {
   password: string;
 };
 
-type EntryMode = "enquiry" | "lineItems" | "productDocuments" | "enquiryDocuments" | null;
+type EntryMode =
+  | "enquiry"
+  | "customer"
+  | "quotation"
+  | "order"
+  | "lineItems"
+  | "productDocuments"
+  | "enquiryDocuments"
+  | null;
 
 type EnquiryFormState = {
   linkedCustomerId: string;
@@ -183,6 +202,35 @@ type EnquiryFormState = {
 };
 
 type EnquiryFieldErrors = Partial<Record<keyof EnquiryFormState, string>>;
+
+type CustomerFormState = {
+  customerName: string;
+  company: string;
+  phone: string;
+  email: string;
+  address: string;
+  state: string;
+  city: string;
+  pincode: string;
+  customerType: string;
+};
+
+type QuotationFormState = {
+  enquiryId: string;
+  preferredSendChannel: "Email" | "WhatsApp";
+};
+
+type OrderFormState = {
+  quotationId: string;
+  customerId: string;
+  enquiryId: string;
+  orderDate: string;
+  orderStatus: "Confirmed" | "Processing" | "Shipped" | "Delivered" | "Cancelled";
+  totalAmount: string;
+  orderNotes: string;
+  paymentStatus: string;
+  deliveryStatus: string;
+};
 
 type LineItemDraftRow = {
   id: string;
@@ -522,6 +570,41 @@ function createLineItemRow(): LineItemDraftRow {
   };
 }
 
+function createBlankCustomerForm(): CustomerFormState {
+  return {
+    customerName: "",
+    company: "",
+    phone: "",
+    email: "",
+    address: "",
+    state: "",
+    city: "",
+    pincode: "",
+    customerType: "Domestic"
+  };
+}
+
+function createBlankQuotationForm(): QuotationFormState {
+  return {
+    enquiryId: "",
+    preferredSendChannel: "Email"
+  };
+}
+
+function createBlankOrderForm(): OrderFormState {
+  return {
+    quotationId: "",
+    customerId: "",
+    enquiryId: "",
+    orderDate: "",
+    orderStatus: "Confirmed",
+    totalAmount: "",
+    orderNotes: "",
+    paymentStatus: "",
+    deliveryStatus: ""
+  };
+}
+
 function mapPortalLineItemToDraftRow(item: PortalLineItemResponse): LineItemDraftRow {
   return {
     id: item.id || `${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -721,8 +804,13 @@ export default function App() {
   const [actionState, setActionState] = useState<ActionState | null>(null);
   const [entryMode, setEntryMode] = useState<EntryMode>(null);
   const [editingEnquiryId, setEditingEnquiryId] = useState("");
+  const [editingCustomerId, setEditingCustomerId] = useState("");
+  const [editingOrderId, setEditingOrderId] = useState("");
   const [enquiryForm, setEnquiryForm] = useState<EnquiryFormState>(createBlankEnquiryForm);
   const [enquiryFieldErrors, setEnquiryFieldErrors] = useState<EnquiryFieldErrors>({});
+  const [customerForm, setCustomerForm] = useState<CustomerFormState>(createBlankCustomerForm);
+  const [quotationForm, setQuotationForm] = useState<QuotationFormState>(createBlankQuotationForm);
+  const [orderForm, setOrderForm] = useState<OrderFormState>(createBlankOrderForm);
   const [destinationSameAsMain, setDestinationSameAsMain] = useState(false);
   const [customerSearchTerm, setCustomerSearchTerm] = useState("");
   const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false);
@@ -1372,6 +1460,61 @@ export default function App() {
     setProductDropdownOpen(false);
   }
 
+  function openCustomerEntry(customer?: CustomerRecord) {
+    setEntryMode("customer");
+    setEditingCustomerId(customer?.id || "");
+    setCustomerForm(
+      customer
+        ? {
+            customerName: customer.customerName,
+            company: customer.company,
+            phone: customer.phone,
+            email: customer.email,
+            address: customer.address,
+            state: customer.state,
+            city: customer.city,
+            pincode: customer.pincode,
+            customerType: customer.customerType || "Domestic"
+          }
+        : createBlankCustomerForm()
+    );
+  }
+
+  function openQuotationEntry() {
+    setEntryMode("quotation");
+    setQuotationForm(createBlankQuotationForm());
+  }
+
+  function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
+    setEntryMode("order");
+    setEditingOrderId(order?.id || "");
+    setOrderForm(
+      order
+        ? {
+            quotationId: order.linkedQuotationId,
+            customerId: order.linkedCustomerId,
+            enquiryId: order.linkedEnquiryId || "",
+            orderDate: order.orderDate ? order.orderDate.slice(0, 10) : "",
+            orderStatus: (order.orderStatus as OrderFormState["orderStatus"]) || "Confirmed",
+            totalAmount: formatAmountInput(order.totalAmount || order.orderValue || 0),
+            orderNotes: order.orderNotes || "",
+            paymentStatus: order.paymentStatus || "",
+            deliveryStatus: order.deliveryStatus || ""
+          }
+        : {
+            quotationId: quotation?.id || "",
+            customerId: quotation?.linkedCustomerId || "",
+            enquiryId: quotation?.linkedEnquiryId || "",
+            orderDate: new Date().toISOString().slice(0, 10),
+            orderStatus: "Confirmed",
+            totalAmount: formatAmountInput(quotation?.lineItemCount ? 0 : 0),
+            orderNotes: "",
+            paymentStatus: "",
+            deliveryStatus: ""
+          }
+    );
+  }
+
   function openEnquiryEdit(enquiry: EnquiryRecord) {
     const customer = customerLookup.get(enquiry.linkedCustomerId);
     setEntryMode("enquiry");
@@ -1457,6 +1600,10 @@ export default function App() {
   const quotationLookup = useMemo(() => {
     return new Map((operations?.quotations ?? []).map((quotation) => [quotation.id, quotation]));
   }, [operations?.quotations]);
+
+  const orderByQuotationId = useMemo(() => {
+    return new Map((operations?.orders ?? []).map((order) => [order.linkedQuotationId, order]));
+  }, [operations?.orders]);
 
   const availableQuotationOptions = useMemo(() => {
     return (operations?.quotations ?? []).filter((quotation) =>
@@ -1695,6 +1842,198 @@ export default function App() {
         label: formActionLabel,
         status: "error",
         message
+      });
+    }
+  }
+
+  async function handleSubmitCustomer() {
+    const isEditing = Boolean(editingCustomerId);
+    const actionKey = "portal-customer";
+    const label = isEditing ? "Update Customer" : "Create Customer";
+
+    try {
+      setActionState({
+        key: actionKey,
+        label,
+        status: "loading",
+        message: isEditing ? "Updating customer..." : "Creating customer..."
+      });
+
+      const response = await apiFetch(
+        isEditing ? `${apiUrl}/api/portal/customers/${editingCustomerId}` : `${apiUrl}/api/portal/customers`,
+        {
+          method: isEditing ? "PATCH" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            customerName: customerForm.customerName,
+            company: customerForm.company,
+            phone: normalizePhoneInput(customerForm.phone),
+            email: customerForm.email.trim(),
+            address: customerForm.address,
+            state: customerForm.state,
+            city: customerForm.city,
+            pincode: normalizePincodeInput(customerForm.pincode),
+            customerType: customerForm.customerType
+          })
+        }
+      );
+      const payload = (await response.json()) as { message?: string };
+      if (!response.ok) {
+        throw new Error(payload.message || "Failed to save customer");
+      }
+
+      setActionState({
+        key: actionKey,
+        label,
+        status: "success",
+        message: isEditing ? "Customer updated successfully." : "Customer created successfully."
+      });
+      setCustomerForm(createBlankCustomerForm());
+      closeEntryPanel();
+      setActiveView("customers");
+      void refreshOperations(true);
+    } catch (error) {
+      setActionState({
+        key: actionKey,
+        label,
+        status: "error",
+        message: error instanceof Error ? error.message : "Failed to save customer"
+      });
+    }
+  }
+
+  async function handleSubmitQuotation() {
+    const actionKey = "portal-quotation";
+    try {
+      setActionState({
+        key: actionKey,
+        label: "Create Quotation",
+        status: "loading",
+        message: "Creating quotation shell from enquiry..."
+      });
+
+      const response = await apiFetch(`${apiUrl}/api/portal/quotations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(quotationForm)
+      });
+      const payload = (await response.json()) as {
+        message?: string;
+        quotation?: { id: string; fields?: { ["Quotation Number"]?: string } };
+      };
+      if (!response.ok) {
+        throw new Error(payload.message || "Failed to create quotation");
+      }
+
+      setActionState({
+        key: actionKey,
+        label: "Create Quotation",
+        status: "success",
+        message: "Quotation created. Add line items to generate the draft."
+      });
+      const nextQuotationId = payload.quotation?.id || "";
+      closeEntryPanel();
+      void refreshOperations(true);
+      if (nextQuotationId) {
+        openLineItemEntry(nextQuotationId);
+      }
+    } catch (error) {
+      setActionState({
+        key: actionKey,
+        label: "Create Quotation",
+        status: "error",
+        message: error instanceof Error ? error.message : "Failed to create quotation"
+      });
+    }
+  }
+
+  async function handleSubmitOrder() {
+    const isEditing = Boolean(editingOrderId);
+    const actionKey = isEditing ? `order-update-${editingOrderId}` : `order-create-${orderForm.quotationId}`;
+    const url = isEditing
+      ? `${apiUrl}/api/portal/orders/${editingOrderId}`
+      : `${apiUrl}/api/actions/quotations/${orderForm.quotationId}/create-order`;
+    const method = isEditing ? "PATCH" : "POST";
+
+    try {
+      setActionState({
+        key: actionKey,
+        label: isEditing ? "Update Order" : "Create Order",
+        status: "loading",
+        message: isEditing ? "Saving order changes..." : "Creating order from quotation..."
+      });
+
+      const response = await apiFetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: isEditing
+          ? JSON.stringify({
+              quotationId: orderForm.quotationId,
+              customerId: orderForm.customerId,
+              enquiryId: orderForm.enquiryId,
+              orderDate: orderForm.orderDate,
+              orderStatus: orderForm.orderStatus,
+              totalAmount: Number(orderForm.totalAmount || 0),
+              orderNotes: orderForm.orderNotes,
+              paymentStatus: orderForm.paymentStatus,
+              deliveryStatus: orderForm.deliveryStatus
+            })
+          : undefined
+      });
+      const payload = (await response.json()) as { message?: string };
+      if (!response.ok) {
+        throw new Error(payload.message || "Failed to save order");
+      }
+
+      setActionState({
+        key: actionKey,
+        label: isEditing ? "Update Order" : "Create Order",
+        status: "success",
+        message: isEditing ? "Order updated successfully." : "Order created successfully."
+      });
+      closeEntryPanel();
+      setActiveView("orders");
+      void refreshOperations(true);
+    } catch (error) {
+      setActionState({
+        key: actionKey,
+        label: isEditing ? "Update Order" : "Create Order",
+        status: "error",
+        message: error instanceof Error ? error.message : "Failed to save order"
+      });
+    }
+  }
+
+  async function handleMarkQuotationSent(quotationId: string) {
+    try {
+      setActionState({
+        key: `quotation-mark-sent-${quotationId}`,
+        label: "Mark as Sent",
+        status: "loading",
+        message: "Moving quotation to sent stage..."
+      });
+      const response = await apiFetch(`${apiUrl}/api/actions/quotations/${quotationId}/mark-sent`, {
+        method: "POST"
+      });
+      const payload = (await response.json()) as { message?: string };
+      if (!response.ok) {
+        throw new Error(payload.message || "Failed to mark quotation as sent");
+      }
+
+      await refreshOperations(false);
+      setActiveView("sentQuotations");
+      setActionState({
+        key: `quotation-mark-sent-${quotationId}`,
+        label: "Mark as Sent",
+        status: "success",
+        message: "Quotation moved to Sent Quotations."
+      });
+    } catch (error) {
+      setActionState({
+        key: `quotation-mark-sent-${quotationId}`,
+        label: "Mark as Sent",
+        status: "error",
+        message: error instanceof Error ? error.message : "Failed to mark quotation as sent"
       });
     }
   }
@@ -2500,6 +2839,209 @@ function updateLineItemRow(
       );
     }
 
+    if (entryMode === "customer") {
+      const isSavingCustomer = actionState?.key === "portal-customer" && actionState.status === "loading";
+
+      return (
+        <section className="entry-overlay">
+          <div className="entry-backdrop" onClick={closeEntryPanel} />
+          <section className="panel entry-panel entry-modal" ref={entryModalRef}>
+            <div className="panel-header panel-header-tight">
+              <div>
+                <p className="eyebrow">Customer</p>
+                <h2>{editingCustomerId ? "Edit customer" : "Create customer"}</h2>
+              </div>
+              <button className="entry-close" type="button" onClick={closeEntryPanel}>
+                Close
+              </button>
+            </div>
+            {popupActionState ? (
+              <section className={`action-banner entry-action-banner ${popupActionState.status}`}>
+                <strong>{popupActionState.label}</strong>
+                <span>{popupActionState.message}</span>
+                {renderBannerCloseButton(dismissActionState)}
+              </section>
+            ) : null}
+            <div className="form-grid">
+              <label>
+                <span>Customer name</span>
+                <input value={customerForm.customerName} onChange={(event) => setCustomerForm((current) => ({ ...current, customerName: event.target.value }))} />
+              </label>
+              <label>
+                <span>Company</span>
+                <input value={customerForm.company} onChange={(event) => setCustomerForm((current) => ({ ...current, company: event.target.value }))} />
+              </label>
+              <label>
+                <span>Phone</span>
+                <input value={customerForm.phone} onChange={(event) => setCustomerForm((current) => ({ ...current, phone: normalizePhoneInput(event.target.value) }))} />
+              </label>
+              <label>
+                <span>Email</span>
+                <input type="email" value={customerForm.email} onChange={(event) => setCustomerForm((current) => ({ ...current, email: event.target.value }))} />
+              </label>
+              <label className="form-span-2">
+                <span>Address</span>
+                <textarea rows={2} value={customerForm.address} onChange={(event) => setCustomerForm((current) => ({ ...current, address: event.target.value }))} />
+              </label>
+              <label>
+                <span>State</span>
+                <select value={customerForm.state} onChange={(event) => setCustomerForm((current) => ({ ...current, state: event.target.value }))}>
+                  <option value="">Select state</option>
+                  {stateOptions.map((stateOption) => (
+                    <option key={stateOption} value={stateOption}>
+                      {stateOption}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>City</span>
+                <input value={customerForm.city} onChange={(event) => setCustomerForm((current) => ({ ...current, city: event.target.value }))} />
+              </label>
+              <label>
+                <span>Pincode</span>
+                <input value={customerForm.pincode} onChange={(event) => setCustomerForm((current) => ({ ...current, pincode: normalizePincodeInput(event.target.value) }))} />
+              </label>
+              <label>
+                <span>Customer type</span>
+                <select value={customerForm.customerType} onChange={(event) => setCustomerForm((current) => ({ ...current, customerType: event.target.value }))}>
+                  <option value="Domestic">Domestic</option>
+                  <option value="Export">Export</option>
+                </select>
+              </label>
+            </div>
+            <div className="entry-actions">
+              <button className="action-inline-button" type="button" onClick={() => void handleSubmitCustomer()} disabled={isSavingCustomer}>
+                {isSavingCustomer ? "Saving..." : editingCustomerId ? "Update customer" : "Create customer"}
+              </button>
+            </div>
+          </section>
+        </section>
+      );
+    }
+
+    if (entryMode === "quotation") {
+      const isSavingQuotation = actionState?.key === "portal-quotation" && actionState.status === "loading";
+
+      return (
+        <section className="entry-overlay">
+          <div className="entry-backdrop" onClick={closeEntryPanel} />
+          <section className="panel entry-panel entry-modal" ref={entryModalRef}>
+            <div className="panel-header panel-header-tight">
+              <div>
+                <p className="eyebrow">Quotation</p>
+                <h2>Create quotation from enquiry</h2>
+              </div>
+              <button className="entry-close" type="button" onClick={closeEntryPanel}>
+                Close
+              </button>
+            </div>
+            {popupActionState ? (
+              <section className={`action-banner entry-action-banner ${popupActionState.status}`}>
+                <strong>{popupActionState.label}</strong>
+                <span>{popupActionState.message}</span>
+                {renderBannerCloseButton(dismissActionState)}
+              </section>
+            ) : null}
+            <div className="form-grid">
+              <label className="form-span-2">
+                <span>Enquiry</span>
+                <select value={quotationForm.enquiryId} onChange={(event) => setQuotationForm((current) => ({ ...current, enquiryId: event.target.value }))}>
+                  <option value="">Select enquiry</option>
+                  {(operations?.enquiries || []).map((enquiry) => (
+                    <option key={enquiry.id} value={enquiry.id}>
+                      {enquiry.enquiryId} - {enquiry.leadName || enquiry.phone || "Enquiry"}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>Preferred send channel</span>
+                <select value={quotationForm.preferredSendChannel} onChange={(event) => setQuotationForm((current) => ({ ...current, preferredSendChannel: event.target.value as "Email" | "WhatsApp" }))}>
+                  <option value="Email">Email</option>
+                  <option value="WhatsApp">WhatsApp</option>
+                </select>
+              </label>
+            </div>
+            <div className="entry-actions">
+              <button className="action-inline-button" type="button" onClick={() => void handleSubmitQuotation()} disabled={isSavingQuotation}>
+                {isSavingQuotation ? "Creating..." : "Create quotation"}
+              </button>
+            </div>
+          </section>
+        </section>
+      );
+    }
+
+    if (entryMode === "order") {
+      const isSavingOrder =
+        actionState?.key === `order-update-${editingOrderId}` ||
+        actionState?.key === `order-create-${orderForm.quotationId}`
+          ? actionState.status === "loading"
+          : false;
+
+      return (
+        <section className="entry-overlay">
+          <div className="entry-backdrop" onClick={closeEntryPanel} />
+          <section className="panel entry-panel entry-modal" ref={entryModalRef}>
+            <div className="panel-header panel-header-tight">
+              <div>
+                <p className="eyebrow">Order</p>
+                <h2>{editingOrderId ? "Edit order" : "Create order from quotation"}</h2>
+              </div>
+              <button className="entry-close" type="button" onClick={closeEntryPanel}>
+                Close
+              </button>
+            </div>
+            {popupActionState ? (
+              <section className={`action-banner entry-action-banner ${popupActionState.status}`}>
+                <strong>{popupActionState.label}</strong>
+                <span>{popupActionState.message}</span>
+                {renderBannerCloseButton(dismissActionState)}
+              </section>
+            ) : null}
+            <div className="form-grid">
+              <label>
+                <span>Order date</span>
+                <input type="date" value={orderForm.orderDate} onChange={(event) => setOrderForm((current) => ({ ...current, orderDate: event.target.value }))} />
+              </label>
+              <label>
+                <span>Order status</span>
+                <select value={orderForm.orderStatus} onChange={(event) => setOrderForm((current) => ({ ...current, orderStatus: event.target.value as OrderFormState["orderStatus"] }))}>
+                  {["Confirmed", "Processing", "Shipped", "Delivered", "Cancelled"].map((status) => (
+                    <option key={status} value={status}>
+                      {status}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>Total amount</span>
+                <input type="number" step="0.01" value={orderForm.totalAmount} onChange={(event) => setOrderForm((current) => ({ ...current, totalAmount: normalizeDecimalInput(event.target.value) }))} />
+              </label>
+              <label>
+                <span>Payment status</span>
+                <input value={orderForm.paymentStatus} onChange={(event) => setOrderForm((current) => ({ ...current, paymentStatus: event.target.value }))} />
+              </label>
+              <label>
+                <span>Delivery status</span>
+                <input value={orderForm.deliveryStatus} onChange={(event) => setOrderForm((current) => ({ ...current, deliveryStatus: event.target.value }))} />
+              </label>
+              <label className="form-span-2">
+                <span>Order notes</span>
+                <textarea rows={3} value={orderForm.orderNotes} onChange={(event) => setOrderForm((current) => ({ ...current, orderNotes: event.target.value }))} />
+              </label>
+            </div>
+            <div className="entry-actions">
+              <button className="action-inline-button" type="button" onClick={() => void handleSubmitOrder()} disabled={isSavingOrder}>
+                {isSavingOrder ? "Saving..." : editingOrderId ? "Update order" : "Create order"}
+              </button>
+            </div>
+          </section>
+        </section>
+      );
+    }
+
     if (entryMode === "enquiryDocuments") {
       return (
         <section className="entry-overlay">
@@ -3092,6 +3634,11 @@ function updateLineItemRow(
       <PaginatedTable
         eyebrow="Customers"
         title="Master account records generated from enquiry intake"
+        headerAction={
+          <button className="action-inline-button" type="button" onClick={() => openCustomerEntry()}>
+            New Customer
+          </button>
+        }
         rows={operations.customers}
         columns={
           <>
@@ -3101,6 +3648,7 @@ function updateLineItemRow(
             <th>Contact</th>
             <th>Type</th>
             <th>Drive</th>
+            <th>Action</th>
           </>
         }
         emptyTitle="No customers yet"
@@ -3127,6 +3675,11 @@ function updateLineItemRow(
                 "Pending"
               )}
             </td>
+            <td>
+              <button className="icon-action-button neutral" type="button" title="Edit customer" onClick={() => openCustomerEntry(customer)}>
+                ✎
+              </button>
+            </td>
           </tr>
         )}
       />
@@ -3137,12 +3690,16 @@ function updateLineItemRow(
     const emailActionKey = `quotation-send-email-${quotation.id}`;
     const whatsappActionKey = `quotation-send-whatsapp-${quotation.id}`;
     const regenerateActionKey = `quotation-regenerate-${quotation.id}`;
+    const markSentActionKey = `quotation-mark-sent-${quotation.id}`;
     const isEmailLoading =
       actionState?.key === emailActionKey && actionState.status === "loading";
     const isWhatsAppLoading =
       actionState?.key === whatsappActionKey && actionState.status === "loading";
     const isRegenerateLoading =
       actionState?.key === regenerateActionKey && actionState.status === "loading";
+    const isMarkingSent =
+      actionState?.key === markSentActionKey && actionState.status === "loading";
+    const existingOrder = orderByQuotationId.get(quotation.id);
 
     if (quotation.status === "Parsed") {
       return (
@@ -3201,6 +3758,15 @@ function updateLineItemRow(
             >
               {isWhatsAppLoading ? "..." : "WA"}
             </button>
+            <button
+              className="icon-action-button neutral"
+              type="button"
+              title="Mark quotation as sent"
+              onClick={() => void handleMarkQuotationSent(quotation.id)}
+              disabled={isMarkingSent}
+            >
+              {isMarkingSent ? "..." : "S"}
+            </button>
           </div>
           {quotation.driveFolderUrl ? (
             <a
@@ -3247,6 +3813,14 @@ function updateLineItemRow(
               disabled={isRegenerateLoading}
             >
               {isRegenerateLoading ? "..." : "R"}
+            </button>
+            <button
+              className="icon-action-button neutral"
+              type="button"
+              title={existingOrder ? "Edit linked order" : "Create order"}
+              onClick={() => openOrderEntry(existingOrder, quotation)}
+            >
+              {existingOrder ? "O" : "+"}
             </button>
           </div>
           {quotation.driveFolderUrl ? (
@@ -3356,6 +3930,15 @@ function updateLineItemRow(
           eyebrow="Quotations"
           title={title}
           subtitle={subtitle}
+          headerAction={
+            statuses.includes("Draft") || statuses.includes("Parsed") || statuses.includes("Ready for Draft")
+              ? (
+                <button className="action-inline-button" type="button" onClick={openQuotationEntry}>
+                  Create Quotation
+                </button>
+              )
+              : undefined
+          }
           rows={filteredQuotations}
           columns={
             <>
@@ -3489,10 +4072,12 @@ function updateLineItemRow(
             <th>Order</th>
             <th>Customer</th>
             <th>Quotation</th>
+            <th>Status</th>
             <th>Order Date</th>
             <th>Value</th>
             <th>Payment</th>
             <th>Delivery</th>
+            <th>Action</th>
           </>
         }
         emptyTitle="No orders yet"
@@ -3502,10 +4087,16 @@ function updateLineItemRow(
             <td>{order.orderNumber}</td>
             <td>{customerLookup.get(order.linkedCustomerId)?.customerName || "Not linked"}</td>
             <td>{quotationLookup.get(order.linkedQuotationId)?.quotationNumber || "Not linked"}</td>
+            <td>{order.orderStatus || "Pending"}</td>
             <td>{formatDate(order.orderDate)}</td>
-            <td>{order.orderValue ? formatCurrency(order.orderValue) : "Pending"}</td>
+            <td>{(order.totalAmount || order.orderValue) ? formatCurrency(order.totalAmount || order.orderValue) : "Pending"}</td>
             <td>{order.paymentStatus || "Pending"}</td>
             <td>{order.deliveryStatus || "Pending"}</td>
+            <td>
+              <button className="icon-action-button neutral" type="button" title="Edit order" onClick={() => openOrderEntry(order)}>
+                ✎
+              </button>
+            </td>
           </tr>
         )}
       />

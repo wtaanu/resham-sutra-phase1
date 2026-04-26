@@ -22,12 +22,18 @@ import {
 } from "./intake-processor.js";
 import { getOperationsSnapshot } from "./operations.js";
 import {
+  createOrderFromQuotation,
+  createPortalCustomer,
   createPortalEnquiry,
+  createPortalQuotation,
   createPortalQuotationLineItems,
   generateDraftForEnquiry,
   getPortalQuotationLineItems,
+  markQuotationAsSent,
   replacePortalQuotationLineItems,
-  updatePortalEnquiry
+  updatePortalCustomer,
+  updatePortalEnquiry,
+  updatePortalOrder
 } from "./portal-actions.js";
 import {
   getProductDocumentsByIds,
@@ -224,6 +230,72 @@ app.post("/api/portal/enquiries", requireAuthenticatedUser, async (request, resp
     response.status(400).json({
       status: "error",
       message: error instanceof Error ? error.message : "Failed to create enquiry"
+    });
+  }
+});
+
+app.post("/api/portal/customers", requireAuthenticatedUser, async (request, response) => {
+  try {
+    const result = await createPortalCustomer(request.body, response.locals.authUser);
+    response.status(201).json({
+      status: "ok",
+      customer: result
+    });
+  } catch (error) {
+    logRouteError("POST /api/portal/customers", error);
+    response.status(400).json({
+      status: "error",
+      message: error instanceof Error ? error.message : "Failed to create customer"
+    });
+  }
+});
+
+app.patch("/api/portal/customers/:id", requireAuthenticatedUser, async (request, response) => {
+  try {
+    const result = await updatePortalCustomer(String(request.params.id || ""), request.body, response.locals.authUser);
+    response.status(200).json({
+      status: "ok",
+      customer: result
+    });
+  } catch (error) {
+    logRouteError("PATCH /api/portal/customers/:id", error);
+    response.status(400).json({
+      status: "error",
+      message: error instanceof Error ? error.message : "Failed to update customer"
+    });
+  }
+});
+
+app.post("/api/portal/quotations", requireAuthenticatedUser, async (request, response) => {
+  try {
+    const result = await createPortalQuotation(request.body, response.locals.authUser);
+    response.status(201).json({
+      status: "ok",
+      enquiry: result.enquiry,
+      customer: result.customer,
+      quotation: result.quotation
+    });
+  } catch (error) {
+    logRouteError("POST /api/portal/quotations", error);
+    response.status(400).json({
+      status: "error",
+      message: error instanceof Error ? error.message : "Failed to create quotation"
+    });
+  }
+});
+
+app.patch("/api/portal/orders/:id", requireAuthenticatedUser, async (request, response) => {
+  try {
+    const result = await updatePortalOrder(String(request.params.id || ""), request.body, response.locals.authUser);
+    response.status(200).json({
+      status: "ok",
+      order: result
+    });
+  } catch (error) {
+    logRouteError("PATCH /api/portal/orders/:id", error);
+    response.status(400).json({
+      status: "error",
+      message: error instanceof Error ? error.message : "Failed to update order"
     });
   }
 });
@@ -476,6 +548,38 @@ app.post("/api/actions/quotations/:id/send-whatsapp", requireAuthenticatedUser, 
     response.status(400).json({
       status: "error",
       message: error instanceof Error ? error.message : "Failed to send quotation on WhatsApp"
+    });
+  }
+});
+
+app.post("/api/actions/quotations/:id/mark-sent", requireAuthenticatedUser, async (request, response) => {
+  try {
+    const quotation = await markQuotationAsSent(String(request.params.id || ""), response.locals.authUser);
+    response.status(200).json({
+      status: "ok",
+      quotation
+    });
+  } catch (error) {
+    logRouteError("POST /api/actions/quotations/:id/mark-sent", error);
+    response.status(400).json({
+      status: "error",
+      message: error instanceof Error ? error.message : "Failed to mark quotation as sent"
+    });
+  }
+});
+
+app.post("/api/actions/quotations/:id/create-order", requireAuthenticatedUser, async (request, response) => {
+  try {
+    const order = await createOrderFromQuotation(String(request.params.id || ""), response.locals.authUser);
+    response.status(201).json({
+      status: "ok",
+      order
+    });
+  } catch (error) {
+    logRouteError("POST /api/actions/quotations/:id/create-order", error);
+    response.status(400).json({
+      status: "error",
+      message: error instanceof Error ? error.message : "Failed to create order"
     });
   }
 });

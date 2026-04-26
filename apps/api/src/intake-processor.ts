@@ -288,6 +288,11 @@ function enquiryStatusFields(status: string) {
   };
 }
 
+function isLockedQuotationStatus(status: unknown) {
+  const normalized = String(status || "").trim().toLowerCase();
+  return normalized === "approved" || normalized === "draft sent" || normalized === "sent";
+}
+
 function nextClientId(customers: AirtableRecord<CustomerFields>[]) {
   const max = customers.reduce((currentMax, customer) => {
     const clientId = customer.fields["Client ID"] ?? "";
@@ -979,13 +984,17 @@ async function createDraftForReadyEnquiry(
     draftFileUrl = upload.fileUrl;
   }
 
+  const nextQuotationStatus = isLockedQuotationStatus(quotation.fields.Status)
+    ? String(quotation.fields.Status || "")
+    : "Ready for Review";
+
   const updatedQuotation = await updateRecord<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
     id: quotation.id,
     fields: {
       "Draft File URL": draftFileUrl,
       "Draft Created Time": new Date().toISOString(),
       "Drive Folder URL": folder.folderUrl || null,
-      Status: "Ready for Review",
+      Status: nextQuotationStatus,
       "Quotation Number": quotationNumber
     }
   }).catch(async (error) => {
@@ -995,7 +1004,7 @@ async function createDraftForReadyEnquiry(
         "Draft File URL": draftFileUrl,
         "Draft Created Time": new Date().toISOString(),
         "Drive Folder URL": folder.folderUrl || null,
-        Status: "Ready for Review",
+        Status: nextQuotationStatus,
         "Quotation Number": quotationNumber
       },
       optionalQuotationFields,
@@ -1309,6 +1318,11 @@ async function syncParsedEnquiriesWithLineItems() {
       continue;
     }
 
+    const quotation = await getQuotationById(quotationId);
+    if (isLockedQuotationStatus(quotation.fields.Status)) {
+      continue;
+    }
+
     const matchingItems = getLineItemsForQuotation(quotationId, lineItems);
     if (!matchingItems.length) {
       continue;
@@ -1481,6 +1495,17 @@ export async function processPendingEnquiries() {
 
       const customer = await getCustomerById(customerId);
       const quotation = await getQuotationById(quotationId);
+      if (isLockedQuotationStatus(quotation.fields.Status)) {
+        results.push({
+          enquiryRecordId: enquiry.id,
+          enquiryId: enquiry.fields["Enquiry ID"] || enquiry.id,
+          customerRecordId: customer.id,
+          quotationRecordId: quotation.id,
+          status: "skipped",
+          message: `Quotation status ${quotation.fields.Status || "unknown"} is locked`
+        });
+        continue;
+      }
       const { folder } = await createDraftForReadyEnquiry(enquiry, customer, quotation, matchingItems);
 
       results.push({

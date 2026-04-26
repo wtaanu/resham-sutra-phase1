@@ -73,9 +73,23 @@ type QuotationLineItemFields = {
 
 type OrderFields = {
   "Order Number"?: string;
+  Quotation?: string[] | string;
+  Customer?: string[] | string;
+  Enquiries?: string[] | string;
   "Linked Customer"?: string[];
   "Linked Quotation"?: string[];
   "Order Date"?: string;
+  "Order Status"?: string;
+  "Total Amount"?: number;
+  "Order Notes"?: string;
+  "Line Items"?: string[] | string;
+  "Quotation Grand Total"?: number;
+  "Quotation Status"?: string;
+  "Order Line Item Count"?: number;
+  "Order Value per Item"?: string;
+  "Order Fulfillment Progress"?: string;
+  "Order Summary (AI)"?: string;
+  "Order Risk/Attention Flag (AI)"?: string;
   "Order Value"?: number;
   "Payment Status"?: string;
   "Delivery Status"?: string;
@@ -333,10 +347,26 @@ export async function getOperationsSnapshot() {
     orders: orders.map((record) => ({
       id: record.id,
       orderNumber: record.fields["Order Number"] || record.id,
-      linkedCustomerId: record.fields["Linked Customer"]?.[0] || "",
-      linkedQuotationId: record.fields["Linked Quotation"]?.[0] || "",
+      linkedCustomerId:
+        record.fields["Linked Customer"]?.[0] ||
+        (Array.isArray(record.fields.Customer) ? record.fields.Customer[0] || "" : String(record.fields.Customer || "")),
+      linkedQuotationId:
+        record.fields["Linked Quotation"]?.[0] ||
+        (Array.isArray(record.fields.Quotation) ? record.fields.Quotation[0] || "" : String(record.fields.Quotation || "")),
+      linkedEnquiryId:
+        (Array.isArray(record.fields.Enquiries) ? record.fields.Enquiries[0] || "" : String(record.fields.Enquiries || "")),
       orderDate: record.fields["Order Date"] || "",
-      orderValue: record.fields["Order Value"] || 0,
+      orderStatus: record.fields["Order Status"] || "",
+      totalAmount: record.fields["Total Amount"] || 0,
+      orderNotes: record.fields["Order Notes"] || "",
+      quotationGrandTotal: record.fields["Quotation Grand Total"] || 0,
+      quotationStatus: record.fields["Quotation Status"] || "",
+      orderLineItemCount: Number(record.fields["Order Line Item Count"] || 0),
+      orderValuePerItem: record.fields["Order Value per Item"] || "",
+      orderFulfillmentProgress: record.fields["Order Fulfillment Progress"] || "",
+      orderSummary: record.fields["Order Summary (AI)"] || "",
+      orderRiskAttentionFlag: record.fields["Order Risk/Attention Flag (AI)"] || "",
+      orderValue: record.fields["Order Value"] || record.fields["Total Amount"] || 0,
       paymentStatus: record.fields["Payment Status"] || "",
       deliveryStatus: record.fields["Delivery Status"] || ""
     })),
