@@ -138,6 +138,39 @@ export async function findFolderByName(folderName: string) {
   return data.files[0] ?? null;
 }
 
+async function findFileByNameInFolder(fileName: string, folderId: string) {
+  if (!isDriveConfigured()) {
+    throw new Error("Google Drive is not configured");
+  }
+
+  const query = [
+    `name='${escapeDriveQuery(fileName)}'`,
+    "trashed=false",
+    `'${folderId}' in parents`
+  ].join(" and ");
+
+  const params = new URLSearchParams({
+    q: query,
+    fields: "files(id,name,webViewLink)"
+  });
+
+  const response = await fetch(
+    `https://www.googleapis.com/drive/v3/files?${params.toString()}`,
+    {
+      method: "GET",
+      headers: await driveHeaders()
+    }
+  );
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(`Drive file search failed (${response.status}): ${message}`);
+  }
+
+  const data = (await response.json()) as GoogleDriveListResponse;
+  return data.files[0] ?? null;
+}
+
 export async function createFolder(folderName: string) {
   if (!isDriveConfigured()) {
     throw new Error("Google Drive is not configured");
@@ -202,8 +235,7 @@ export async function uploadFileToFolder(
     new Blob(
       [
         JSON.stringify({
-          name: fileName,
-          parents: [folderId]
+          name: fileName
         })
       ],
       { type: "application/json" }
@@ -222,16 +254,34 @@ export async function uploadFileToFolder(
     fileName
   );
 
-  const response = await fetch(
-    "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink",
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${await getDriveAccessToken()}`
-      },
-      body: form
-    }
-  );
+  const existing = await findFileByNameInFolder(fileName, folderId);
+  const uploadUrl = existing
+    ? `https://www.googleapis.com/upload/drive/v3/files/${existing.id}?uploadType=multipart&fields=id,name,webViewLink`
+    : "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink";
+  const method = existing ? "PATCH" : "POST";
+
+  if (!existing) {
+    form.set(
+      "metadata",
+      new Blob(
+        [
+          JSON.stringify({
+            name: fileName,
+            parents: [folderId]
+          })
+        ],
+        { type: "application/json" }
+      )
+    );
+  }
+
+  const response = await fetch(uploadUrl, {
+    method,
+    headers: {
+      Authorization: `Bearer ${await getDriveAccessToken()}`
+    },
+    body: form
+  });
 
   if (!response.ok) {
     const message = await response.text();

@@ -84,7 +84,6 @@ type QuotationFields = {
   "Drive Folder URL"?: string;
   "Reference Number"?: string;
   "Buyer Block"?: string;
-  "Preferred Send Channel"?: string;
   "Sent Date"?: string;
   "WhatsApp Sent Date Time"?: string;
   "Email Sent Date Time"?: string;
@@ -233,6 +232,7 @@ async function updateRecordWithOptionalFieldFallback<TFields extends Record<stri
 
 function customerLockKeys(enquiry: AirtableRecord<EnquiryFields>) {
   return [
+    enquiry.id,
     normalizePhone(enquiry.fields.Phone),
     normalizeEmail(enquiry.fields.Email)
   ].filter(Boolean);
@@ -772,7 +772,6 @@ async function ensureQuotationShell(
         "Drive Folder URL": enquiry.fields["Drive Folder URL"] || "",
         "Reference Number": enquiryReference,
         "Buyer Block": buildBuyerBlock(enquiry),
-        "Preferred Send Channel": "Email",
         "Send Quotation": false,
         "Send Reminder": false,
         "Mark Accepted": false,
@@ -791,7 +790,6 @@ async function ensureQuotationShell(
             "Drive Folder URL": enquiry.fields["Drive Folder URL"] || "",
             "Reference Number": enquiryReference,
             "Buyer Block": buildBuyerBlock(enquiry),
-            "Preferred Send Channel": "Email",
             "Send Quotation": false,
             "Send Reminder": false,
             "Mark Accepted": false,
@@ -934,7 +932,6 @@ async function markQuotationSent(
   const fields: Record<string, unknown> = {
     Status: "Draft Sent",
     "Sent Date": sentAt,
-    "Preferred Send Channel": channel,
     "Send Quotation": true
   };
 

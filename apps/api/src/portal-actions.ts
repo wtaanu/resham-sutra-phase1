@@ -70,7 +70,6 @@ type QuotationFields = {
   "Drive Folder URL"?: string;
   "Reference Number"?: string;
   "Buyer Block"?: string;
-  "Preferred Send Channel"?: string;
   "Sent Date"?: string;
   "WhatsApp Sent Date Time"?: string;
   "Email Sent Date Time"?: string;
@@ -258,8 +257,7 @@ const customerPayloadSchema = z.object({
 });
 
 const quotationPayloadSchema = z.object({
-  enquiryId: airtableRecordIdSchema,
-  preferredSendChannel: z.enum(["Email", "WhatsApp"]).default("Email")
+  enquiryId: airtableRecordIdSchema
 });
 
 const orderPayloadSchema = z.object({
@@ -598,8 +596,7 @@ async function updateRecordWithOptionalFieldFallback<T extends Record<string, un
 
 async function createQuotationShellForEnquiry(
   enquiry: AirtableRecord<EnquiryFields>,
-  customerId: string,
-  preferredSendChannel: "Email" | "WhatsApp"
+  customerId: string
 ) {
   const existingQuotationId = enquiry.fields.Quotations?.[0];
   if (existingQuotationId) {
@@ -631,7 +628,6 @@ async function createQuotationShellForEnquiry(
           phone: enquiry.fields.Phone,
           email: enquiry.fields.Email
         }),
-        "Preferred Send Channel": preferredSendChannel,
         "Send Quotation": false,
         "Send Reminder": false,
         "Mark Accepted": false,
@@ -1194,7 +1190,7 @@ export async function createPortalQuotation(payload: unknown, actor?: Authentica
   const input = quotationPayloadSchema.parse(payload);
   const enquiry = await getRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, input.enquiryId);
   const provisioned = await createCustomerForEnquiry(enquiry.id);
-  const quotation = await createQuotationShellForEnquiry(provisioned.enquiry, provisioned.customer.id, input.preferredSendChannel);
+  const quotation = await createQuotationShellForEnquiry(provisioned.enquiry, provisioned.customer.id);
 
   await createChangeLogEntry(env.AIRTABLE_QUOTATION_CHANGE_LOG_TABLE, {
     entityRecordId: quotation.id,

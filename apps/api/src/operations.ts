@@ -53,7 +53,6 @@ type QuotationFields = {
   "Final PDF URL"?: string;
   "Final PDF Generated At"?: string;
   "Drive Folder URL"?: string;
-  "Preferred Send Channel"?: string;
   "Sent Date"?: string;
   "WhatsApp Sent Date Time"?: string;
   "Email Sent Date Time"?: string;
@@ -330,7 +329,6 @@ export async function getOperationsSnapshot() {
       draftCreatedTime: record.fields["Draft Created Time"] || "",
       finalPdfUrl: record.fields["Final PDF URL"] || "",
       driveFolderUrl: record.fields["Drive Folder URL"] || "",
-      preferredSendChannel: record.fields["Preferred Send Channel"] || "",
       sentDate: record.fields["Sent Date"] || "",
       whatsappSentDateTime: record.fields["WhatsApp Sent Date Time"] || "",
       emailSentDateTime: record.fields["Email Sent Date Time"] || "",

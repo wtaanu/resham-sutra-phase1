@@ -75,7 +75,6 @@ type QuotationRecord = {
   draftCreatedTime: string;
   finalPdfUrl: string;
   driveFolderUrl: string;
-  preferredSendChannel: string;
   sentDate: string;
   whatsappSentDateTime: string;
   emailSentDateTime: string;
@@ -217,7 +216,6 @@ type CustomerFormState = {
 
 type QuotationFormState = {
   enquiryId: string;
-  preferredSendChannel: "Email" | "WhatsApp";
 };
 
 type OrderFormState = {
@@ -586,8 +584,7 @@ function createBlankCustomerForm(): CustomerFormState {
 
 function createBlankQuotationForm(): QuotationFormState {
   return {
-    enquiryId: "",
-    preferredSendChannel: "Email"
+    enquiryId: ""
   };
 }
 
@@ -1195,9 +1192,10 @@ export default function App() {
   }
 
   async function handleCreateCustomer(enquiryId: string) {
+    const actionKey = `create-customer-${enquiryId}`;
     try {
       setActionState({
-        key: enquiryId,
+        key: actionKey,
         label: "Create Customer",
         status: "loading",
         message: "Creating customer and quotation shell..."
@@ -1214,7 +1212,7 @@ export default function App() {
 
       await refreshOperations(false);
       setActionState({
-        key: enquiryId,
+        key: actionKey,
         label: "Create Customer",
         status: "success",
         message: "Customer linked successfully."
@@ -1223,7 +1221,7 @@ export default function App() {
       const message =
         actionError instanceof Error ? actionError.message : "Failed to create customer";
       setActionState({
-        key: enquiryId,
+        key: actionKey,
         label: "Create Customer",
         status: "error",
         message
@@ -1915,7 +1913,7 @@ export default function App() {
       const response = await apiFetch(`${apiUrl}/api/portal/quotations`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(quotationForm)
+        body: JSON.stringify({ enquiryId: quotationForm.enquiryId })
       });
       const payload = (await response.json()) as {
         message?: string;
@@ -2955,13 +2953,6 @@ function updateLineItemRow(
                   ))}
                 </select>
               </label>
-              <label>
-                <span>Preferred send channel</span>
-                <select value={quotationForm.preferredSendChannel} onChange={(event) => setQuotationForm((current) => ({ ...current, preferredSendChannel: event.target.value as "Email" | "WhatsApp" }))}>
-                  <option value="Email">Email</option>
-                  <option value="WhatsApp">WhatsApp</option>
-                </select>
-              </label>
             </div>
             <div className="entry-actions">
               <button className="action-inline-button" type="button" onClick={() => void handleSubmitQuotation()} disabled={isSavingQuotation}>
@@ -3576,9 +3567,9 @@ function updateLineItemRow(
                       className="action-inline-button"
                       type="button"
                       onClick={() => void handleCreateCustomer(enquiry.id)}
-                      disabled={actionState?.key === enquiry.id && actionState.status === "loading"}
+                      disabled={actionState?.key === `create-customer-${enquiry.id}` && actionState.status === "loading"}
                     >
-                      {actionState?.key === enquiry.id && actionState.status === "loading"
+                      {actionState?.key === `create-customer-${enquiry.id}` && actionState.status === "loading"
                         ? "Creating..."
                         : "Create Customer"}
                     </button>
@@ -3945,11 +3936,10 @@ function updateLineItemRow(
               <th>Quotation</th>
               <th>Customer</th>
               <th>Status</th>
-              <th>Channel</th>
-              <th>Items</th>
-              {statuses.length === 1 && statuses[0] === "Approved" ? null : <th>Draft</th>}
-              <th>Final PDF</th>
-              <th>Actions</th>
+            <th>Items</th>
+            {statuses.length === 1 && statuses[0] === "Approved" ? null : <th>Draft</th>}
+            <th>Final PDF</th>
+            <th>Actions</th>
             </>
           }
           emptyTitle="No quotations in this section"
@@ -3968,21 +3958,6 @@ function updateLineItemRow(
                 <span className={`status-chip ${statusTone(quotation.status)}`}>
                   {quotation.status || "Draft"}
                 </span>
-              </td>
-              <td>
-                <div className="table-link-stack">
-                  <span>{quotation.preferredSendChannel || "Email"}</span>
-                  {quotation.emailSentDateTime ? (
-                    <span className="table-submeta">
-                      Email {formatDateTime(quotation.emailSentDateTime)}
-                    </span>
-                  ) : null}
-                  {quotation.whatsappSentDateTime ? (
-                    <span className="table-submeta">
-                      WhatsApp {formatDateTime(quotation.whatsappSentDateTime)}
-                    </span>
-                  ) : null}
-                </div>
               </td>
               <td>{quotation.lineItemCount || 0}</td>
               {statuses.length === 1 && statuses[0] === "Approved" ? null : (
