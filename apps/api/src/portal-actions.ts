@@ -1241,7 +1241,7 @@ export async function markQuotationAsSent(quotationId: string, actor?: Authentic
     {
       id: quotationId,
       fields: {
-        Status: "Sent",
+        Status: "Draft Sent",
         "Sent Date": new Date().toISOString()
       }
     },

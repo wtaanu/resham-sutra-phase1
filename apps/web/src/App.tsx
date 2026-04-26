@@ -3340,7 +3340,9 @@ function updateLineItemRow(
     ];
 
     const totalQuotations = operations.quotations.length;
-    const sentQuotations = operations.quotations.filter((item) => item.status === "Sent").length;
+    const sentQuotations = operations.quotations.filter(
+      (item) => item.status === "Sent" || item.status === "Draft Sent"
+    ).length;
 
     return (
       <>
@@ -3459,7 +3461,11 @@ function updateLineItemRow(
               },
               {
                 label: "Sent",
-                value: String(operations.quotations.filter((item) => item.status === "Sent").length)
+                value: String(
+                  operations.quotations.filter(
+                    (item) => item.status === "Sent" || item.status === "Draft Sent"
+                  ).length
+                )
               }
             ]}
           />
