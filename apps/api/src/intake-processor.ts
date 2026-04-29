@@ -701,8 +701,8 @@ async function findExistingQuotation(enquiryId: string) {
       "Linked Customer",
       "Linked Enquiry"
     ],
-    filterByFormula: `{Reference Number}='${escaped}'`,
-    maxRecords: 1
+    filterByFormula: `OR({Reference Number}='${escaped}', ARRAYJOIN({Linked Enquiry})='${escaped}')`,
+    maxRecords: 10
   });
 
   return quotations[0] ?? null;
@@ -752,6 +752,13 @@ async function ensureQuotationShell(
   enquiry: AirtableRecord<EnquiryFields>,
   customer: AirtableRecord<CustomerFields>
 ) {
+  const linkedQuotationId = enquiry.fields.Quotations?.[0];
+  if (linkedQuotationId) {
+    const linkedQuotation = await getQuotationById(linkedQuotationId);
+    const synced = await syncEnquiryQuotationLinks(enquiry, customer, linkedQuotation);
+    return synced.quotation;
+  }
+
   const enquiryReference = enquiry.fields["Enquiry ID"] || enquiry.id;
   const existing = await findExistingQuotation(enquiryReference);
   if (existing) {
