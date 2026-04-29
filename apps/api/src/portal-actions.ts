@@ -698,6 +698,37 @@ async function createQuotationShellForEnquiry(
   }
 
   const quotationReference = enquiry.fields["Enquiry ID"] || enquiry.id;
+  const escapedReference = quotationReference.replace(/'/g, "\\'");
+  const existingQuotations = await listRecords<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
+    fields: [
+      "Quotation Number",
+      "Reference Number",
+      "Linked Enquiry",
+      "Linked Customer",
+      "Status",
+      "Draft File URL"
+    ],
+    filterByFormula: `OR({Reference Number}='${escapedReference}', ARRAYJOIN({Linked Enquiry})='${enquiry.id}')`,
+    maxRecords: 10
+  });
+  const existingQuotation = existingQuotations[0];
+  if (existingQuotation) {
+    if (
+      existingQuotation.fields["Linked Enquiry"]?.[0] !== enquiry.id ||
+      existingQuotation.fields["Linked Customer"]?.[0] !== customerId
+    ) {
+      return updateRecord<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
+        id: existingQuotation.id,
+        fields: {
+          "Linked Enquiry": safeLinkedValue(enquiry.id),
+          "Linked Customer": safeLinkedValue(customerId)
+        }
+      });
+    }
+
+    return existingQuotation;
+  }
+
   const quotationNumberResult = await createRecordWithUniqueNumber<QuotationFields, AirtableRecord<QuotationFields>>({
     tableName: env.AIRTABLE_QUOTATIONS_TABLE,
     fieldName: "Quotation Number",

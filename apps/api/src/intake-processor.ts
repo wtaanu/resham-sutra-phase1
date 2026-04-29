@@ -1461,7 +1461,10 @@ export async function createCustomerForEnquiry(enquiryId: string) {
     fields: {
       "Linked Enquiry": linkedRecordIds(updatedEnquiry.id),
       "Linked Customer": linkedRecordIds(customer.id),
-      "Drive Folder URL": folder.folderUrl || null
+      "Drive Folder URL": folder.folderUrl || null,
+      Status: isLockedQuotationStatus(quotation.fields.Status)
+        ? String(quotation.fields.Status || "")
+        : String(updatedEnquiry.fields["Parser Status"] || quotation.fields.Status || "Parsed")
     }
   });
 
