@@ -383,6 +383,7 @@ export async function uploadFileToFolder(
   folderId: string,
   options?: {
     convertToGoogleSheet?: boolean;
+    replaceExisting?: boolean;
   }
 ) {
   if (!isDriveConfigured()) {
@@ -420,7 +421,7 @@ export async function uploadFileToFolder(
   );
 
   let existing: GoogleDriveFile | null = await findFileByNameInFolder(fileName, folderId);
-  if (options?.convertToGoogleSheet && existing) {
+  if ((options?.convertToGoogleSheet || options?.replaceExisting) && existing) {
     await deleteDriveFile(existing.id);
     existing = null;
   }

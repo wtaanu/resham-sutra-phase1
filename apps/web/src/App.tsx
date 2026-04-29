@@ -1467,18 +1467,29 @@ export default function App() {
         method: "POST"
       });
 
+      const payload = (await response.json()) as {
+        message?: string;
+        finalPdfUrl?: string;
+        previewUrl?: string;
+      };
+
       if (!response.ok) {
-        const payload = (await response.json()) as { message?: string };
         throw new Error(payload.message || "Failed to generate final PDF");
       }
 
-      await refreshOperations(false);
+      try {
+        await refreshOperations(false);
+      } catch {
+        // Keep the PDF success state when the follow-up refresh briefly fails.
+      }
       setActiveView("approvedQuotations");
       setActionState({
         key: `pdf-generate-${quotationId}`,
         label: "Generate Final PDF",
         status: "success",
-        message: "Final PDF generated successfully."
+        message: payload.finalPdfUrl
+          ? "Final PDF generated successfully from the live draft sheet."
+          : "Final PDF generated successfully."
       });
     } catch (actionError) {
       const message =

@@ -1126,7 +1126,9 @@ export async function generateFinalPdfForQuotation(quotationId: string) {
 
   let finalPdfUrl = pdf.fileUrl;
   if (folder.folderId && isDriveConfigured()) {
-    const upload = await uploadFileToFolder(pdf.filePath, `${quotationNumber}.pdf`, folder.folderId);
+    const upload = await uploadFileToFolder(pdf.filePath, `${quotationNumber}.pdf`, folder.folderId, {
+      replaceExisting: true
+    });
     finalPdfUrl = upload.fileUrl;
   }
 
