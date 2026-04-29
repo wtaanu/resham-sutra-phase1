@@ -6,6 +6,7 @@ type GoogleDriveFile = {
   id: string;
   name: string;
   webViewLink?: string;
+  mimeType?: string;
 };
 
 type GoogleDriveListResponse = {
@@ -104,6 +105,77 @@ export function extractDriveFolderId(folderUrl: string) {
   return match ? match[1] : "";
 }
 
+export function extractDriveFileId(fileUrl: string) {
+  const value = String(fileUrl || "");
+  const directMatch = value.match(/\/d\/([a-zA-Z0-9_-]+)/);
+  if (directMatch) {
+    return directMatch[1];
+  }
+
+  const queryMatch = value.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  return queryMatch ? queryMatch[1] : "";
+}
+
+async function findFolderByNameInParent(folderName: string, parentFolderId: string) {
+  if (!isDriveConfigured()) {
+    throw new Error("Google Drive is not configured");
+  }
+
+  const query = [
+    `name='${escapeDriveQuery(folderName)}'`,
+    `mimeType='application/vnd.google-apps.folder'`,
+    "trashed=false",
+    `'${parentFolderId}' in parents`
+  ].join(" and ");
+
+  const params = new URLSearchParams({
+    q: query,
+    fields: "files(id,name,webViewLink,mimeType)"
+  });
+
+  const response = await fetch(
+    `https://www.googleapis.com/drive/v3/files?${params.toString()}`,
+    {
+      method: "GET",
+      headers: await driveHeaders()
+    }
+  );
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(`Drive search failed (${response.status}): ${message}`);
+  }
+
+  const data = (await response.json()) as GoogleDriveListResponse;
+  return data.files[0] ?? null;
+}
+
+async function createFolderInParent(folderName: string, parentFolderId: string) {
+  if (!isDriveConfigured()) {
+    throw new Error("Google Drive is not configured");
+  }
+
+  const response = await fetch(
+    "https://www.googleapis.com/drive/v3/files?fields=id,name,webViewLink,mimeType",
+    {
+      method: "POST",
+      headers: await driveHeaders(),
+      body: JSON.stringify({
+        name: folderName,
+        mimeType: "application/vnd.google-apps.folder",
+        parents: [parentFolderId]
+      })
+    }
+  );
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(`Drive folder create failed (${response.status}): ${message}`);
+  }
+
+  return (await response.json()) as GoogleDriveFile;
+}
+
 export async function findFolderByName(folderName: string) {
   if (!isDriveConfigured()) {
     throw new Error("Google Drive is not configured");
@@ -118,7 +190,7 @@ export async function findFolderByName(folderName: string) {
 
   const params = new URLSearchParams({
     q: query,
-    fields: "files(id,name,webViewLink)"
+    fields: "files(id,name,webViewLink,mimeType)"
   });
 
   const response = await fetch(
@@ -171,6 +243,93 @@ async function findFileByNameInFolder(fileName: string, folderId: string) {
   return data.files[0] ?? null;
 }
 
+async function deleteDriveFile(fileId: string) {
+  const response = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${await getDriveAccessToken()}`
+    }
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(`Drive delete failed (${response.status}): ${message}`);
+  }
+}
+
+export async function ensureDefaultTemplateFolder() {
+  if (!isDriveConfigured()) {
+    throw new Error("Google Drive is not configured");
+  }
+
+  const existing = await findFolderByNameInParent(
+    env.GOOGLE_DRIVE_DEFAULT_TEMPLATE_FOLDER_NAME,
+    env.GOOGLE_DRIVE_ROOT_FOLDER_ID
+  );
+
+  if (existing) {
+    return {
+      folderId: existing.id,
+      folderName: existing.name,
+      folderUrl: existing.webViewLink || buildDriveFolderUrl(existing.id),
+      created: false
+    };
+  }
+
+  const created = await createFolderInParent(
+    env.GOOGLE_DRIVE_DEFAULT_TEMPLATE_FOLDER_NAME,
+    env.GOOGLE_DRIVE_ROOT_FOLDER_ID
+  );
+
+  return {
+    folderId: created.id,
+    folderName: created.name,
+    folderUrl: created.webViewLink || buildDriveFolderUrl(created.id),
+    created: true
+  };
+}
+
+export async function findDriveFileInFolder(fileName: string, folderId: string) {
+  return findFileByNameInFolder(fileName, folderId);
+}
+
+export async function downloadDriveFile(fileId: string) {
+  const response = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${await getDriveAccessToken()}`
+    }
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(`Drive download failed (${response.status}): ${message}`);
+  }
+
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  return Buffer.from(bytes);
+}
+
+export async function exportDriveFile(fileId: string, mimeType: string) {
+  const response = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${fileId}/export?mimeType=${encodeURIComponent(mimeType)}`,
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${await getDriveAccessToken()}`
+      }
+    }
+  );
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(`Drive export failed (${response.status}): ${message}`);
+  }
+
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  return Buffer.from(bytes);
+}
+
 export async function createFolder(folderName: string) {
   if (!isDriveConfigured()) {
     throw new Error("Google Drive is not configured");
@@ -221,7 +380,10 @@ export async function findOrCreateClientFolder(folderName: string) {
 export async function uploadFileToFolder(
   filePath: string,
   fileName: string,
-  folderId: string
+  folderId: string,
+  options?: {
+    convertToGoogleSheet?: boolean;
+  }
 ) {
   if (!isDriveConfigured()) {
     throw new Error("Google Drive is not configured");
@@ -235,7 +397,10 @@ export async function uploadFileToFolder(
     new Blob(
       [
         JSON.stringify({
-          name: fileName
+          name: fileName,
+          ...(options?.convertToGoogleSheet
+            ? { mimeType: "application/vnd.google-apps.spreadsheet" }
+            : {})
         })
       ],
       { type: "application/json" }
@@ -254,10 +419,15 @@ export async function uploadFileToFolder(
     fileName
   );
 
-  const existing = await findFileByNameInFolder(fileName, folderId);
+  let existing: GoogleDriveFile | null = await findFileByNameInFolder(fileName, folderId);
+  if (options?.convertToGoogleSheet && existing) {
+    await deleteDriveFile(existing.id);
+    existing = null;
+  }
+
   const uploadUrl = existing
-    ? `https://www.googleapis.com/upload/drive/v3/files/${existing.id}?uploadType=multipart&fields=id,name,webViewLink`
-    : "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink";
+    ? `https://www.googleapis.com/upload/drive/v3/files/${existing.id}?uploadType=multipart&fields=id,name,webViewLink,mimeType`
+    : "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink,mimeType";
   const method = existing ? "PATCH" : "POST";
 
   if (!existing) {
@@ -267,7 +437,10 @@ export async function uploadFileToFolder(
         [
           JSON.stringify({
             name: fileName,
-            parents: [folderId]
+            parents: [folderId],
+            ...(options?.convertToGoogleSheet
+              ? { mimeType: "application/vnd.google-apps.spreadsheet" }
+              : {})
           })
         ],
         { type: "application/json" }
@@ -292,6 +465,10 @@ export async function uploadFileToFolder(
   return {
     fileId: data.id,
     fileName: data.name,
-    fileUrl: data.webViewLink || `https://drive.google.com/file/d/${data.id}/view`
+    fileUrl:
+      data.webViewLink ||
+      (data.mimeType === "application/vnd.google-apps.spreadsheet"
+        ? `https://docs.google.com/spreadsheets/d/${data.id}/edit`
+        : `https://drive.google.com/file/d/${data.id}/view`)
   };
 }

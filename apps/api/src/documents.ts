@@ -3,6 +3,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ExcelJS from "exceljs";
 import {
+  downloadDriveFile,
+  ensureDefaultTemplateFolder,
+  exportDriveFile,
+  findDriveFileInFolder,
+  isDriveConfigured,
+  uploadFileToFolder
+} from "./drive.js";
+import {
   PDFDocument,
   StandardFonts,
   rgb,
@@ -224,7 +232,8 @@ function applyMyanmarTemplate(
 async function writeXlsxDraft(payload: DocumentPayload, outputDir: string) {
   const templatePath = path.resolve(env.QUOTATION_TEMPLATE_DIR);
   const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.readFile(templatePath);
+  const templateBuffer = await resolveTemplateBuffer(templatePath);
+  await workbook.xlsx.load(templateBuffer as any);
   unlockWorkbook(workbook);
 
   const worksheet =
@@ -245,6 +254,42 @@ async function writeXlsxDraft(payload: DocumentPayload, outputDir: string) {
   const xlsxPath = path.join(outputDir, `${safeFileName(payload.quotationNumber, "quotation")}.xlsx`);
   await workbook.xlsx.writeFile(xlsxPath);
   return xlsxPath;
+}
+
+async function resolveTemplateBuffer(localTemplatePath: string) {
+  const localBuffer = await readFile(localTemplatePath);
+
+  if (!isDriveConfigured()) {
+    return localBuffer;
+  }
+
+  try {
+    const templateFolder = await ensureDefaultTemplateFolder();
+    const templateFileName = path.basename(localTemplatePath);
+    let templateFile = await findDriveFileInFolder(templateFileName, templateFolder.folderId);
+
+    if (!templateFile) {
+      await uploadFileToFolder(localTemplatePath, templateFileName, templateFolder.folderId, {
+        convertToGoogleSheet: true
+      });
+      templateFile = await findDriveFileInFolder(templateFileName, templateFolder.folderId);
+    }
+
+    if (!templateFile) {
+      return localBuffer;
+    }
+
+    if (templateFile.mimeType === "application/vnd.google-apps.spreadsheet") {
+      return await exportDriveFile(
+        templateFile.id,
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      );
+    }
+
+    return await downloadDriveFile(templateFile.id);
+  } catch {
+    return localBuffer;
+  }
 }
 
 function escapePdfText(value: string) {

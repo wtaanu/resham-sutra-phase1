@@ -126,6 +126,27 @@ type OrderFields = {
   "Order Value"?: number;
   "Payment Status"?: string;
   "Delivery Status"?: string;
+  Address?: string;
+  State?: string;
+  City?: string;
+  Pincode?: string | number;
+};
+
+type OrderLineItemFields = {
+  Name?: string;
+  Order?: string[] | string;
+  Quotation?: string[] | string;
+  Enquiries?: string[] | string;
+  Customer?: string[] | string;
+  "Linked Product"?: string[];
+  "S.No."?: number;
+  Description?: string;
+  Qty?: number;
+  "Rate Per Unit"?: number;
+  "Packing & Freight"?: number;
+  "Unit Value"?: number;
+  "GST 18%"?: number;
+  "Total Amount"?: number;
 };
 
 type ChangeLogFields = {
@@ -149,6 +170,18 @@ type PortalQuotationLineItem = {
   totalAmount: number;
 };
 
+type PortalOrderLineItem = {
+  id: string;
+  productId: string;
+  description: string;
+  qty: number;
+  ratePerUnit: number;
+  packingFreight: number;
+  unitValue: number;
+  gst18: number;
+  totalAmount: number;
+};
+
 const airtableRecordIdSchema = z.string().regex(/^rec[a-zA-Z0-9]+$/, "Expected an Airtable record ID");
 const optionalAirtableRecordIdSchema = z.union([airtableRecordIdSchema, z.literal("")]).default("");
 const enquirySourceSchema = z.enum(["manual", "whatsapp"]).default("manual");
@@ -166,6 +199,16 @@ const optionalQuotationFields = [
   "Email Sent Date Time",
   "Final PDF Generated At"
 ] as const;
+const ENQUIRY_STATUS_PARSED = "Parsed";
+const ENQUIRY_STATUS_MANUAL = "New Enquiries";
+const ENQUIRY_STATUS_DRAFT = "Draft Quote";
+const ENQUIRY_STATUS_APPROVED = "Approved Quote";
+const ENQUIRY_STATUS_SENT = "Sent Quote";
+const ENQUIRY_STATUS_ORDERED = "Ordered";
+const QUOTATION_STATUS_DRAFT = "Draft Quote";
+const QUOTATION_STATUS_APPROVED = "Approved Quote";
+const QUOTATION_STATUS_SENT = "Sent Quote";
+const QUOTATION_STATUS_ORDERED = "Ordered";
 
 function linkedRecordIds(...recordIds: Array<string | undefined>) {
   return recordIds.filter((value): value is string => Boolean(value));
@@ -272,7 +315,23 @@ const orderPayloadSchema = z.object({
   totalAmount: z.coerce.number().nonnegative().optional().default(0),
   orderNotes: z.string().trim().optional().default(""),
   paymentStatus: z.enum(["Paid", "Pending", "Half Payment"]).default("Pending"),
-  deliveryStatus: z.enum(["Confirmed", "Processing", "Shipped", "Delivered", "Cancelled"]).default("Confirmed")
+  address: z.string().trim().optional().default(""),
+  state: z.string().trim().optional().default(""),
+  city: z.string().trim().optional().default(""),
+  pincode: optionalPincodeSchema,
+  items: z.array(
+    z.object({
+      id: z.string().trim().optional().default(""),
+      productId: optionalAirtableRecordIdSchema,
+      description: z.string().trim().min(1, "Description is required"),
+      qty: z.coerce.number().positive("Quantity should be greater than zero"),
+      ratePerUnit: z.coerce.number().nonnegative("Rate per unit cannot be negative"),
+      packingFreight: z.coerce.number().nonnegative("Packing & Freight cannot be negative"),
+      unitValue: z.coerce.number().nonnegative().optional().default(0),
+      gst18: z.coerce.number().nonnegative("GST 18% cannot be negative"),
+      totalAmount: z.coerce.number().nonnegative("Total amount cannot be negative")
+    })
+  ).optional().default([])
 });
 
 function buildPortalLineItemFields(input: {
@@ -335,8 +394,12 @@ function buildDescription(product: AirtableRecord<ProductFields>) {
   );
 }
 
-function normalizeStatusForEnquiry(linkedCustomerId: string) {
-  return linkedCustomerId ? "Parsed" : "New";
+function normalizeStatusForEnquiry(linkedCustomerId: string, source: z.infer<typeof enquirySourceSchema>) {
+  if (source === "whatsapp") {
+    return ENQUIRY_STATUS_PARSED;
+  }
+
+  return linkedCustomerId ? ENQUIRY_STATUS_PARSED : ENQUIRY_STATUS_MANUAL;
 }
 
 function normalizePhone(value: unknown) {
@@ -621,7 +684,7 @@ async function createQuotationShellForEnquiry(
         "Logged Date Time": new Date().toISOString(),
         "Linked Enquiry": safeLinkedValue(enquiry.id),
         "Linked Customer": safeLinkedValue(customerId),
-        Status: "Parsed",
+        Status: enquiry.fields["Parser Status"] || ENQUIRY_STATUS_PARSED,
         "Draft Format": "XLSX",
         "Drive Folder URL": enquiry.fields["Drive Folder URL"] || "",
         "Reference Number": quotationReference,
@@ -678,6 +741,115 @@ export async function loadQuotationLineItemMetrics(quotationId: string) {
   };
 }
 
+function mapPortalQuotationItemsToOrderItems(
+  items: PortalQuotationLineItem[],
+  products: Map<string, AirtableRecord<ProductFields>>
+) {
+  return items.map((item, index) => {
+    const product = products.get(item.productId);
+    const qty = Number(item.qty || 0);
+    const ratePerUnit = Number(item.rate || 0);
+    const packingFreight = Number(item.transport || 0);
+    const gst18 = Number(item.gstPercent || 0);
+    const unitValue = Number((qty * ratePerUnit).toFixed(2));
+    const totalAmount = Number((unitValue + packingFreight * qty + gst18 * qty).toFixed(2));
+
+    return {
+      id: "",
+      productId: item.productId,
+      description: product ? buildDescription(product) : "Order item",
+      qty,
+      ratePerUnit,
+      packingFreight,
+      unitValue,
+      gst18,
+      totalAmount,
+      serialNo: index + 1
+    };
+  });
+}
+
+async function replaceOrderLineItemsForOrder(input: {
+  orderId: string;
+  quotationId: string;
+  customerId: string;
+  enquiryId: string;
+  items: Array<z.infer<typeof orderPayloadSchema>["items"][number] & { serialNo?: number }>;
+}) {
+  const existing = await listRecords<OrderLineItemFields>(env.AIRTABLE_ORDER_LINE_ITEMS_TABLE, {
+    fields: ["Order"],
+    maxRecords: 500
+  });
+  const existingForOrder = existing.filter((item) => {
+    const linkedOrder = Array.isArray(item.fields.Order) ? item.fields.Order[0] || "" : String(item.fields.Order || "");
+    return linkedOrder === input.orderId;
+  });
+
+  if (existingForOrder.length) {
+    await deleteRecords(env.AIRTABLE_ORDER_LINE_ITEMS_TABLE, existingForOrder.map((item) => item.id));
+  }
+
+  if (!input.items.length) {
+    return [];
+  }
+
+  return createRecords<OrderLineItemFields>(
+    env.AIRTABLE_ORDER_LINE_ITEMS_TABLE,
+    input.items.map((item, index) => ({
+      Name: `${input.orderId}-${String(index + 1).padStart(2, "0")}`,
+      Order: linkedRecordIds(input.orderId),
+      Quotation: linkedRecordIds(input.quotationId),
+      Enquiries: linkedRecordIds(input.enquiryId),
+      Customer: linkedRecordIds(input.customerId),
+      "Linked Product": linkedRecordIds(item.productId),
+      "S.No.": item.serialNo || index + 1,
+      Description: item.description,
+      Qty: item.qty,
+      "Rate Per Unit": item.ratePerUnit,
+      "Packing & Freight": item.packingFreight,
+      "Unit Value": item.unitValue,
+      "GST 18%": item.gst18,
+      "Total Amount": item.totalAmount
+    }))
+  );
+}
+
+export async function getPortalOrderLineItems(orderId: string) {
+  const items = await listRecords<OrderLineItemFields>(env.AIRTABLE_ORDER_LINE_ITEMS_TABLE, {
+    fields: [
+      "Order",
+      "Linked Product",
+      "S.No.",
+      "Description",
+      "Qty",
+      "Rate Per Unit",
+      "Packing & Freight",
+      "Unit Value",
+      "GST 18%",
+      "Total Amount"
+    ],
+    maxRecords: 500
+  });
+
+  return items
+    .filter((item) => {
+      const linkedOrder = Array.isArray(item.fields.Order) ? item.fields.Order[0] || "" : String(item.fields.Order || "");
+      return linkedOrder === orderId;
+    })
+    .sort((left, right) => Number(left.fields["S.No."] || 0) - Number(right.fields["S.No."] || 0))
+    .map((item) => ({
+      id: item.id,
+      productId: item.fields["Linked Product"]?.[0] || "",
+      description: String(item.fields.Description || ""),
+      qty: Number(item.fields.Qty || 0),
+      ratePerUnit: Number(item.fields["Rate Per Unit"] || 0),
+      packingFreight: Number(item.fields["Packing & Freight"] || 0),
+      unitValue: Number(item.fields["Unit Value"] || 0),
+      gst18: Number(item.fields["GST 18%"] || 0),
+      totalAmount: Number(item.fields["Total Amount"] || 0)
+    })) satisfies PortalOrderLineItem[];
+}
+
 function formatLineItemValue(value: number) {
   return Number.isFinite(value) ? value.toFixed(2) : "0.00";
 }
@@ -717,7 +889,7 @@ export async function createPortalEnquiry(payload: unknown) {
     ? await getRecord<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, input.linkedCustomerId)
     : await findExistingCustomerByContact(input);
   const linkedCustomerId = input.linkedCustomerId || existingCustomer?.id || "";
-  const parserStatus = normalizeStatusForEnquiry(linkedCustomerId);
+  const parserStatus = normalizeStatusForEnquiry(linkedCustomerId, input.source);
   const destinationAddress = input.destinationAddress || input.address || "";
   const destinationState = input.destinationState || input.state || "";
   const destinationCity = input.destinationCity || input.city || "";
@@ -835,7 +1007,8 @@ export async function updatePortalEnquiry(enquiryId: string, payload: unknown) {
       : await findExistingCustomerByContact(input);
   const linkedCustomerId =
     input.linkedCustomerId || existingEnquiry.fields["Linked Customer"]?.[0] || existingCustomer?.id || "";
-  const parserStatus = existingEnquiry.fields["Parser Status"] || normalizeStatusForEnquiry(linkedCustomerId);
+  const parserStatus =
+    existingEnquiry.fields["Parser Status"] || normalizeStatusForEnquiry(linkedCustomerId, input.source);
   const destinationAddress = input.destinationAddress || input.address || "";
   const destinationState = input.destinationState || input.state || "";
   const destinationCity = input.destinationCity || input.city || "";
@@ -975,7 +1148,12 @@ export async function createPortalQuotationLineItems(payload: unknown) {
     );
   }
   const draft = await refreshDraftForQuotation(quotation.id);
-  if (draft.quotation.fields["Final PDF URL"] || ["Approved", "Draft Sent", "Sent"].includes(String(draft.quotation.fields.Status || ""))) {
+  if (
+    draft.quotation.fields["Final PDF URL"] ||
+    [QUOTATION_STATUS_APPROVED, QUOTATION_STATUS_SENT, QUOTATION_STATUS_ORDERED].includes(
+      String(draft.quotation.fields.Status || "")
+    )
+  ) {
     await generateFinalPdfForQuotation(quotation.id);
   }
   console.log("[portal-line-items] draft refresh result", {
@@ -989,7 +1167,7 @@ export async function createPortalQuotationLineItems(payload: unknown) {
     quotationId: quotation.id,
     quotationNumber: draft.quotation.fields["Quotation Number"] || quotation.fields["Quotation Number"] || quotation.id,
     createdCount: created.length,
-    quotationStatus: draft.quotation.fields.Status || "Ready for Review",
+    quotationStatus: draft.quotation.fields.Status || QUOTATION_STATUS_DRAFT,
     draftFileUrl: draft.quotation.fields["Draft File URL"] || "",
     driveFolderUrl: draft.folder.folderUrl || draft.quotation.fields["Drive Folder URL"] || ""
   };
@@ -1069,7 +1247,12 @@ export async function replacePortalQuotationLineItems(payload: unknown) {
   }
 
   const draft = await refreshDraftForQuotation(quotation.id);
-  if (draft.quotation.fields["Final PDF URL"] || ["Approved", "Draft Sent", "Sent"].includes(String(draft.quotation.fields.Status || ""))) {
+  if (
+    draft.quotation.fields["Final PDF URL"] ||
+    [QUOTATION_STATUS_APPROVED, QUOTATION_STATUS_SENT, QUOTATION_STATUS_ORDERED].includes(
+      String(draft.quotation.fields.Status || "")
+    )
+  ) {
     await generateFinalPdfForQuotation(quotation.id);
   }
 
@@ -1077,7 +1260,7 @@ export async function replacePortalQuotationLineItems(payload: unknown) {
     quotationId: quotation.id,
     quotationNumber: draft.quotation.fields["Quotation Number"] || quotation.fields["Quotation Number"] || quotation.id,
     createdCount: created.length,
-    quotationStatus: draft.quotation.fields.Status || "Ready for Review",
+    quotationStatus: draft.quotation.fields.Status || QUOTATION_STATUS_DRAFT,
     draftFileUrl: draft.quotation.fields["Draft File URL"] || "",
     driveFolderUrl: draft.folder.folderUrl || draft.quotation.fields["Drive Folder URL"] || ""
   };
@@ -1241,12 +1424,22 @@ export async function markQuotationAsSent(quotationId: string, actor?: Authentic
     {
       id: quotationId,
       fields: {
-        Status: "Draft Sent",
+        Status: QUOTATION_STATUS_SENT,
         "Sent Date": new Date().toISOString()
       }
     },
     optionalQuotationFields
   );
+
+  const enquiryId = updated.fields["Linked Enquiry"]?.[0];
+  if (enquiryId) {
+    await updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
+      id: enquiryId,
+      fields: {
+        "Parser Status": ENQUIRY_STATUS_SENT
+      }
+    });
+  }
 
   await createChangeLogEntry(env.AIRTABLE_QUOTATION_CHANGE_LOG_TABLE, {
     entityRecordId: updated.id,
@@ -1260,8 +1453,12 @@ export async function markQuotationAsSent(quotationId: string, actor?: Authentic
   return updated;
 }
 
-export async function createOrderFromQuotation(quotationId: string, actor?: AuthenticatedUser | null) {
+export async function createOrderFromQuotation(quotationId: string, payload?: unknown, actor?: AuthenticatedUser | null) {
   const quotation = await getRecord<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, quotationId);
+  const input = orderPayloadSchema.parse({
+    quotationId,
+    ...(payload && typeof payload === "object" ? payload : {})
+  });
   const existingOrders = await listRecords<OrderFields>(env.AIRTABLE_ORDERS_TABLE, {
     fields: ["Order Number", "Linked Quotation", "Quotation", "Customer", "Enquiries", "Order Status", "Order Date", "Total Amount"],
     maxRecords: 500
@@ -1277,28 +1474,66 @@ export async function createOrderFromQuotation(quotationId: string, actor?: Auth
 
   const customerId = quotation.fields["Linked Customer"]?.[0] || "";
   const enquiryId = quotation.fields["Linked Enquiry"]?.[0] || "";
+  const enquiry = enquiryId ? await getRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, enquiryId) : null;
+  const customer = customerId ? await getRecord<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, customerId) : null;
   const metrics = await loadQuotationLineItemMetrics(quotationId);
+  const products = await listRecords<ProductFields>(env.AIRTABLE_PRODUCTS_TABLE, { maxRecords: 500 });
+  const productLookup = new Map(products.map((product) => [product.id, product]));
+  const orderItems =
+    input.items.length > 0
+      ? input.items
+      : mapPortalQuotationItemsToOrderItems(metrics.items, productLookup);
   const orderNumber = await nextOrderIdentifier();
   const created = await createRecord<OrderFields>(env.AIRTABLE_ORDERS_TABLE, {
     "Order Number": orderNumber,
-    "Order Date": new Date().toISOString(),
+    "Order Date": input.orderDate || new Date().toISOString(),
     Quotation: quotationId,
     Customer: customerId,
     Enquiries: enquiryId,
     "Linked Quotation": safeLinkedValue(quotationId),
     "Linked Customer": safeLinkedValue(customerId),
-    "Order Status": "Confirmed",
-    "Total Amount": metrics.quotationGrandTotal,
+    "Order Status": input.orderStatus,
+    "Total Amount": input.totalAmount || metrics.quotationGrandTotal,
     "Quotation Grand Total": metrics.quotationGrandTotal,
-    "Quotation Status": quotation.fields.Status || "",
-    "Order Line Item Count": metrics.lineItemCount,
-    "Order Value per Item": metrics.orderValuePerItem,
+    "Quotation Status": QUOTATION_STATUS_ORDERED,
+    "Order Line Item Count": orderItems.length,
+    "Order Value per Item": orderItems.map((item, index) => `${index + 1}. ${formatLineItemValue(item.totalAmount)}`).join("\n"),
     "Order Fulfillment Progress": "0%",
-    "Order Notes": "",
-    "Order Value": metrics.quotationGrandTotal,
-    "Payment Status": "Pending",
-    "Delivery Status": "Confirmed"
+    "Order Notes": input.orderNotes,
+    "Order Value": input.totalAmount || metrics.quotationGrandTotal,
+    "Payment Status": input.paymentStatus,
+    Address: input.address || enquiry?.fields["Destination Address"] || enquiry?.fields.Address || customer?.fields.Address || "",
+    State: input.state || enquiry?.fields["Destination State"] || enquiry?.fields.State || customer?.fields.State || "",
+    City: input.city || enquiry?.fields["Destination City"] || enquiry?.fields.City || customer?.fields.City || "",
+    Pincode:
+      toPincodeString(input.pincode) ||
+      toPincodeString(String(enquiry?.fields["Destination Pincode"] || "")) ||
+      toPincodeString(String(enquiry?.fields.Pincode || "")) ||
+      toPincodeString(String(customer?.fields.Pincode || ""))
   });
+
+  await replaceOrderLineItemsForOrder({
+    orderId: created.id,
+    quotationId,
+    customerId,
+    enquiryId,
+    items: orderItems
+  });
+
+  await updateRecord<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
+    id: quotationId,
+    fields: {
+      Status: QUOTATION_STATUS_ORDERED
+    }
+  });
+  if (enquiryId) {
+    await updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
+      id: enquiryId,
+      fields: {
+        "Parser Status": ENQUIRY_STATUS_ORDERED
+      }
+    });
+  }
 
   await createChangeLogEntry(env.AIRTABLE_ORDER_CHANGE_LOG_TABLE, {
     entityRecordId: created.id,
@@ -1316,9 +1551,10 @@ export async function updatePortalOrder(orderId: string, payload: unknown, actor
   const input = orderPayloadSchema.parse(payload);
   const existing = await getRecord<OrderFields>(env.AIRTABLE_ORDERS_TABLE, orderId);
   const quotation = await getRecord<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, input.quotationId);
-  const metrics = await loadQuotationLineItemMetrics(input.quotationId);
+  const quotationMetrics = await loadQuotationLineItemMetrics(input.quotationId);
   const customerId = input.customerId || quotation.fields["Linked Customer"]?.[0] || "";
   const enquiryId = input.enquiryId || quotation.fields["Linked Enquiry"]?.[0] || "";
+  const orderItems = input.items;
   const fields: Record<string, unknown> = {
     "Order Date": input.orderDate || existing.fields["Order Date"] || new Date().toISOString(),
     Quotation: input.quotationId,
@@ -1327,20 +1563,31 @@ export async function updatePortalOrder(orderId: string, payload: unknown, actor
     "Linked Quotation": safeLinkedValue(input.quotationId),
     "Linked Customer": safeLinkedValue(customerId),
     "Order Status": input.orderStatus,
-    "Total Amount": input.totalAmount || metrics.quotationGrandTotal,
+    "Total Amount": input.totalAmount,
     "Order Notes": input.orderNotes,
-    "Quotation Grand Total": metrics.quotationGrandTotal,
+    "Quotation Grand Total": quotationMetrics.quotationGrandTotal,
     "Quotation Status": quotation.fields.Status || "",
-    "Order Line Item Count": metrics.lineItemCount,
-    "Order Value per Item": metrics.orderValuePerItem,
-    "Order Value": input.totalAmount || metrics.quotationGrandTotal,
+    "Order Line Item Count": orderItems.length,
+    "Order Value per Item": orderItems.map((item, index) => `${index + 1}. ${formatLineItemValue(item.totalAmount)}`).join("\n"),
+    "Order Value": input.totalAmount,
     "Payment Status": input.paymentStatus,
-    "Delivery Status": input.deliveryStatus
+    Address: input.address,
+    State: input.state,
+    City: input.city,
+    Pincode: toPincodeString(input.pincode)
   };
 
   const updated = await updateRecord<OrderFields>(env.AIRTABLE_ORDERS_TABLE, {
     id: orderId,
     fields
+  });
+
+  await replaceOrderLineItemsForOrder({
+    orderId,
+    quotationId: input.quotationId,
+    customerId,
+    enquiryId,
+    items: orderItems
   });
 
   await createChangeLogEntry(env.AIRTABLE_ORDER_CHANGE_LOG_TABLE, {

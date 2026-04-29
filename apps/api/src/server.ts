@@ -29,6 +29,7 @@ import {
   createPortalQuotationLineItems,
   generateDraftForEnquiry,
   getPortalQuotationLineItems,
+  getPortalOrderLineItems,
   markQuotationAsSent,
   replacePortalQuotationLineItems,
   updatePortalCustomer,
@@ -300,6 +301,23 @@ app.patch("/api/portal/orders/:id", requireAuthenticatedUser, async (request, re
   }
 });
 
+app.get("/api/portal/orders/:id/line-items", requireAuthenticatedUser, async (request, response) => {
+  try {
+    const orderId = String(request.params.id || "");
+    const items = await getPortalOrderLineItems(orderId);
+    response.status(200).json({
+      status: "ok",
+      items
+    });
+  } catch (error) {
+    logRouteError("GET /api/portal/orders/:id/line-items", error);
+    response.status(400).json({
+      status: "error",
+      message: error instanceof Error ? error.message : "Failed to load order line items"
+    });
+  }
+});
+
 app.patch("/api/portal/enquiries/:id", requireAuthenticatedUser, async (request, response) => {
   try {
     const enquiryId = String(request.params.id || "");
@@ -449,7 +467,7 @@ app.post("/api/actions/enquiries/:id/create-customer", requireAuthenticatedUser,
     const message =
       error instanceof Error ? error.message : "Failed to create customer from enquiry";
     const friendlyMessage = message.includes("INVALID_MULTIPLE_CHOICE_OPTIONS")
-      ? "Airtable is missing one or more required single-select options. Please add these enquiry statuses in Airtable before retrying: New, Parsed, Ready for Draft, Ready for Review, Draft Sent, Accepted, Rejected."
+      ? "Airtable is missing one or more required single-select options. Please add these workflow statuses in Airtable before retrying: New Enquiries, Parsed, Draft Quote, Approved Quote, Sent Quote, Ordered."
       : message;
 
     response.status(400).json({
@@ -570,7 +588,7 @@ app.post("/api/actions/quotations/:id/mark-sent", requireAuthenticatedUser, asyn
 
 app.post("/api/actions/quotations/:id/create-order", requireAuthenticatedUser, async (request, response) => {
   try {
-    const order = await createOrderFromQuotation(String(request.params.id || ""), response.locals.authUser);
+    const order = await createOrderFromQuotation(String(request.params.id || ""), request.body, response.locals.authUser);
     response.status(201).json({
       status: "ok",
       order

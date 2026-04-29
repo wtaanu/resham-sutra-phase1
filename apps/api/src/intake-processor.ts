@@ -1,4 +1,4 @@
-import { access } from "node:fs/promises";
+import { access, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   createRecord,
@@ -13,6 +13,8 @@ import {
   getStoredDocumentArtifact
 } from "./documents.js";
 import {
+  exportDriveFile,
+  extractDriveFileId,
   extractDriveFolderId,
   findOrCreateClientFolder,
   isDriveConfigured,
@@ -290,7 +292,7 @@ function enquiryStatusFields(status: string) {
 
 function isLockedQuotationStatus(status: unknown) {
   const normalized = String(status || "").trim().toLowerCase();
-  return normalized === "approved" || normalized === "draft sent" || normalized === "sent";
+  return normalized === "approved quote" || normalized === "sent quote" || normalized === "ordered";
 }
 
 function nextClientId(customers: AirtableRecord<CustomerFields>[]) {
@@ -767,7 +769,7 @@ async function ensureQuotationShell(
         "Logged Date Time": new Date().toISOString(),
         "Linked Enquiry": linkedRecordIds(enquiry.id),
         "Linked Customer": linkedRecordIds(customer.id),
-        Status: "Parsed",
+        Status: enquiry.fields["Parser Status"] || "Parsed",
         "Draft Format": "XLSX",
         "Drive Folder URL": enquiry.fields["Drive Folder URL"] || "",
         "Reference Number": enquiryReference,
@@ -785,7 +787,7 @@ async function ensureQuotationShell(
             "Logged Date Time": new Date().toISOString(),
             "Linked Enquiry": linkedRecordIds(enquiry.id),
             "Linked Customer": linkedRecordIds(customer.id),
-            Status: "Parsed",
+            Status: enquiry.fields["Parser Status"] || "Parsed",
             "Draft Format": "XLSX",
             "Drive Folder URL": enquiry.fields["Drive Folder URL"] || "",
             "Reference Number": enquiryReference,
@@ -930,7 +932,7 @@ async function markQuotationSent(
 ) {
   const sentAt = new Date().toISOString();
   const fields: Record<string, unknown> = {
-    Status: "Draft Sent",
+    Status: "Sent Quote",
     "Sent Date": sentAt,
     "Send Quotation": true
   };
@@ -977,13 +979,20 @@ async function createDraftForReadyEnquiry(
 
   let draftFileUrl = draft.fileUrl;
   if (folder.folderId && isDriveConfigured()) {
-    const upload = await uploadFileToFolder(draft.filePath, `${quotationNumber}.xlsx`, folder.folderId);
+    const upload = await uploadFileToFolder(
+      draft.filePath,
+      `${quotationNumber}.xlsx`,
+      folder.folderId,
+      {
+        convertToGoogleSheet: true
+      }
+    );
     draftFileUrl = upload.fileUrl;
   }
 
   const nextQuotationStatus = isLockedQuotationStatus(quotation.fields.Status)
     ? String(quotation.fields.Status || "")
-    : "Ready for Review";
+    : "Draft Quote";
 
   const updatedQuotation = await updateRecord<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
     id: quotation.id,
@@ -1021,7 +1030,7 @@ async function createDraftForReadyEnquiry(
   await updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
     id: enquiry.id,
     fields: {
-      ...enquiryStatusFields("Ready for Review"),
+      ...enquiryStatusFields("Draft Quote"),
       "Linked Customer": linkedRecordIds(customer.id),
       Quotations: linkedRecordIds(quotation.id),
       "Drive Folder URL": folder.folderUrl || null
@@ -1076,20 +1085,37 @@ export async function generateFinalPdfForQuotation(quotationId: string) {
     customer.fields["Customer Type"] === "Export" ? "myanmar-proforma" : "domestic-standard";
   const folder = await ensureFolder(customer);
   const quotationNumber = quotation.fields["Quotation Number"] || (await nextQuotationNumber());
-  const pdf = await createPdfDocument({
-    quotationRecordId: quotation.id,
-    quotationNumber,
-    templateCode,
-    draftFormat: "XLSX",
-    customerName: customer.fields["Customer Name"] || enquiry.fields["Lead Name"] || "",
-    customerFolderName: buildCustomerFolderName(customer),
-    company: customer.fields.Company || enquiry.fields.Company || "",
-    buyerBlock,
-    consigneeBlock: buildConsigneeBlock(enquiry),
-    terms: buildQuotationTerms(templateCode),
-    driveFolderName: folder.folderUrl || customer.fields["Drive Folder URL"] || "",
-    lineItems: mapDraftLineItems(lineItems)
-  });
+  const localPdfArtifact = getStoredDocumentArtifact(buildCustomerFolderName(customer), quotationNumber, "pdf");
+
+  let pdf;
+  const draftDriveFileId = extractDriveFileId(String(quotation.fields["Draft File URL"] || ""));
+  if (draftDriveFileId && isDriveConfigured()) {
+    try {
+      const pdfBuffer = await exportDriveFile(draftDriveFileId, "application/pdf");
+      await mkdir(path.dirname(localPdfArtifact.filePath), { recursive: true });
+      await writeFile(localPdfArtifact.filePath, pdfBuffer);
+      pdf = {
+        kind: "pdf" as const,
+        quotationRecordId: quotation.id,
+        quotationNumber,
+        filePath: localPdfArtifact.filePath,
+        payloadPath: "",
+        fileUrl: localPdfArtifact.fileUrl,
+        previewUrl: "",
+        payloadUrl: "",
+        message: "Final PDF exported from the live quotation sheet."
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown Drive export failure.";
+      throw new Error(
+        `Final PDF export must come from the live quotation sheet. Drive PDF export failed: ${message}`
+      );
+    }
+  } else {
+    throw new Error(
+      "Final PDF export requires the live quotation draft sheet in Drive. Generate or regenerate the draft first."
+    );
+  }
 
   let finalPdfUrl = pdf.fileUrl;
   if (folder.folderId && isDriveConfigured()) {
@@ -1105,8 +1131,18 @@ export async function generateFinalPdfForQuotation(quotationId: string) {
       "Final PDF URL": finalPdfUrl,
       "Final PDF Generated At": finalPdfGeneratedAt,
       "Drive Folder URL": folder.folderUrl || quotation.fields["Drive Folder URL"] || null,
-      Status: "Approved",
+      Status: "Approved Quote",
       "Quotation Number": quotationNumber
+    }
+  });
+
+  await updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
+    id: enquiry.id,
+    fields: {
+      ...enquiryStatusFields("Approved Quote"),
+      Quotations: linkedRecordIds(quotation.id),
+      "Linked Customer": linkedRecordIds(customer.id),
+      "Drive Folder URL": folder.folderUrl || enquiry.fields["Drive Folder URL"] || null
     }
   });
 
@@ -1156,6 +1192,14 @@ export async function sendQuotationEmail(quotationId: string) {
   });
 
   const updatedQuotation = await markQuotationSent(quotation, "Email");
+  if (enquiry.id) {
+    await updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
+      id: enquiry.id,
+      fields: {
+        ...enquiryStatusFields("Sent Quote")
+      }
+    });
+  }
   return {
     quotation: updatedQuotation,
     recipient: recipientEmail,
@@ -1220,6 +1264,14 @@ export async function sendQuotationWhatsApp(quotationId: string) {
   });
 
   const updatedQuotation = await markQuotationSent(quotation, "WhatsApp");
+  if (enquiry.id) {
+    await updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
+      id: enquiry.id,
+      fields: {
+        ...enquiryStatusFields("Sent Quote")
+      }
+    });
+  }
   console.info("[quotation-send-whatsapp] quotation marked as sent", {
     quotationId,
     quotationNumber,
@@ -1314,14 +1366,14 @@ async function syncParsedEnquiriesWithLineItems() {
     await updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
       id: enquiry.id,
       fields: {
-        ...enquiryStatusFields("Ready for Draft")
+      ...enquiryStatusFields("Draft Quote")
       }
     });
 
     await updateRecord<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
       id: quotationId,
       fields: {
-        Status: "Ready for Draft"
+      Status: "Draft Quote"
       }
     });
   }
@@ -1350,7 +1402,7 @@ async function syncNewEnquiriesWithCustomers() {
       "Drive Folder URL",
       "Receiver WhatsApp Number"
     ],
-    filterByFormula: "{Parser Status}='New'",
+    filterByFormula: "OR({Parser Status}='New', {Parser Status}='New Enquiries')",
     maxRecords: 100
   });
 
@@ -1443,7 +1495,7 @@ export async function processPendingEnquiries() {
       "Receiver WhatsApp Number"
     ],
     filterByFormula:
-      "AND({Parser Status}='Ready for Draft', {Linked Customer}!=BLANK(), {Quotations}!=BLANK())",
+      "AND({Parser Status}='Draft Quote', {Linked Customer}!=BLANK(), {Quotations}!=BLANK())",
     maxRecords: 100
   });
 

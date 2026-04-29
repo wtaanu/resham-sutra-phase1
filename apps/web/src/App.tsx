@@ -11,6 +11,7 @@ type OperationsActionLinks = {
   enquiryFormUrl: string;
   lineItemsFormUrl: string;
   productsFormUrl: string;
+  defaultTemplateFolderUrl: string;
 };
 
 type ProductDocument = {
@@ -110,6 +111,10 @@ type OrderRecord = {
   orderValue: number;
   paymentStatus: string;
   deliveryStatus: string;
+  address: string;
+  state: string;
+  city: string;
+  pincode: string;
 };
 
 type ProductRecord = {
@@ -228,6 +233,22 @@ type OrderFormState = {
   totalAmount: string;
   orderNotes: string;
   paymentStatus: "Paid" | "Pending" | "Half Payment";
+  address: string;
+  state: string;
+  city: string;
+  pincode: string;
+};
+
+type OrderLineItemRow = {
+  id: string;
+  productId: string;
+  description: string;
+  qty: string;
+  ratePerUnit: string;
+  packingFreight: string;
+  unitValue: string;
+  gst18: string;
+  totalAmount: string;
 };
 
 type LineItemDraftRow = {
@@ -247,6 +268,18 @@ type PortalLineItemResponse = {
   rate: number;
   transport: number;
   gstPercent: number;
+  totalAmount: number;
+};
+
+type PortalOrderLineItemResponse = {
+  id: string;
+  productId: string;
+  description: string;
+  qty: number;
+  ratePerUnit: number;
+  packingFreight: number;
+  unitValue: number;
+  gst18: number;
   totalAmount: number;
 };
 
@@ -290,7 +323,7 @@ const viewOptions: NavView[] = [
   { key: "approvedQuotations", label: "Approved Quotations" },
   { key: "quotationDrafts", label: "Quotation Drafts" },
   { key: "customers", label: "Customers" },
-  { key: "enquiries", label: "New Enquiries" },
+  { key: "enquiries", label: "Enquiries" },
   { key: "products", label: "Products" }
 ];
 
@@ -572,6 +605,20 @@ function createLineItemRow(): LineItemDraftRow {
   };
 }
 
+function createOrderLineItemRow(): OrderLineItemRow {
+  return {
+    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    productId: "",
+    description: "",
+    qty: "1",
+    ratePerUnit: "",
+    packingFreight: "",
+    unitValue: "",
+    gst18: "",
+    totalAmount: ""
+  };
+}
+
 function createBlankCustomerForm(): CustomerFormState {
   return {
     customerName: "",
@@ -601,7 +648,11 @@ function createBlankOrderForm(): OrderFormState {
     orderStatus: "Confirmed",
     totalAmount: "",
     orderNotes: "",
-    paymentStatus: "Pending"
+    paymentStatus: "Pending",
+    address: "",
+    state: "",
+    city: "",
+    pincode: ""
   };
 }
 
@@ -614,6 +665,20 @@ function mapPortalLineItemToDraftRow(item: PortalLineItemResponse): LineItemDraf
     transport: formatAmountInput(item.transport || 0),
     gstPercent: formatAmountInput(item.gstPercent || 0),
     existing: true
+  };
+}
+
+function mapPortalOrderLineItemToDraftRow(item: PortalOrderLineItemResponse): OrderLineItemRow {
+  return {
+    id: item.id || `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    productId: item.productId || "",
+    description: item.description || "",
+    qty: String(item.qty || 1),
+    ratePerUnit: formatAmountInput(item.ratePerUnit || 0),
+    packingFreight: formatAmountInput(item.packingFreight || 0),
+    unitValue: formatAmountInput(item.unitValue || 0),
+    gst18: formatAmountInput(item.gst18 || 0),
+    totalAmount: formatAmountInput(item.totalAmount || 0)
   };
 }
 
@@ -812,6 +877,7 @@ export default function App() {
   const [customerForm, setCustomerForm] = useState<CustomerFormState>(createBlankCustomerForm);
   const [quotationForm, setQuotationForm] = useState<QuotationFormState>(createBlankQuotationForm);
   const [orderForm, setOrderForm] = useState<OrderFormState>(createBlankOrderForm);
+  const [orderLineItems, setOrderLineItems] = useState<OrderLineItemRow[]>([createOrderLineItemRow()]);
   const [destinationSameAsMain, setDestinationSameAsMain] = useState(false);
   const [customerSearchTerm, setCustomerSearchTerm] = useState("");
   const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false);
@@ -1132,6 +1198,101 @@ export default function App() {
     };
   }, [entryMode, selectedQuotationId, currentUser]);
 
+  useEffect(() => {
+    if (entryMode !== "order" || !currentUser) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadOrderItems() {
+      try {
+        if (editingOrderId) {
+          const response = await apiFetch(`${apiUrl}/api/portal/orders/${editingOrderId}/line-items`);
+          const payload = (await response.json()) as { message?: string; items?: PortalOrderLineItemResponse[] };
+          if (!response.ok) {
+            throw new Error(payload.message || "Failed to load order line items");
+          }
+          if (!cancelled) {
+            setOrderLineItems(
+              payload.items && payload.items.length
+                ? payload.items.map(mapPortalOrderLineItemToDraftRow)
+                : [createOrderLineItemRow()]
+            );
+          }
+          return;
+        }
+
+        if (!orderForm.quotationId) {
+          if (!cancelled) {
+            setOrderLineItems([createOrderLineItemRow()]);
+          }
+          return;
+        }
+
+        const response = await apiFetch(`${apiUrl}/api/portal/quotations/${orderForm.quotationId}/line-items`);
+        const payload = (await response.json()) as { message?: string; items?: PortalLineItemResponse[] };
+        if (!response.ok) {
+          throw new Error(payload.message || "Failed to load quotation line items");
+        }
+        const mappedRows =
+          payload.items && payload.items.length
+            ? payload.items.map((item) => {
+                const product = operations?.products.find((entry) => entry.id === item.productId);
+                const calculated = calculateLineItemAmounts(
+                  product,
+                  item.qty,
+                  item.rate,
+                  item.transport,
+                  item.gstPercent
+                );
+                return {
+                  id: item.id || `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+                  productId: item.productId,
+                  description:
+                    [product?.model, product?.narration].filter(Boolean).join(" - ") ||
+                    [product?.name, product?.narration].filter(Boolean).join(" - ") ||
+                    product?.name ||
+                    product?.productKey ||
+                    "Order item",
+                  qty: String(item.qty || 1),
+                  ratePerUnit: formatAmountInput(item.rate || 0),
+                  packingFreight: formatAmountInput(item.transport || 0),
+                  unitValue: formatAmountInput(calculated.unitValue),
+                  gst18: formatAmountInput(item.gstPercent || 0),
+                  totalAmount: formatAmountInput(calculated.totalAmount)
+                } satisfies OrderLineItemRow;
+              })
+            : [createOrderLineItemRow()];
+
+        if (!cancelled) {
+          setOrderLineItems(mappedRows);
+        }
+      } catch {
+        if (!cancelled) {
+          setOrderLineItems([createOrderLineItemRow()]);
+        }
+      }
+    }
+
+    void loadOrderItems();
+    return () => {
+      cancelled = true;
+    };
+  }, [entryMode, editingOrderId, orderForm.quotationId, currentUser, operations?.products]);
+
+  useEffect(() => {
+    if (entryMode !== "order") {
+      return;
+    }
+
+    const total = orderLineItems.reduce((sum, item) => sum + Number(item.totalAmount || 0), 0);
+    setOrderForm((current) => ({
+      ...current,
+      totalAmount: formatAmountInput(total)
+    }));
+  }, [entryMode, orderLineItems]);
+
   async function refreshOperations(isBackgroundRefresh = true) {
     if (!currentUser) {
       return;
@@ -1419,7 +1580,7 @@ export default function App() {
 
       applyDraftStateToQuotation({
         quotationId,
-        quotationStatus: "Ready for Review",
+        quotationStatus: "Draft Quote",
         draftFileUrl: payload.draftFileUrl,
         driveFolderUrl: payload.driveFolderUrl
       });
@@ -1502,7 +1663,8 @@ export default function App() {
     setQuotationForm(createBlankQuotationForm());
   }
 
-  function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
+function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
+    const linkedEnquiry = quotation?.linkedEnquiryId ? enquiryLookup.get(quotation.linkedEnquiryId) : undefined;
     setEntryMode("order");
     setEditingOrderId(order?.id || "");
     setOrderForm(
@@ -1515,7 +1677,11 @@ export default function App() {
             orderStatus: (order.orderStatus as OrderFormState["orderStatus"]) || "Confirmed",
             totalAmount: formatAmountInput(order.totalAmount || order.orderValue || 0),
             orderNotes: order.orderNotes || "",
-            paymentStatus: (order.paymentStatus as OrderFormState["paymentStatus"]) || "Pending"
+            paymentStatus: (order.paymentStatus as OrderFormState["paymentStatus"]) || "Pending",
+            address: order.address || "",
+            state: order.state || "",
+            city: order.city || "",
+            pincode: order.pincode || ""
           }
         : {
             quotationId: quotation?.id || "",
@@ -1525,7 +1691,11 @@ export default function App() {
             orderStatus: "Confirmed",
             totalAmount: formatAmountInput(quotation?.quotationGrandTotal || 0),
             orderNotes: "",
-            paymentStatus: "Pending"
+            paymentStatus: "Pending",
+            address: linkedEnquiry?.destinationAddress || linkedEnquiry?.address || "",
+            state: linkedEnquiry?.destinationState || linkedEnquiry?.state || "",
+            city: linkedEnquiry?.destinationCity || linkedEnquiry?.city || "",
+            pincode: linkedEnquiry?.destinationPincode || linkedEnquiry?.pincode || ""
           }
     );
   }
@@ -1588,12 +1758,15 @@ export default function App() {
   function closeEntryPanel() {
     setEntryMode(null);
     setEditingEnquiryId("");
+    setEditingOrderId("");
     setEnquiryFieldErrors({});
     setDestinationSameAsMain(false);
     setCustomerSearchTerm("");
     setCustomerDropdownOpen(false);
     setProductSearchTerm("");
     setProductDropdownOpen(false);
+    setOrderForm(createBlankOrderForm());
+    setOrderLineItems([createOrderLineItemRow()]);
   }
 
   const customerLookup = useMemo(() => {
@@ -1971,6 +2144,36 @@ export default function App() {
       ? `${apiUrl}/api/portal/orders/${editingOrderId}`
       : `${apiUrl}/api/actions/quotations/${orderForm.quotationId}/create-order`;
     const method = isEditing ? "PATCH" : "POST";
+    const normalizedOrderItems = orderLineItems.map((item) => {
+      const qty = Math.max(1, Number(item.qty || 0));
+      const ratePerUnit = Number(item.ratePerUnit || 0);
+      const packingFreight = Number(item.packingFreight || 0);
+      const gst18 = Number(item.gst18 || 0);
+      const unitValue = Number((qty * ratePerUnit).toFixed(2));
+      const totalAmount = Number((unitValue + packingFreight * qty + gst18 * qty).toFixed(2));
+
+      return {
+        id: item.id,
+        productId: item.productId,
+        description: item.description.trim(),
+        qty,
+        ratePerUnit,
+        packingFreight,
+        unitValue,
+        gst18,
+        totalAmount
+      };
+    });
+
+    if (normalizedOrderItems.some((item) => !item.description)) {
+      setActionState({
+        key: actionKey,
+        label: isEditing ? "Update Order" : "Create Order",
+        status: "error",
+        message: "Each order line item needs a description before saving."
+      });
+      return;
+    }
 
     try {
       setActionState({
@@ -1982,20 +2185,23 @@ export default function App() {
 
       const response = await apiFetch(url, {
         method,
-        headers: { "Content-Type": "application/json" },
-        body: isEditing
-          ? JSON.stringify({
-              quotationId: orderForm.quotationId,
-              customerId: orderForm.customerId,
-              enquiryId: orderForm.enquiryId,
-              orderDate: orderForm.orderDate,
-              orderStatus: orderForm.orderStatus,
-              totalAmount: Number(orderForm.totalAmount || 0),
-              orderNotes: orderForm.orderNotes,
-              paymentStatus: orderForm.paymentStatus
-            })
-          : undefined
-      });
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            quotationId: orderForm.quotationId,
+            customerId: orderForm.customerId,
+            enquiryId: orderForm.enquiryId,
+            orderDate: orderForm.orderDate,
+            orderStatus: orderForm.orderStatus,
+            totalAmount: Number(orderForm.totalAmount || 0),
+            orderNotes: orderForm.orderNotes,
+            paymentStatus: orderForm.paymentStatus,
+            address: orderForm.address,
+            state: orderForm.state,
+            city: orderForm.city,
+            pincode: normalizePincodeInput(orderForm.pincode),
+            items: normalizedOrderItems
+          })
+        });
       const payload = (await response.json()) as { message?: string };
       if (!response.ok) {
         throw new Error(payload.message || "Failed to save order");
@@ -2007,6 +2213,7 @@ export default function App() {
         status: "success",
         message: isEditing ? "Order updated successfully." : "Order created successfully."
       });
+      setOrderLineItems([createOrderLineItemRow()]);
       closeEntryPanel();
       setActiveView("orders");
       void refreshOperations(true);
@@ -2083,6 +2290,42 @@ function updateLineItemRow(
     );
   }
 
+  function updateOrderLineItemRow(
+    rowId: string,
+    field: keyof OrderLineItemRow,
+    value: string
+  ) {
+    setOrderLineItems((current) =>
+      current.map((row) => {
+        if (row.id !== rowId) {
+          return row;
+        }
+
+        const nextRow = {
+          ...row,
+          [field]:
+            field === "qty"
+              ? value.replace(/[^\d]/g, "")
+              : field === "ratePerUnit" || field === "packingFreight" || field === "gst18"
+                ? normalizeDecimalInput(value)
+                : value
+        };
+
+        const qty = Math.max(1, Number(nextRow.qty || 0));
+        const ratePerUnit = Number(nextRow.ratePerUnit || 0);
+        const packingFreight = Number(nextRow.packingFreight || 0);
+        const gst18 = Number(nextRow.gst18 || 0);
+        const unitValue = Number((qty * ratePerUnit).toFixed(2));
+        const totalAmount = Number((unitValue + packingFreight * qty + gst18 * qty).toFixed(2));
+
+        nextRow.unitValue = formatAmountInput(unitValue);
+        nextRow.totalAmount = formatAmountInput(totalAmount);
+
+        return nextRow;
+      })
+    );
+  }
+
   async function autofillFromPincode(
     pincode: string,
     type: "source" | "destination"
@@ -2127,6 +2370,14 @@ function updateLineItemRow(
 
   function removeLineItemRow(rowId: string) {
     setLineItemRows((current) => (current.length > 1 ? current.filter((row) => row.id !== rowId) : current));
+  }
+
+  function addOrderLineItemRow() {
+    setOrderLineItems((current) => [...current, createOrderLineItemRow()]);
+  }
+
+  function removeOrderLineItemRow(rowId: string) {
+    setOrderLineItems((current) => (current.length > 1 ? current.filter((row) => row.id !== rowId) : current));
   }
 
   async function handleSubmitLineItems() {
@@ -3041,11 +3292,74 @@ function updateLineItemRow(
                 </select>
               </label>
               <label className="form-span-2">
+                <span>Address</span>
+                <textarea rows={2} value={orderForm.address} onChange={(event) => setOrderForm((current) => ({ ...current, address: event.target.value }))} />
+              </label>
+              <label>
+                <span>State</span>
+                <select value={orderForm.state} onChange={(event) => setOrderForm((current) => ({ ...current, state: event.target.value }))}>
+                  <option value="">Select state</option>
+                  {stateOptions.map((status) => (
+                    <option key={status} value={status}>
+                      {status}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>City</span>
+                <input value={orderForm.city} onChange={(event) => setOrderForm((current) => ({ ...current, city: event.target.value }))} />
+              </label>
+              <label>
+                <span>Pincode</span>
+                <input inputMode="numeric" value={orderForm.pincode} onChange={(event) => setOrderForm((current) => ({ ...current, pincode: normalizePincodeInput(event.target.value) }))} />
+              </label>
+              <label className="form-span-2">
                 <span>Order notes</span>
                 <textarea rows={3} value={orderForm.orderNotes} onChange={(event) => setOrderForm((current) => ({ ...current, orderNotes: event.target.value }))} />
               </label>
             </div>
+            <div className="line-item-builder order-line-item-builder">
+              {orderLineItems.map((row, index) => (
+                <div className="line-item-row" key={row.id}>
+                  <label className="line-item-product">
+                    <span>S.No. {index + 1}</span>
+                    <input value={row.description} onChange={(event) => updateOrderLineItemRow(row.id, "description", event.target.value)} />
+                  </label>
+                  <label className="line-item-qty">
+                    <span>Qty</span>
+                    <input type="number" min="1" value={row.qty} onChange={(event) => updateOrderLineItemRow(row.id, "qty", event.target.value)} />
+                  </label>
+                  <label className="line-item-qty">
+                    <span>Rate Per Unit</span>
+                    <input type="number" min="0" step="0.01" value={row.ratePerUnit} onChange={(event) => updateOrderLineItemRow(row.id, "ratePerUnit", event.target.value)} />
+                  </label>
+                  <label className="line-item-qty">
+                    <span>Packing & Freight</span>
+                    <input type="number" min="0" step="0.01" value={row.packingFreight} onChange={(event) => updateOrderLineItemRow(row.id, "packingFreight", event.target.value)} />
+                  </label>
+                  <label className="line-item-qty">
+                    <span>Unit Value</span>
+                    <input readOnly value={row.unitValue} />
+                  </label>
+                  <label className="line-item-qty">
+                    <span>GST 18%</span>
+                    <input type="number" min="0" step="0.01" value={row.gst18} onChange={(event) => updateOrderLineItemRow(row.id, "gst18", event.target.value)} />
+                  </label>
+                  <label className="line-item-total">
+                    <span>Total Amount</span>
+                    <input readOnly value={row.totalAmount} />
+                  </label>
+                  <button className="icon-action-button danger" type="button" title="Remove order line item" onClick={() => removeOrderLineItemRow(row.id)}>
+                    X
+                  </button>
+                </div>
+              ))}
+            </div>
             <div className="entry-actions">
+              <button className="action-inline-button neutral" type="button" onClick={addOrderLineItemRow}>
+                Add Order Line Item
+              </button>
               <button className="action-inline-button" type="button" onClick={() => void handleSubmitOrder()} disabled={isSavingOrder}>
                 {isSavingOrder ? "Saving..." : editingOrderId ? "Update order" : "Create order"}
               </button>
@@ -3310,24 +3624,22 @@ function updateLineItemRow(
       { label: "New", value: operations.metrics.find((item) => item.label === "New Enquiries")?.value ?? 0 },
       {
         label: "Draft",
-        value: operations.metrics.find((item) => item.label === "Ready For Draft")?.value ?? 0
+        value: operations.metrics.find((item) => item.label === "Draft Quote")?.value ?? 0
       },
       {
-        label: "Review",
-        value: operations.metrics.find((item) => item.label === "Under Review")?.value ?? 0
+        label: "Parsed",
+        value: operations.enquiries.filter((item) => item.parserStatus === "Parsed").length
       },
       {
         label: "Approved",
-        value: operations.metrics.find((item) => item.label === "Approved")?.value ?? 0
+        value: operations.metrics.find((item) => item.label === "Approved Quote")?.value ?? 0
       },
-      { label: "Sent", value: operations.metrics.find((item) => item.label === "Sent")?.value ?? 0 },
+      { label: "Sent", value: operations.metrics.find((item) => item.label === "Sent Quote")?.value ?? 0 },
       { label: "Orders", value: operations.metrics.find((item) => item.label === "Orders")?.value ?? 0 }
     ];
 
     const totalQuotations = operations.quotations.length;
-    const sentQuotations = operations.quotations.filter(
-      (item) => item.status === "Sent" || item.status === "Draft Sent"
-    ).length;
+    const sentQuotations = operations.quotations.filter((item) => item.status === "Sent Quote").length;
 
     return (
       <>
@@ -3348,6 +3660,11 @@ function updateLineItemRow(
               <a href={operations.actions.productsFormUrl || "#"} target="_blank" rel="noreferrer">
                 Create Products
               </a>
+              {operations.actions.defaultTemplateFolderUrl ? (
+                <a href={operations.actions.defaultTemplateFolderUrl} target="_blank" rel="noreferrer">
+                  Default Templates
+                </a>
+              ) : null}
             </div>
           </div>
         </section>
@@ -3427,9 +3744,9 @@ function updateLineItemRow(
                 value: String(operations.enquiries.filter((item) => item.parserStatus === "Parsed").length)
               },
               {
-                label: "Ready for draft",
+                label: "Draft quote",
                 value: String(
-                  operations.enquiries.filter((item) => item.parserStatus === "Ready for Draft").length
+                  operations.enquiries.filter((item) => item.parserStatus === "Draft Quote").length
                 )
               }
             ]}
@@ -3439,17 +3756,15 @@ function updateLineItemRow(
             rows={[
               { label: "Draft records", value: String(operations.quotations.length) },
               {
-                label: "Under review",
+                label: "Approved quote",
                 value: String(
-                  operations.quotations.filter((item) => item.status === "Under Review").length
+                  operations.quotations.filter((item) => item.status === "Approved Quote").length
                 )
               },
               {
                 label: "Sent",
                 value: String(
-                  operations.quotations.filter(
-                    (item) => item.status === "Sent" || item.status === "Draft Sent"
-                  ).length
+                  operations.quotations.filter((item) => item.status === "Sent Quote").length
                 )
               }
             ]}
@@ -3628,7 +3943,7 @@ function updateLineItemRow(
                     >
                       {quotation?.quotationNumber ? `Add Items (${quotation.quotationNumber})` : "Add Line Items"}
                     </button>
-                  ) : enquiry.parserStatus === "Ready for Review" && enquiry.driveFolderUrl ? (
+                  ) : enquiry.parserStatus === "Draft Quote" && enquiry.driveFolderUrl ? (
                     <a
                       className="action-inline-link"
                       href={enquiry.driveFolderUrl}
@@ -3744,7 +4059,7 @@ function updateLineItemRow(
       );
     }
 
-    if (quotation.status === "Approved") {
+    if (quotation.status === "Approved Quote") {
       return (
         <div className="action-stack">
           <div className="action-icon-row">
@@ -3797,7 +4112,7 @@ function updateLineItemRow(
       );
     }
 
-    if (quotation.status === "Draft Sent" || quotation.status === "Sent") {
+    if (quotation.status === "Sent Quote") {
       return (
         <div className="action-stack">
           <div className="action-icon-row">
@@ -3871,9 +4186,9 @@ function updateLineItemRow(
 
     if (
       quotation.draftFileUrl ||
-      quotation.status === "Ready for Review" ||
-      quotation.status === "Ready for Draft" ||
-      quotation.status === "Under Review"
+      quotation.status === "Draft Quote" ||
+      quotation.status === "Parsed" ||
+      quotation.status === "New Enquiries"
     ) {
       return (
         <div className="action-stack">
@@ -3969,7 +4284,7 @@ function updateLineItemRow(
           title={title}
           subtitle={subtitle}
           headerAction={
-            statuses.includes("Draft") || statuses.includes("Parsed") || statuses.includes("Ready for Draft")
+              statuses.includes("Draft Quote") || statuses.includes("Parsed") || statuses.includes("New Enquiries")
               ? (
                 <button className="action-inline-button" type="button" onClick={openQuotationEntry}>
                   Create Quotation
@@ -3984,7 +4299,7 @@ function updateLineItemRow(
               <th>Customer</th>
               <th>Status</th>
             <th>Items</th>
-            {statuses.length === 1 && statuses[0] === "Approved" ? null : <th>Draft</th>}
+            {statuses.length === 1 && statuses[0] === "Approved Quote" ? null : <th>Draft</th>}
             <th>Final PDF</th>
             <th>Actions</th>
             </>
@@ -4007,9 +4322,9 @@ function updateLineItemRow(
                 </span>
               </td>
               <td>{quotation.lineItemCount || 0}</td>
-              {statuses.length === 1 && statuses[0] === "Approved" ? null : (
+              {statuses.length === 1 && statuses[0] === "Approved Quote" ? null : (
                 <td>
-                  {quotation.status === "Approved" ? (
+                  {quotation.status === "Approved Quote" ? (
                     quotation.driveFolderUrl ? (
                       <a
                         className="action-inline-link"
@@ -4098,7 +4413,6 @@ function updateLineItemRow(
             <th>Order Date</th>
             <th>Value</th>
             <th>Payment</th>
-            <th>Delivery</th>
             <th>Action</th>
           </>
         }
@@ -4113,7 +4427,6 @@ function updateLineItemRow(
             <td>{formatDate(order.orderDate)}</td>
             <td>{(order.totalAmount || order.orderValue) ? formatCurrency(order.totalAmount || order.orderValue) : "Pending"}</td>
             <td>{order.paymentStatus || "Pending"}</td>
-            <td>{order.deliveryStatus || "Pending"}</td>
             <td>
               <button className="icon-action-button neutral" type="button" title="Edit order" onClick={() => openOrderEntry(order)}>
                 ✎
@@ -4301,21 +4614,21 @@ function updateLineItemRow(
         content = renderQuotations(
           "Sent quotations and follow-through visibility",
           "Track what has already gone out to clients and when it was sent.",
-          ["Sent", "Draft Sent"]
+          ["Sent Quote"]
         );
         break;
       case "approvedQuotations":
         content = renderQuotations(
           "Approved quotations ready for dispatch",
           "Quotes that have cleared internal review and are waiting for send or final conversion.",
-          ["Approved"]
+          ["Approved Quote"]
         );
         break;
       case "quotationDrafts":
         content = renderQuotations(
           "Quotation drafts prepared from live enquiries",
           "Internal working drafts that still need line item and commercial review.",
-          ["Draft", "Under Review", "Ready for Draft", "Ready for Review", "Parsed"]
+          ["Draft Quote", "Parsed", "New Enquiries"]
         );
         break;
       case "customers":

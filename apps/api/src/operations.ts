@@ -2,6 +2,7 @@ import { stat } from "node:fs/promises";
 import { listRecords } from "./airtable.js";
 import { env } from "./config.js";
 import { getStoredDocumentArtifact } from "./documents.js";
+import { ensureDefaultTemplateFolder, isDriveConfigured } from "./drive.js";
 import { loadQuotationLineItemMetrics } from "./portal-actions.js";
 import { listProductDocuments } from "./product-documents.js";
 
@@ -93,6 +94,10 @@ type OrderFields = {
   "Order Value"?: number;
   "Payment Status"?: string;
   "Delivery Status"?: string;
+  Address?: string;
+  State?: string;
+  City?: string;
+  Pincode?: string | number;
 };
 
 type ProductFields = {
@@ -242,12 +247,17 @@ export async function getOperationsSnapshot() {
     return !mergedQuotations.some((quotationId) => Boolean(quotationById.get(quotationId)?.fields["Draft File URL"]));
   }).length;
 
+  const defaultTemplateFolder = isDriveConfigured()
+    ? await ensureDefaultTemplateFolder().catch(() => null)
+    : null;
+
   return {
     actions: {
       interfaceUrl: env.AIRTABLE_INTERFACE_URL,
       enquiryFormUrl: env.AIRTABLE_ENQUIRY_FORM_URL,
       lineItemsFormUrl: env.AIRTABLE_LINE_ITEMS_FORM_URL,
-      productsFormUrl: env.AIRTABLE_PRODUCTS_FORM_URL
+      productsFormUrl: env.AIRTABLE_PRODUCTS_FORM_URL,
+      defaultTemplateFolderUrl: defaultTemplateFolder?.folderUrl || ""
     },
     metrics: [
       {
@@ -255,12 +265,11 @@ export async function getOperationsSnapshot() {
         value: enquiryIdsWithoutDraft
       },
       {
-        label: "Ready For Draft",
-        value: enquiries.filter((record) => statusValue(record.fields) === "Ready for Draft").length
+        label: "Draft Quote",
+        value: enquiries.filter((record) => statusValue(record.fields) === "Draft Quote").length
       },
-      { label: "Under Review", value: stageCount(quotations, "Status", "Ready for Review") },
-      { label: "Approved", value: stageCount(quotations, "Status", "Approved") },
-      { label: "Sent", value: stageCount(quotations, "Status", "Draft Sent") },
+      { label: "Approved Quote", value: stageCount(quotations, "Status", "Approved Quote") },
+      { label: "Sent Quote", value: stageCount(quotations, "Status", "Sent Quote") },
       { label: "Orders", value: orders.length }
     ],
     enquiries: enquiries.map((record) => {
@@ -375,7 +384,11 @@ export async function getOperationsSnapshot() {
       orderRiskAttentionFlag: record.fields["Order Risk/Attention Flag (AI)"] || "",
       orderValue: record.fields["Order Value"] || record.fields["Total Amount"] || 0,
       paymentStatus: record.fields["Payment Status"] || "",
-      deliveryStatus: record.fields["Delivery Status"] || ""
+      deliveryStatus: record.fields["Delivery Status"] || "",
+      address: record.fields.Address || "",
+      state: record.fields.State || "",
+      city: record.fields.City || "",
+      pincode: String(record.fields.Pincode || "")
     })),
     products: products.map((record) => ({
       id: record.id,
