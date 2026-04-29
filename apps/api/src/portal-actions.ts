@@ -209,6 +209,15 @@ const QUOTATION_STATUS_DRAFT = "Draft Quote";
 const QUOTATION_STATUS_APPROVED = "Approved Quote";
 const QUOTATION_STATUS_SENT = "Sent Quote";
 const QUOTATION_STATUS_ORDERED = "Ordered";
+const manualEnquiryCreateInflight = new Map<string, Promise<{
+  enquiryRecordId: string;
+  enquiryId: string;
+  parserStatus: string;
+  linkedCustomerId: string;
+  quotationRecordId: string;
+  quotationNumber: string;
+  driveFolderUrl: string;
+}>>();
 
 function linkedRecordIds(...recordIds: Array<string | undefined>) {
   return recordIds.filter((value): value is string => Boolean(value));
@@ -413,6 +422,21 @@ function normalizePhone(value: unknown) {
 
 function normalizeEmail(value: unknown) {
   return String(value ?? "").trim().toLowerCase();
+}
+
+function buildManualEnquiryDedupKey(input: z.infer<typeof enquiryPayloadSchema>) {
+  return JSON.stringify({
+    source: input.source,
+    linkedCustomerId: String(input.linkedCustomerId || "").trim(),
+    leadName: String(input.leadName || "").trim().toLowerCase(),
+    company: String(input.company || "").trim().toLowerCase(),
+    phone: normalizePhone(input.phone),
+    email: normalizeEmail(input.email),
+    state: String(input.state || "").trim().toLowerCase(),
+    city: String(input.city || "").trim().toLowerCase(),
+    pincode: String(input.pincode || "").replace(/\D/g, "").slice(0, 6),
+    product: String(input.potentialProduct || "").trim()
+  });
 }
 
 function toPincodeNumber(value: string, fallback?: unknown) {
@@ -884,6 +908,19 @@ async function nextOrderIdentifier() {
 
 export async function createPortalEnquiry(payload: unknown) {
   const input = enquiryPayloadSchema.parse(payload);
+  const dedupKey =
+    input.source === "manual"
+      ? buildManualEnquiryDedupKey(input)
+      : "";
+
+  if (dedupKey) {
+    const existingInflight = manualEnquiryCreateInflight.get(dedupKey);
+    if (existingInflight) {
+      return existingInflight;
+    }
+  }
+
+  const createPromise = (async () => {
   const productSummary = await resolvePotentialProductSummary(input.potentialProduct);
   const existingCustomer = input.linkedCustomerId
     ? await getRecord<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, input.linkedCustomerId)
@@ -991,6 +1028,18 @@ export async function createPortalEnquiry(payload: unknown) {
     quotationNumber: provisioned.quotation.fields["Quotation Number"] || "",
     driveFolderUrl: provisioned.folder?.folderUrl || provisioned.customer.fields["Drive Folder URL"] || ""
   };
+  })();
+
+  if (!dedupKey) {
+    return createPromise;
+  }
+
+  manualEnquiryCreateInflight.set(dedupKey, createPromise);
+  try {
+    return await createPromise;
+  } finally {
+    manualEnquiryCreateInflight.delete(dedupKey);
+  }
 }
 
 export async function updatePortalEnquiry(enquiryId: string, payload: unknown) {

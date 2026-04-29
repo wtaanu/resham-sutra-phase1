@@ -891,6 +891,11 @@ export default function App() {
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
   const entryModalRef = useRef<HTMLElement | null>(null);
   const profileMenuRef = useRef<HTMLDivElement | null>(null);
+  const enquirySubmitInFlightRef = useRef(false);
+  const customerSubmitInFlightRef = useRef(false);
+  const quotationSubmitInFlightRef = useRef(false);
+  const orderSubmitInFlightRef = useRef(false);
+  const lineItemsSubmitInFlightRef = useRef(false);
 
   function dismissActionState() {
     setActionState(null);
@@ -1880,6 +1885,10 @@ function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
   }
 
   async function handleSubmitEnquiry() {
+    if (enquirySubmitInFlightRef.current) {
+      return;
+    }
+
     const isEditing = Boolean(editingEnquiryId);
     const formActionLabel = isEditing ? "Update Enquiry" : "Create Enquiry";
     const normalizedPhone = normalizePhoneInput(enquiryForm.phone);
@@ -1937,6 +1946,7 @@ function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
     setEnquiryFieldErrors({});
 
     try {
+      enquirySubmitInFlightRef.current = true;
       setActionState({
         key: "portal-enquiry",
         label: formActionLabel,
@@ -2033,15 +2043,22 @@ function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
         status: "error",
         message
       });
+    } finally {
+      enquirySubmitInFlightRef.current = false;
     }
   }
 
   async function handleSubmitCustomer() {
+    if (customerSubmitInFlightRef.current) {
+      return;
+    }
+
     const isEditing = Boolean(editingCustomerId);
     const actionKey = "portal-customer";
     const label = isEditing ? "Update Customer" : "Create Customer";
 
     try {
+      customerSubmitInFlightRef.current = true;
       setActionState({
         key: actionKey,
         label,
@@ -2082,19 +2099,26 @@ function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
       closeEntryPanel();
       setActiveView("customers");
       void refreshOperations(true);
-    } catch (error) {
-      setActionState({
-        key: actionKey,
-        label,
-        status: "error",
-        message: error instanceof Error ? error.message : "Failed to save customer"
-      });
+      } catch (error) {
+        setActionState({
+          key: actionKey,
+          label,
+          status: "error",
+          message: error instanceof Error ? error.message : "Failed to save customer"
+        });
+      } finally {
+        customerSubmitInFlightRef.current = false;
+      }
     }
-  }
 
   async function handleSubmitQuotation() {
+    if (quotationSubmitInFlightRef.current) {
+      return;
+    }
+
     const actionKey = "portal-quotation";
     try {
+      quotationSubmitInFlightRef.current = true;
       setActionState({
         key: actionKey,
         label: "Create Quotation",
@@ -2127,17 +2151,23 @@ function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
       if (nextQuotationId) {
         openLineItemEntry(nextQuotationId);
       }
-    } catch (error) {
-      setActionState({
-        key: actionKey,
-        label: "Create Quotation",
-        status: "error",
-        message: error instanceof Error ? error.message : "Failed to create quotation"
-      });
+      } catch (error) {
+        setActionState({
+          key: actionKey,
+          label: "Create Quotation",
+          status: "error",
+          message: error instanceof Error ? error.message : "Failed to create quotation"
+        });
+      } finally {
+        quotationSubmitInFlightRef.current = false;
+      }
     }
-  }
 
   async function handleSubmitOrder() {
+    if (orderSubmitInFlightRef.current) {
+      return;
+    }
+
     const isEditing = Boolean(editingOrderId);
     const actionKey = isEditing ? `order-update-${editingOrderId}` : `order-create-${orderForm.quotationId}`;
     const url = isEditing
@@ -2175,10 +2205,11 @@ function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
       return;
     }
 
-    try {
-      setActionState({
-        key: actionKey,
-        label: isEditing ? "Update Order" : "Create Order",
+      try {
+        orderSubmitInFlightRef.current = true;
+        setActionState({
+          key: actionKey,
+          label: isEditing ? "Update Order" : "Create Order",
         status: "loading",
         message: isEditing ? "Saving order changes..." : "Creating order from quotation..."
       });
@@ -2217,15 +2248,17 @@ function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
       closeEntryPanel();
       setActiveView("orders");
       void refreshOperations(true);
-    } catch (error) {
-      setActionState({
-        key: actionKey,
-        label: isEditing ? "Update Order" : "Create Order",
-        status: "error",
-        message: error instanceof Error ? error.message : "Failed to save order"
-      });
+      } catch (error) {
+        setActionState({
+          key: actionKey,
+          label: isEditing ? "Update Order" : "Create Order",
+          status: "error",
+          message: error instanceof Error ? error.message : "Failed to save order"
+        });
+      } finally {
+        orderSubmitInFlightRef.current = false;
+      }
     }
-  }
 
   async function handleMarkQuotationSent(quotationId: string) {
     try {
@@ -2381,6 +2414,10 @@ function updateLineItemRow(
   }
 
   async function handleSubmitLineItems() {
+    if (lineItemsSubmitInFlightRef.current) {
+      return;
+    }
+
     if (lineItemRows.some((row) => !row.productId)) {
       setActionState({
         key: "portal-line-items",
@@ -2401,10 +2438,11 @@ function updateLineItemRow(
       return;
     }
 
-    try {
-      setActionState({
-        key: "portal-line-items",
-        label: "Create Line Items",
+      try {
+        lineItemsSubmitInFlightRef.current = true;
+        setActionState({
+          key: "portal-line-items",
+          label: "Create Line Items",
         status: "loading",
         message: "Creating quotation line items..."
       });
@@ -2461,17 +2499,19 @@ function updateLineItemRow(
       closeEntryPanel();
       setActiveView("quotationDrafts");
       await refreshOperations(false);
-    } catch (submitError) {
-      const message =
-        submitError instanceof Error ? submitError.message : "Failed to create line items";
-      setActionState({
-        key: "portal-line-items",
-        label: "Create Line Items",
-        status: "error",
-        message
-      });
+      } catch (submitError) {
+        const message =
+          submitError instanceof Error ? submitError.message : "Failed to create line items";
+        setActionState({
+          key: "portal-line-items",
+          label: "Create Line Items",
+          status: "error",
+          message
+        });
+      } finally {
+        lineItemsSubmitInFlightRef.current = false;
+      }
     }
-  }
 
   async function handleUploadProductDocuments() {
     if (!selectedProductId || !productDocFiles.length) {
