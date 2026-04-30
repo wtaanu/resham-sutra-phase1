@@ -1463,8 +1463,27 @@ export async function sendQuotationWhatsApp(quotationId: string) {
     }
   }
 
-  const document = await resolveQuotationSendDocument(quotation, customer);
-  const quotationNumber = quotation.fields["Quotation Number"] || quotation.id;
+  let document = await resolveQuotationSendDocument(quotation, customer);
+  let quotationForSend = quotation;
+  if (!document.attachment?.path) {
+    console.warn("[quotation-send-whatsapp] local quotation file missing; regenerating final PDF before WhatsApp send", {
+      quotationId,
+      quotationNumber: quotation.fields["Quotation Number"] || quotation.id,
+      documentUrl: document.publicUrl,
+      filename: document.fileName
+    });
+    const regenerated = await generateFinalPdfForQuotation(quotationId);
+    quotationForSend = regenerated.quotation;
+    document = await resolveQuotationSendDocument(regenerated.quotation, customer);
+  }
+
+  if (!document.attachment?.path) {
+    throw new Error(
+      "WhatsApp PDF send requires a local PDF file for Meta media upload. Regenerate the final PDF and try again."
+    );
+  }
+
+  const quotationNumber = quotationForSend.fields["Quotation Number"] || quotationForSend.id;
 
   const sendResult = await sendQuotationDocumentOnWhatsApp({
     to: recipientPhone,
@@ -1489,7 +1508,7 @@ export async function sendQuotationWhatsApp(quotationId: string) {
   const updatedQuotation = await updateRecordWithOptionalFieldFallback<QuotationFields>(
     env.AIRTABLE_QUOTATIONS_TABLE,
     {
-      id: quotation.id,
+      id: quotationForSend.id,
       fields: {
         "WhatsApp Outbound Message ID": outboundMessageId,
         "WhatsApp Delivery Status": "accepted",

@@ -129,20 +129,20 @@ async function sendQuotationTemplateOnWhatsApp(input: SendQuotationWhatsAppInput
     documentUrl: input.documentUrl
   });
 
-  const document =
-    input.localFilePath
-      ? {
-          id: await uploadDocumentMediaToWhatsApp({
-            localFilePath: input.localFilePath,
-            filename: input.filename,
-            contentType: input.contentType
-          }),
-          filename: input.filename
-        }
-      : {
-          link: input.documentUrl,
-          filename: input.filename
-        };
+  if (!input.localFilePath) {
+    throw new Error(
+      "Approved WhatsApp quotation template requires a local PDF file so it can be uploaded to Meta media first."
+    );
+  }
+
+  const document = {
+    id: await uploadDocumentMediaToWhatsApp({
+      localFilePath: input.localFilePath,
+      filename: input.filename,
+      contentType: input.contentType
+    }),
+    filename: input.filename
+  };
 
   const components: Array<Record<string, unknown>> = [
     {
