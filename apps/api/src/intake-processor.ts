@@ -30,6 +30,7 @@ import {
   isWhatsAppOutboundConfigured,
   sendQuotationDocumentOnWhatsApp
 } from "./whatsapp-outbound.js";
+import { syncEnquiryToZohoBigin } from "./zoho-bigin.js";
 
 type EnquiryFields = {
   "Enquiry ID"?: string;
@@ -56,6 +57,10 @@ type EnquiryFields = {
   Quantity?: string | number;
   Qty?: string | number;
   Notes?: string;
+  "Zoho Bigin Record ID"?: string;
+  "Zoho Bigin Sync Status"?: string;
+  "Zoho Bigin Synced At"?: string;
+  "Zoho Bigin Sync Error"?: string;
 };
 
 type CustomerFields = {
@@ -127,7 +132,14 @@ type ProcessingResult = {
 };
 
 const customerLocks = new Map<string, Promise<void>>();
-const optionalEnquiryFields = ["Logged Date Time", "Receiver WhatsApp Number"] as const;
+const optionalEnquiryFields = [
+  "Logged Date Time",
+  "Receiver WhatsApp Number",
+  "Zoho Bigin Record ID",
+  "Zoho Bigin Sync Status",
+  "Zoho Bigin Synced At",
+  "Zoho Bigin Sync Error"
+] as const;
 const optionalQuotationFields = [
   "Logged Date Time",
   "Draft Created Time",
@@ -154,6 +166,93 @@ function normalizePhone(value: unknown) {
 
 function normalizeEmail(value: unknown) {
   return String(value ?? "").trim().toLowerCase();
+}
+
+function serializeError(error: unknown) {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack
+    };
+  }
+
+  return {
+    name: "NonError",
+    message: String(error),
+    stack: ""
+  };
+}
+
+async function syncEnquiryToZohoAndPersist(enquiry: AirtableRecord<EnquiryFields>) {
+  const syncPayload = {
+    recordId: String(enquiry.fields["Zoho Bigin Record ID"] || "").trim(),
+    enquiryId: String(enquiry.fields["Enquiry ID"] || enquiry.id),
+    loggedDateTime: String(enquiry.fields["Logged Date Time"] || ""),
+    leadName: String(enquiry.fields["Lead Name"] || ""),
+    company: String(enquiry.fields.Company || ""),
+    phone: normalizePhone(enquiry.fields.Phone),
+    email: normalizeEmail(enquiry.fields.Email),
+    address: String(enquiry.fields.Address || ""),
+    city: String(enquiry.fields.City || ""),
+    state: String(enquiry.fields.State || ""),
+    pincode: String(enquiry.fields.Pincode || ""),
+    destinationAddress: String(enquiry.fields["Destination Address"] || ""),
+    destinationCity: String(enquiry.fields["Destination City"] || ""),
+    destinationState: String(enquiry.fields["Destination State"] || ""),
+    destinationPincode: String(enquiry.fields["Destination Pincode"] || ""),
+    parserStatus: String(enquiry.fields["Parser Status"] || ""),
+    requirementSummary: String(enquiry.fields["Requirement Summary"] || ""),
+    receiverWhatsappNumber: normalizePhone(enquiry.fields["Receiver WhatsApp Number"])
+  };
+
+  console.info("[zoho-bigin] enquiry sync requested from intake processor", {
+    airtableRecordId: enquiry.id,
+    payload: syncPayload
+  });
+
+  try {
+    const result = await syncEnquiryToZohoBigin(syncPayload);
+
+    if (!result) {
+      return enquiry;
+    }
+
+    return updateRecordWithOptionalFieldFallback<EnquiryFields>(
+      env.AIRTABLE_ENQUIRIES_TABLE,
+      {
+        id: enquiry.id,
+        fields: {
+          "Zoho Bigin Record ID": result.recordId,
+          "Zoho Bigin Sync Status": `Synced (${result.action})`,
+          "Zoho Bigin Synced At": new Date().toISOString(),
+          "Zoho Bigin Sync Error": ""
+        }
+      },
+      optionalEnquiryFields
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown Zoho Bigin sync error";
+    console.error("[zoho-bigin] enquiry sync failed in intake processor", {
+      enquiryId: enquiry.id,
+      message,
+      payload: syncPayload,
+      error: serializeError(error)
+    });
+
+    return updateRecordWithOptionalFieldFallback<EnquiryFields>(
+      env.AIRTABLE_ENQUIRIES_TABLE,
+      {
+        id: enquiry.id,
+        fields: {
+          "Zoho Bigin Sync Status": "Sync Failed",
+          "Zoho Bigin Synced At": new Date().toISOString(),
+          "Zoho Bigin Sync Error": message
+        }
+      },
+      optionalEnquiryFields
+    ).catch(() => enquiry);
+  }
 }
 
 function toPincodeNumber(value: unknown) {
@@ -1033,12 +1132,13 @@ export async function syncQuotationWhatsAppDeliveryStatus(event: WhatsAppStatusE
   if (shouldMarkSent) {
     const enquiryId = quotation.fields["Linked Enquiry"]?.[0];
     if (enquiryId) {
-      await updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
+      const updatedEnquiry = await updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
         id: enquiryId,
         fields: {
           ...enquiryStatusFields("Sent Quote")
         }
       });
+      await syncEnquiryToZohoAndPersist(updatedEnquiry);
     }
   }
 
@@ -1133,7 +1233,7 @@ async function createDraftForReadyEnquiry(
     });
   });
 
-  await updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
+  const updatedEnquiry = await updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
     id: enquiry.id,
     fields: {
       ...enquiryStatusFields("Draft Quote"),
@@ -1142,6 +1242,7 @@ async function createDraftForReadyEnquiry(
       "Drive Folder URL": folder.folderUrl || null
     }
   });
+  await syncEnquiryToZohoAndPersist(updatedEnquiry);
 
   return {
     quotation: updatedQuotation,
@@ -1244,7 +1345,7 @@ export async function generateFinalPdfForQuotation(quotationId: string) {
     }
   });
 
-  await updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
+  const updatedEnquiry = await updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
     id: enquiry.id,
     fields: {
       ...enquiryStatusFields("Approved Quote"),
@@ -1253,6 +1354,7 @@ export async function generateFinalPdfForQuotation(quotationId: string) {
       "Drive Folder URL": folder.folderUrl || enquiry.fields["Drive Folder URL"] || null
     }
   });
+  await syncEnquiryToZohoAndPersist(updatedEnquiry);
 
   return {
     quotation: updatedQuotation,
@@ -1301,12 +1403,13 @@ export async function sendQuotationEmail(quotationId: string) {
 
   const updatedQuotation = await markQuotationSent(quotation, "Email");
   if (enquiry.id) {
-    await updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
+    const updatedEnquiry = await updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
       id: enquiry.id,
       fields: {
         ...enquiryStatusFields("Sent Quote")
       }
     });
+    await syncEnquiryToZohoAndPersist(updatedEnquiry);
   }
   return {
     quotation: updatedQuotation,

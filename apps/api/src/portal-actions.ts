@@ -436,27 +436,51 @@ function normalizeEmail(value: unknown) {
   return String(value ?? "").trim().toLowerCase();
 }
 
+function serializeError(error: unknown) {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack
+    };
+  }
+
+  return {
+    name: "NonError",
+    message: String(error),
+    stack: ""
+  };
+}
+
 async function syncEnquiryToZohoAndPersist(enquiry: AirtableRecord<EnquiryFields>) {
+  const syncPayload = {
+    recordId: String(enquiry.fields["Zoho Bigin Record ID"] || "").trim(),
+    enquiryId: String(enquiry.fields["Enquiry ID"] || enquiry.id),
+    loggedDateTime: String(enquiry.fields["Logged Date Time"] || ""),
+    leadName: String(enquiry.fields["Lead Name"] || ""),
+    company: String(enquiry.fields.Company || ""),
+    phone: normalizePhone(enquiry.fields.Phone),
+    email: normalizeEmail(enquiry.fields.Email),
+    address: String(enquiry.fields.Address || ""),
+    city: String(enquiry.fields.City || ""),
+    state: String(enquiry.fields.State || ""),
+    pincode: String(enquiry.fields.Pincode || ""),
+    destinationAddress: String(enquiry.fields["Destination Address"] || ""),
+    destinationCity: String(enquiry.fields["Destination City"] || ""),
+    destinationState: String(enquiry.fields["Destination State"] || ""),
+    destinationPincode: String(enquiry.fields["Destination Pincode"] || ""),
+    parserStatus: String(enquiry.fields["Parser Status"] || ""),
+    requirementSummary: String(enquiry.fields["Requirement Summary"] || ""),
+    receiverWhatsappNumber: normalizePhone(enquiry.fields["Receiver WhatsApp Number"])
+  };
+
+  console.info("[zoho-bigin] enquiry sync requested from portal actions", {
+    airtableRecordId: enquiry.id,
+    payload: syncPayload
+  });
+
   try {
-    const result = await syncEnquiryToZohoBigin({
-      recordId: String(enquiry.fields["Zoho Bigin Record ID"] || "").trim(),
-      enquiryId: String(enquiry.fields["Enquiry ID"] || enquiry.id),
-      leadName: String(enquiry.fields["Lead Name"] || ""),
-      company: String(enquiry.fields.Company || ""),
-      phone: normalizePhone(enquiry.fields.Phone),
-      email: normalizeEmail(enquiry.fields.Email),
-      address: String(enquiry.fields.Address || ""),
-      city: String(enquiry.fields.City || ""),
-      state: String(enquiry.fields.State || ""),
-      pincode: String(enquiry.fields.Pincode || ""),
-      destinationAddress: String(enquiry.fields["Destination Address"] || ""),
-      destinationCity: String(enquiry.fields["Destination City"] || ""),
-      destinationState: String(enquiry.fields["Destination State"] || ""),
-      destinationPincode: String(enquiry.fields["Destination Pincode"] || ""),
-      parserStatus: String(enquiry.fields["Parser Status"] || ""),
-      requirementSummary: String(enquiry.fields["Requirement Summary"] || ""),
-      receiverWhatsappNumber: normalizePhone(enquiry.fields["Receiver WhatsApp Number"])
-    });
+    const result = await syncEnquiryToZohoBigin(syncPayload);
 
     if (!result) {
       return enquiry;
@@ -473,9 +497,11 @@ async function syncEnquiryToZohoAndPersist(enquiry: AirtableRecord<EnquiryFields
     }, optionalEnquiryFields);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown Zoho Bigin sync error";
-    console.warn("[zoho-bigin] enquiry sync skipped", {
+    console.error("[zoho-bigin] enquiry sync failed in portal actions", {
       enquiryId: enquiry.id,
-      message
+      message,
+      payload: syncPayload,
+      error: serializeError(error)
     });
 
     return updateRecordWithOptionalFieldFallback<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {

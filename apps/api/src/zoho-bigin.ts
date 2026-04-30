@@ -26,9 +26,20 @@ type BiginRecordResponse = {
   }>;
 };
 
+type ZohoBiginRequestContext = {
+  operation: "insert_or_upsert" | "update" | "token_refresh" | "auth_exchange";
+  moduleName?: string;
+  recordId?: string;
+  enquiryId?: string;
+  fieldNames?: string[];
+  nonEmptyFields?: Record<string, string>;
+  duplicateCheckFields?: string[];
+};
+
 export type BiginEnquiryPayload = {
   recordId?: string;
   enquiryId: string;
+  loggedDateTime: string;
   leadName: string;
   company: string;
   phone: string;
@@ -69,6 +80,40 @@ let inflightTokenPromise: Promise<string> | null = null;
 let runtimeRefreshToken = "";
 let runtimeApiDomain = "";
 let runtimeAccountsDomain = "";
+
+function serializeError(error: unknown) {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack
+    };
+  }
+
+  return {
+    name: "NonError",
+    message: String(error),
+    stack: ""
+  };
+}
+
+function describeBiginFieldValues(record: Record<string, unknown>) {
+  return Object.fromEntries(
+    Object.entries(record)
+      .filter(([, value]) => value !== undefined && value !== null && value !== "")
+      .map(([key, value]) => {
+        const normalizedValue = typeof value === "string" ? value : JSON.stringify(value);
+        return [key, String(normalizedValue || "").slice(0, 300)];
+      })
+  );
+}
+
+function logZohoBiginError(label: string, error: unknown, context: ZohoBiginRequestContext) {
+  console.error(`[zoho-bigin] ${label}`, {
+    ...context,
+    error: serializeError(error)
+  });
+}
 
 function isZohoBiginConfigured() {
   return Boolean(
@@ -234,56 +279,80 @@ function splitLeadName(value: string) {
   };
 }
 
-function buildMailingStreet(input: BiginEnquiryPayload) {
-  return (
-    String(input.destinationAddress || "").trim() ||
-    String(input.address || "").trim()
-  );
-}
-
 function buildMailingCity(input: BiginEnquiryPayload) {
-  return (
-    String(input.destinationCity || "").trim() ||
-    String(input.city || "").trim()
-  );
+  return String(input.city || "").trim();
 }
 
 function buildMailingState(input: BiginEnquiryPayload) {
-  return (
-    String(input.destinationState || "").trim() ||
-    String(input.state || "").trim()
-  );
+  return String(input.state || "").trim();
 }
 
 function buildMailingCode(input: BiginEnquiryPayload) {
-  return (
-    String(input.destinationPincode || "").trim() ||
-    String(input.pincode || "").trim()
-  );
+  return String(input.pincode || "").trim();
+}
+
+function deriveBiginPipelineStage(parserStatus: string) {
+  const normalized = String(parserStatus || "").trim().toLowerCase();
+  if (
+    normalized === "draft quote" ||
+    normalized === "approved quote" ||
+    normalized === "xls created" ||
+    normalized === "xlsx created" ||
+    normalized === "draft created"
+  ) {
+    return "To Quote";
+  }
+  if (
+    normalized === "sent quote" ||
+    normalized === "sent quotations" ||
+    normalized === "sent quotation" ||
+    normalized === "ordered"
+  ) {
+    return "Quoted";
+  }
+  return "Enquiry";
+}
+
+function setConfiguredField(record: Record<string, unknown>, fieldApiName: string, value: unknown) {
+  const normalizedFieldApiName = String(fieldApiName || "").trim();
+  if (normalizedFieldApiName) {
+    record[normalizedFieldApiName] = value;
+  }
 }
 
 function mapEnquiryToBiginRecord(input: BiginEnquiryPayload) {
   const name = splitLeadName(input.leadName);
-
-  return {
+  const record: Record<string, unknown> = {
     First_Name: name.firstName,
     Last_Name: name.lastName,
-    Phone: input.phone,
-    Mobile: input.receiverWhatsappNumber || input.phone,
     Email: input.email,
-    Company: input.company,
+    Mobile: input.phone,
+    "Mailing Street": input.address,
+    "Mailing City": buildMailingCity(input),
+    "Mailing State": buildMailingState(input),
+    "Mailing Country": env.ZOHO_BIGIN_DEFAULT_MAILING_COUNTRY,
+    "Mailing Zip": buildMailingCode(input),
     Description: [
       input.requirementSummary ? `Requirement: ${input.requirementSummary}` : "",
       input.parserStatus ? `Status: ${input.parserStatus}` : "",
       input.enquiryId ? `Enquiry ID: ${input.enquiryId}` : ""
     ]
       .filter(Boolean)
-      .join("\n"),
-    Mailing_Street: buildMailingStreet(input),
-    Mailing_City: buildMailingCity(input),
-    Mailing_State: buildMailingState(input),
-    Mailing_Code: buildMailingCode(input)
+      .join("\n")
   };
+
+  setConfiguredField(record, env.ZOHO_BIGIN_COMPANY_FIELD_API_NAME, input.company);
+
+  if (env.ZOHO_BIGIN_PHONE_FIELD_API_NAME !== "Mobile") {
+    setConfiguredField(record, env.ZOHO_BIGIN_PHONE_FIELD_API_NAME, input.phone);
+  }
+
+  const pipelineStageFieldApiName = String(env.ZOHO_BIGIN_PIPELINE_STAGE_FIELD_API_NAME || "").trim();
+  if (pipelineStageFieldApiName) {
+    record[pipelineStageFieldApiName] = deriveBiginPipelineStage(input.parserStatus);
+  }
+
+  return record;
 }
 
 function sanitizeBiginPayload(record: Record<string, unknown>) {
@@ -292,23 +361,79 @@ function sanitizeBiginPayload(record: Record<string, unknown>) {
   );
 }
 
-async function zohoBiginRequest(path: string, init: RequestInit) {
-  const accessToken = await getZohoBiginAccessToken();
-  const response = await fetch(`${runtimeApiDomain || env.ZOHO_BIGIN_API_DOMAIN}/bigin/v2/${path}`, {
-    ...init,
-    headers: {
-      Authorization: `Zoho-oauthtoken ${accessToken}`,
-      "Content-Type": "application/json",
-      ...(init.headers || {})
-    }
+async function zohoBiginRequest(path: string, init: RequestInit, context: ZohoBiginRequestContext) {
+  const url = `${runtimeApiDomain || env.ZOHO_BIGIN_API_DOMAIN}/bigin/v2/${path}`;
+  console.info("[zoho-bigin] request start", {
+    ...context,
+    method: init.method || "GET",
+    path,
+    url,
+    hasBody: Boolean(init.body)
   });
 
-  if (!response.ok) {
-    const message = await response.text();
-    throw new Error(`Zoho Bigin request failed (${response.status}): ${message}`);
-  }
+  try {
+    const accessToken = await getZohoBiginAccessToken();
+    const response = await fetch(url, {
+      ...init,
+      headers: {
+        Authorization: `Zoho-oauthtoken ${accessToken}`,
+        "Content-Type": "application/json",
+        ...(init.headers || {})
+      }
+    });
 
-  return (await response.json()) as BiginRecordResponse;
+    const text = await response.text();
+    let data: BiginRecordResponse = {};
+    if (text) {
+      try {
+        data = JSON.parse(text) as BiginRecordResponse;
+      } catch (error) {
+        logZohoBiginError("failed to parse response json", error, {
+          ...context,
+          moduleName: context.moduleName,
+          recordId: context.recordId
+        });
+      }
+    }
+
+    if (!response.ok) {
+      const requestError = new Error(`Zoho Bigin request failed (${response.status}): ${text}`);
+      logZohoBiginError("request failed", requestError, {
+        ...context,
+        moduleName: context.moduleName,
+        recordId: context.recordId
+      });
+      throw requestError;
+    }
+
+    const failedRows = data.data?.filter((row) => String(row.status || "").toLowerCase() === "error") || [];
+    if (failedRows.length) {
+      const rowError = new Error(`Zoho Bigin returned row errors: ${JSON.stringify(failedRows)}`);
+      logZohoBiginError("row-level error", rowError, {
+        ...context,
+        moduleName: context.moduleName,
+        recordId: context.recordId
+      });
+      throw rowError;
+    }
+
+    console.info("[zoho-bigin] request success", {
+      ...context,
+      responseStatus: response.status,
+      responseRows: data.data?.map((row) => ({
+        status: row.status,
+        code: row.code,
+        action: row.action,
+        duplicateField: row.duplicate_field,
+        id: row.details?.id
+      }))
+    });
+
+    return data;
+  } catch (error) {
+    logZohoBiginError("request exception", error, context);
+    throw error;
+  }
 }
 
 export async function syncEnquiryToZohoBigin(input: BiginEnquiryPayload): Promise<BiginSyncResult | null> {
@@ -319,6 +444,17 @@ export async function syncEnquiryToZohoBigin(input: BiginEnquiryPayload): Promis
   const moduleName = env.ZOHO_BIGIN_MODULE_API_NAME;
   const record = sanitizeBiginPayload(mapEnquiryToBiginRecord(input));
   const duplicateCheckFields = buildDuplicateCheckFields();
+  const context: ZohoBiginRequestContext = {
+    operation: input.recordId ? "update" : "insert_or_upsert",
+    moduleName,
+    recordId: input.recordId,
+    enquiryId: input.enquiryId,
+    fieldNames: Object.keys(record),
+    nonEmptyFields: describeBiginFieldValues(record),
+    duplicateCheckFields
+  };
+
+  console.info("[zoho-bigin] prepared contact sync payload", context);
 
   let result: BiginRecordResponse;
   if (input.recordId) {
@@ -332,7 +468,7 @@ export async function syncEnquiryToZohoBigin(input: BiginEnquiryPayload): Promis
           }
         ]
       })
-    });
+    }, context);
   } else {
     result = await zohoBiginRequest(`${moduleName}/upsert`, {
       method: "POST",
@@ -340,7 +476,7 @@ export async function syncEnquiryToZohoBigin(input: BiginEnquiryPayload): Promis
         data: [record],
         duplicate_check_fields: duplicateCheckFields
       })
-    });
+    }, context);
   }
 
   const first = result.data?.[0];
