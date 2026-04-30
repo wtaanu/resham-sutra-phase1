@@ -5,6 +5,8 @@ type BiginTokenResponse = {
   expires_in: number;
   api_domain?: string;
   token_type?: string;
+  refresh_token?: string;
+  scope?: string;
 };
 
 type BiginRecordResponse = {
@@ -51,27 +53,123 @@ export type BiginSyncResult = {
   response: Record<string, unknown>;
 };
 
+export type ZohoBiginAuthExchangeResult = {
+  accessToken: string;
+  refreshToken: string;
+  expiresIn: number;
+  apiDomain: string;
+  accountsDomain: string;
+  scope: string;
+  tokenType: string;
+};
+
 let cachedAccessToken = "";
 let cachedAccessTokenExpiresAt = 0;
 let inflightTokenPromise: Promise<string> | null = null;
+let runtimeRefreshToken = "";
+let runtimeApiDomain = "";
+let runtimeAccountsDomain = "";
 
 function isZohoBiginConfigured() {
   return Boolean(
     env.ZOHO_BIGIN_CLIENT_ID &&
       env.ZOHO_BIGIN_CLIENT_SECRET &&
-      env.ZOHO_BIGIN_REFRESH_TOKEN &&
-      env.ZOHO_BIGIN_API_DOMAIN
+      (runtimeRefreshToken || env.ZOHO_BIGIN_REFRESH_TOKEN) &&
+      (runtimeApiDomain || env.ZOHO_BIGIN_API_DOMAIN)
   );
 }
 
-async function exchangeRefreshTokenForAccessToken() {
-  const response = await fetch(`${env.ZOHO_BIGIN_ACCOUNTS_DOMAIN}/oauth/v2/token`, {
+export function getZohoBiginConfigState() {
+  return {
+    clientId: Boolean(String(env.ZOHO_BIGIN_CLIENT_ID || "").trim()),
+    clientSecret: Boolean(String(env.ZOHO_BIGIN_CLIENT_SECRET || "").trim()),
+    refreshToken: Boolean(String(runtimeRefreshToken || env.ZOHO_BIGIN_REFRESH_TOKEN || "").trim()),
+    accountsDomain: Boolean(String(runtimeAccountsDomain || env.ZOHO_BIGIN_ACCOUNTS_DOMAIN || "").trim()),
+    apiDomain: Boolean(String(runtimeApiDomain || env.ZOHO_BIGIN_API_DOMAIN || "").trim()),
+    redirectUri: Boolean(String(env.ZOHO_BIGIN_REDIRECT_URI || "").trim())
+  };
+}
+
+export function setZohoBiginRuntimeCredentials(input: {
+  refreshToken: string;
+  apiDomain?: string;
+  accountsDomain?: string;
+}) {
+  runtimeRefreshToken = String(input.refreshToken || "").trim();
+  runtimeApiDomain = String(input.apiDomain || "").trim();
+  runtimeAccountsDomain = String(input.accountsDomain || "").trim();
+  cachedAccessToken = "";
+  cachedAccessTokenExpiresAt = 0;
+  inflightTokenPromise = null;
+}
+
+export function buildZohoBiginAuthUrl() {
+  if (!env.ZOHO_BIGIN_CLIENT_ID) {
+    throw new Error("ZOHO_BIGIN_CLIENT_ID is required to start Zoho Bigin OAuth.");
+  }
+
+  const query = new URLSearchParams({
+    scope: env.ZOHO_BIGIN_SCOPE,
+    client_id: env.ZOHO_BIGIN_CLIENT_ID,
+    response_type: "code",
+    access_type: "offline",
+    prompt: "consent",
+    redirect_uri: env.ZOHO_BIGIN_REDIRECT_URI
+  });
+
+  return `${env.ZOHO_BIGIN_ACCOUNTS_DOMAIN}/oauth/v2/auth?${query.toString()}`;
+}
+
+export async function exchangeZohoBiginAuthCode(code: string): Promise<ZohoBiginAuthExchangeResult> {
+  const normalizedCode = String(code || "").trim();
+  if (!normalizedCode) {
+    throw new Error("Zoho Bigin OAuth code is required.");
+  }
+
+  if (!env.ZOHO_BIGIN_CLIENT_ID || !env.ZOHO_BIGIN_CLIENT_SECRET) {
+    throw new Error("ZOHO_BIGIN_CLIENT_ID and ZOHO_BIGIN_CLIENT_SECRET are required.");
+  }
+
+  const accountsDomain = runtimeAccountsDomain || env.ZOHO_BIGIN_ACCOUNTS_DOMAIN;
+  const response = await fetch(`${accountsDomain}/oauth/v2/token`, {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded"
     },
     body: new URLSearchParams({
-      refresh_token: env.ZOHO_BIGIN_REFRESH_TOKEN,
+      code: normalizedCode,
+      client_id: env.ZOHO_BIGIN_CLIENT_ID,
+      client_secret: env.ZOHO_BIGIN_CLIENT_SECRET,
+      redirect_uri: env.ZOHO_BIGIN_REDIRECT_URI,
+      grant_type: "authorization_code"
+    })
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(`Zoho Bigin auth code exchange failed (${response.status}): ${message}`);
+  }
+
+  const data = (await response.json()) as BiginTokenResponse;
+  return {
+    accessToken: String(data.access_token || ""),
+    refreshToken: String(data.refresh_token || ""),
+    expiresIn: Number(data.expires_in || 0),
+    apiDomain: String(data.api_domain || env.ZOHO_BIGIN_API_DOMAIN || ""),
+    accountsDomain,
+    scope: String(data.scope || env.ZOHO_BIGIN_SCOPE || ""),
+    tokenType: String(data.token_type || "Zoho-oauthtoken")
+  };
+}
+
+async function exchangeRefreshTokenForAccessToken() {
+  const response = await fetch(`${runtimeAccountsDomain || env.ZOHO_BIGIN_ACCOUNTS_DOMAIN}/oauth/v2/token`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded"
+    },
+    body: new URLSearchParams({
+      refresh_token: runtimeRefreshToken || env.ZOHO_BIGIN_REFRESH_TOKEN,
       client_id: env.ZOHO_BIGIN_CLIENT_ID,
       client_secret: env.ZOHO_BIGIN_CLIENT_SECRET,
       grant_type: "refresh_token"
@@ -196,7 +294,7 @@ function sanitizeBiginPayload(record: Record<string, unknown>) {
 
 async function zohoBiginRequest(path: string, init: RequestInit) {
   const accessToken = await getZohoBiginAccessToken();
-  const response = await fetch(`${env.ZOHO_BIGIN_API_DOMAIN}/bigin/v2/${path}`, {
+  const response = await fetch(`${runtimeApiDomain || env.ZOHO_BIGIN_API_DOMAIN}/bigin/v2/${path}`, {
     ...init,
     headers: {
       Authorization: `Zoho-oauthtoken ${accessToken}`,

@@ -51,6 +51,12 @@ import {
   processWhatsAppEnquiry
 } from "./whatsapp-intake.js";
 import { isSmtpConfigured, resolveDocumentAttachment, sendMail } from "./mailer.js";
+import {
+  buildZohoBiginAuthUrl,
+  exchangeZohoBiginAuthCode,
+  getZohoBiginConfigState,
+  setZohoBiginRuntimeCredentials
+} from "./zoho-bigin.js";
 
 const app = express();
 const loginSchema = z.object({
@@ -402,6 +408,79 @@ app.post("/api/whatsapp/enquiries", async (request, response) => {
       status: "error",
       message: error instanceof Error ? error.message : "Failed to process WhatsApp enquiry"
     });
+  }
+});
+
+app.get("/api/integrations/zoho-bigin/auth/start", requireAuthenticatedUser, async (_request, response) => {
+  try {
+    response.redirect(buildZohoBiginAuthUrl());
+  } catch (error) {
+    logRouteError("GET /api/integrations/zoho-bigin/auth/start", error);
+    response.status(400).json({
+      status: "error",
+      message: error instanceof Error ? error.message : "Failed to start Zoho Bigin OAuth"
+    });
+  }
+});
+
+app.get("/api/integrations/zoho-bigin/config", requireAuthenticatedUser, async (_request, response) => {
+  try {
+    response.status(200).json({
+      status: "ok",
+      config: getZohoBiginConfigState(),
+      authUrl: buildZohoBiginAuthUrl(),
+      redirectUri: env.ZOHO_BIGIN_REDIRECT_URI
+    });
+  } catch (error) {
+    logRouteError("GET /api/integrations/zoho-bigin/config", error);
+    response.status(400).json({
+      status: "error",
+      message: error instanceof Error ? error.message : "Failed to inspect Zoho Bigin configuration"
+    });
+  }
+});
+
+app.get("/api/integrations/zoho-bigin/callback", async (request, response) => {
+  try {
+    const error = String(request.query.error || "").trim();
+    const errorDescription = String(request.query.error_description || "").trim();
+    if (error) {
+      response.status(400).type("html").send(`<!doctype html>
+<html>
+  <body style="font-family: Arial, sans-serif; padding: 24px;">
+    <h1>Zoho Bigin authorization failed</h1>
+    <p>Error: ${error.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</p>
+    ${errorDescription ? `<p>Description: ${errorDescription.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</p>` : ""}
+  </body>
+</html>`);
+      return;
+    }
+
+    const code = String(request.query.code || "").trim();
+    const exchange = await exchangeZohoBiginAuthCode(code);
+    setZohoBiginRuntimeCredentials({
+      refreshToken: exchange.refreshToken,
+      apiDomain: exchange.apiDomain,
+      accountsDomain: exchange.accountsDomain
+    });
+
+    response.status(200).type("html").send(`<!doctype html>
+<html>
+  <body style="font-family: Arial, sans-serif; padding: 24px; line-height: 1.5;">
+    <h1>Zoho Bigin authorization completed</h1>
+    <p>The API has received a working Zoho Bigin authorization for this runtime.</p>
+    <p>Persist the same refresh token and domains in the server <code>.env</code> before the next restart, because this callback intentionally does not expose secrets back through the browser.</p>
+  </body>
+</html>`);
+  } catch (error) {
+    logRouteError("GET /api/integrations/zoho-bigin/callback", error);
+    response.status(400).type("html").send(`<!doctype html>
+<html>
+  <body style="font-family: Arial, sans-serif; padding: 24px;">
+    <h1>Zoho Bigin authorization failed</h1>
+    <p>${(error instanceof Error ? error.message : "Failed to complete Zoho Bigin OAuth callback").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</p>
+  </body>
+</html>`);
   }
 });
 

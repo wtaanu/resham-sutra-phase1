@@ -32,6 +32,8 @@ const envSchema = z.object({
   ZOHO_BIGIN_REFRESH_TOKEN: z.string().optional().default(""),
   ZOHO_BIGIN_ACCOUNTS_DOMAIN: z.string().default("https://accounts.zoho.in"),
   ZOHO_BIGIN_API_DOMAIN: z.string().default("https://www.zohoapis.in"),
+  ZOHO_BIGIN_REDIRECT_URI: z.string().default("http://localhost:4000/api/integrations/zoho-bigin/callback"),
+  ZOHO_BIGIN_SCOPE: z.string().default("ZohoBigin.modules.ALL,ZohoBigin.settings.ALL,offline_access"),
   ZOHO_BIGIN_MODULE_API_NAME: z.string().default("Contacts"),
   ZOHO_BIGIN_DUPLICATE_CHECK_FIELDS: z.string().default("Email,Phone"),
   AIRTABLE_INTERFACE_URL: z.string().optional().default(""),
