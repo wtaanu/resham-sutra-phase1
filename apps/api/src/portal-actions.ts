@@ -13,7 +13,6 @@ import { env } from "./config.js";
 import { createRecordWithUniqueNumber } from "./numbering.js";
 import {
   createCustomerForEnquiry,
-  generateFinalPdfForQuotation,
   refreshDraftForQuotation
 } from "./intake-processor.js";
 import { syncEnquiryToZohoBigin } from "./zoho-bigin.js";
@@ -1321,14 +1320,6 @@ export async function createPortalQuotationLineItems(payload: unknown) {
     );
   }
   const draft = await refreshDraftForQuotation(quotation.id);
-  if (
-    draft.quotation.fields["Final PDF URL"] ||
-    [QUOTATION_STATUS_APPROVED, QUOTATION_STATUS_SENT, QUOTATION_STATUS_ORDERED].includes(
-      String(draft.quotation.fields.Status || "")
-    )
-  ) {
-    await generateFinalPdfForQuotation(quotation.id);
-  }
   console.log("[portal-line-items] draft refresh result", {
     quotationId: quotation.id,
     quotationStatus: draft.quotation.fields.Status || "",
@@ -1420,14 +1411,6 @@ export async function replacePortalQuotationLineItems(payload: unknown) {
   }
 
   const draft = await refreshDraftForQuotation(quotation.id);
-  if (
-    draft.quotation.fields["Final PDF URL"] ||
-    [QUOTATION_STATUS_APPROVED, QUOTATION_STATUS_SENT, QUOTATION_STATUS_ORDERED].includes(
-      String(draft.quotation.fields.Status || "")
-    )
-  ) {
-    await generateFinalPdfForQuotation(quotation.id);
-  }
 
   return {
     quotationId: quotation.id,

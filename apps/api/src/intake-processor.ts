@@ -1110,6 +1110,7 @@ export async function syncQuotationWhatsAppDeliveryStatus(event: WhatsAppStatusE
     normalizedStatus === "sent" ||
     normalizedStatus === "delivered" ||
     normalizedStatus === "read";
+  const shouldMarkFailed = normalizedStatus === "failed";
 
   const quotationFields: Record<string, unknown> = {
     "WhatsApp Delivery Status": event.status,
@@ -1122,6 +1123,11 @@ export async function syncQuotationWhatsAppDeliveryStatus(event: WhatsAppStatusE
     quotationFields["Sent Date"] = quotation.fields["Sent Date"] || deliveryTimestamp;
     quotationFields["WhatsApp Sent Date Time"] =
       quotation.fields["WhatsApp Sent Date Time"] || deliveryTimestamp;
+  }
+
+  if (shouldMarkFailed) {
+    quotationFields["Send Quotation"] = false;
+    quotationFields.Status = quotation.fields.Status || "Approved Quote";
   }
 
   const updated = await updateRecordWithOptionalFieldFallback<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
@@ -1149,7 +1155,8 @@ export async function syncQuotationWhatsAppDeliveryStatus(event: WhatsAppStatusE
     status: event.status,
     recipientPhone: event.recipientPhone,
     errorMessage: event.errorMessage,
-    shouldMarkSent
+    shouldMarkSent,
+    shouldMarkFailed
   });
 
   return updated;
@@ -1464,6 +1471,8 @@ export async function sendQuotationWhatsApp(quotationId: string) {
     documentUrl: document.publicUrl,
     filename: document.fileName,
     caption: `Quotation ${quotationNumber} from Resham Sutra`,
+    customerName: customer.fields["Customer Name"] || enquiry.fields["Lead Name"] || "Customer",
+    quotationNumber,
     localFilePath: document.attachment?.path,
     contentType: document.attachment?.contentType || "application/pdf"
   });

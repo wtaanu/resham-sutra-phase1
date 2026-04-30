@@ -1550,7 +1550,7 @@ export default function App() {
       }
 
       await refreshOperations(false);
-      setActiveView("sentQuotations");
+      setActiveView(channel === "email" ? "sentQuotations" : "approvedQuotations");
       setActionState({
         key: actionKey,
         label,
@@ -1558,7 +1558,7 @@ export default function App() {
         message:
           channel === "email"
             ? "Quotation emailed successfully."
-            : "Quotation sent on WhatsApp successfully."
+            : "WhatsApp send request accepted. Waiting for delivery confirmation."
       });
     } catch (actionError) {
       const message =

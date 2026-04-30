@@ -6,6 +6,8 @@ type SendQuotationWhatsAppInput = {
   documentUrl: string;
   filename: string;
   caption: string;
+  customerName: string;
+  quotationNumber: string;
   localFilePath?: string;
   contentType?: string;
 };
@@ -29,6 +31,28 @@ function normalizeWhatsappRecipient(value: string) {
 
 export function isWhatsAppOutboundConfigured() {
   return Boolean(env.META_SYSTEM_USER_ACCESS_TOKEN && env.META_WHATSAPP_PHONE_NUMBER_ID);
+}
+
+function isQuotationTemplateConfigured() {
+  return Boolean(String(env.META_WHATSAPP_QUOTATION_TEMPLATE_NAME || "").trim());
+}
+
+function buildTemplateBodyParameters(input: SendQuotationWhatsAppInput) {
+  const values: Record<string, string> = {
+    customerName: input.customerName || "Customer",
+    quotationNumber: input.quotationNumber || input.filename,
+    documentUrl: input.documentUrl,
+    filename: input.filename
+  };
+
+  return env.META_WHATSAPP_QUOTATION_TEMPLATE_BODY_PARAMS.split(",")
+    .map((key) => key.trim())
+    .filter(Boolean)
+    .map((key) => ({
+      type: "text",
+      text: values[key] || ""
+    }))
+    .filter((parameter) => parameter.text);
 }
 
 async function uploadDocumentMediaToWhatsApp(input: {
@@ -81,9 +105,114 @@ async function uploadDocumentMediaToWhatsApp(input: {
   return mediaId;
 }
 
+async function sendQuotationTemplateOnWhatsApp(input: SendQuotationWhatsAppInput) {
+  if (!isWhatsAppOutboundConfigured()) {
+    throw new Error("WhatsApp outbound is not configured yet.");
+  }
+
+  const recipient = normalizeWhatsappRecipient(input.to);
+  if (!recipient) {
+    throw new Error("A valid customer WhatsApp number is required.");
+  }
+
+  const templateName = String(env.META_WHATSAPP_QUOTATION_TEMPLATE_NAME || "").trim();
+  if (!templateName) {
+    throw new Error("WhatsApp quotation template is not configured.");
+  }
+
+  console.info("[whatsapp-send] attempting approved quotation template send", {
+    recipient,
+    phoneNumberId: env.META_WHATSAPP_PHONE_NUMBER_ID,
+    templateName,
+    templateLanguage: env.META_WHATSAPP_QUOTATION_TEMPLATE_LANGUAGE,
+    filename: input.filename,
+    documentUrl: input.documentUrl
+  });
+
+  const document =
+    input.localFilePath
+      ? {
+          id: await uploadDocumentMediaToWhatsApp({
+            localFilePath: input.localFilePath,
+            filename: input.filename,
+            contentType: input.contentType
+          }),
+          filename: input.filename
+        }
+      : {
+          link: input.documentUrl,
+          filename: input.filename
+        };
+
+  const components: Array<Record<string, unknown>> = [
+    {
+      type: "header",
+      parameters: [
+        {
+          type: "document",
+          document
+        }
+      ]
+    }
+  ];
+  const bodyParameters = buildTemplateBodyParameters(input);
+  if (bodyParameters.length) {
+    components.push({
+      type: "body",
+      parameters: bodyParameters
+    });
+  }
+
+  const response = await fetch(
+    `https://graph.facebook.com/v22.0/${env.META_WHATSAPP_PHONE_NUMBER_ID}/messages`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.META_SYSTEM_USER_ACCESS_TOKEN}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to: recipient,
+        type: "template",
+        template: {
+          name: templateName,
+          language: {
+            code: env.META_WHATSAPP_QUOTATION_TEMPLATE_LANGUAGE
+          },
+          components
+        }
+      })
+    }
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error("[whatsapp-send] Meta template API returned error", {
+      recipient,
+      templateName,
+      status: response.status,
+      body: errorText
+    });
+    throw new Error(`WhatsApp template send failed: ${errorText}`);
+  }
+
+  const payload = await response.json();
+  console.info("[whatsapp-send] Meta API accepted approved template send", {
+    recipient,
+    templateName,
+    payload
+  });
+  return payload;
+}
+
 export async function sendQuotationDocumentOnWhatsApp(input: SendQuotationWhatsAppInput) {
   if (!isWhatsAppOutboundConfigured()) {
     throw new Error("WhatsApp outbound is not configured yet.");
+  }
+
+  if (isQuotationTemplateConfigured()) {
+    return sendQuotationTemplateOnWhatsApp(input);
   }
 
   const recipient = normalizeWhatsappRecipient(input.to);
