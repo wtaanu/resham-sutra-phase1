@@ -1553,6 +1553,19 @@ export async function processPendingEnquiries() {
         });
         continue;
       }
+
+      if (String(quotation.fields["Draft File URL"] || "").trim()) {
+        results.push({
+          enquiryRecordId: enquiry.id,
+          enquiryId: enquiry.fields["Enquiry ID"] || enquiry.id,
+          customerRecordId: customer.id,
+          quotationRecordId: quotation.id,
+          driveFolderUrl: quotation.fields["Drive Folder URL"] || enquiry.fields["Drive Folder URL"] || "",
+          status: "skipped",
+          message: "Draft already exists"
+        });
+        continue;
+      }
       const { folder } = await createDraftForReadyEnquiry(enquiry, customer, quotation, matchingItems);
 
       results.push({
