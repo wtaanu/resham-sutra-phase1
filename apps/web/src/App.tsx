@@ -193,7 +193,6 @@ type EnquiryFormState = {
   company: string;
   phone: string;
   email: string;
-  receiverWhatsappNumber: string;
   address: string;
   state: string;
   city: string;
@@ -579,7 +578,6 @@ function createBlankEnquiryForm(): EnquiryFormState {
     company: "",
     phone: "",
     email: "",
-    receiverWhatsappNumber: "",
     address: "",
     state: "",
     city: "",
@@ -883,6 +881,7 @@ export default function App() {
   const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false);
   const [productSearchTerm, setProductSearchTerm] = useState("");
   const [productDropdownOpen, setProductDropdownOpen] = useState(false);
+  const [enquiryStatusFilter, setEnquiryStatusFilter] = useState("All");
   const [selectedQuotationId, setSelectedQuotationId] = useState("");
   const [lineItemRows, setLineItemRows] = useState<LineItemDraftRow[]>([createLineItemRow()]);
   const [selectedProductId, setSelectedProductId] = useState("");
@@ -1424,7 +1423,11 @@ export default function App() {
         throw new Error(payload.message || "Failed to generate draft");
       }
 
-      await refreshOperations(false);
+      try {
+        await refreshOperations(false);
+      } catch {
+        // Keep success state when the follow-up refresh briefly fails.
+      }
       setActiveView("quotationDrafts");
       setActionState({
         key: `enquiry-draft-${enquiryId}`,
@@ -1600,7 +1603,11 @@ export default function App() {
         draftFileUrl: payload.draftFileUrl,
         driveFolderUrl: payload.driveFolderUrl
       });
-      await refreshOperations(false);
+      try {
+        await refreshOperations(false);
+      } catch {
+        // Keep success state when the follow-up refresh briefly fails.
+      }
       setActiveView("quotationDrafts");
       setActionState({
         key: actionKey,
@@ -1726,7 +1733,6 @@ function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
       company: enquiry.company,
       phone: enquiry.phone,
       email: enquiry.email,
-      receiverWhatsappNumber: enquiry.receiverWhatsappNumber,
       address: enquiry.address,
       state: enquiry.state,
       city: enquiry.city,
@@ -1845,6 +1851,25 @@ function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
     );
   }, [operations?.products, productSearchTerm]);
 
+  const enquiryStatusOptions = useMemo(() => {
+    const uniqueStatuses = Array.from(
+      new Set((operations?.enquiries || []).map((enquiry) => enquiry.parserStatus || ""))
+    ).filter(Boolean);
+    return ["All", ...uniqueStatuses];
+  }, [operations?.enquiries]);
+
+  const filteredEnquiries = useMemo(() => {
+    if (!operations?.enquiries) {
+      return [];
+    }
+
+    if (enquiryStatusFilter === "All") {
+      return operations.enquiries;
+    }
+
+    return operations.enquiries.filter((enquiry) => (enquiry.parserStatus || "") === enquiryStatusFilter);
+  }, [enquiryStatusFilter, operations?.enquiries]);
+
   function clearEnquiryFieldError(field: keyof EnquiryFormState) {
     setEnquiryFieldErrors((current) => {
       if (!current[field]) {
@@ -1903,7 +1928,6 @@ function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
     const isEditing = Boolean(editingEnquiryId);
     const formActionLabel = isEditing ? "Update Enquiry" : "Create Enquiry";
     const normalizedPhone = normalizePhoneInput(enquiryForm.phone);
-    const normalizedReceiverWhatsapp = normalizePhoneInput(enquiryForm.receiverWhatsappNumber);
     const normalizedEmail = enquiryForm.email.trim();
     const nextFieldErrors: EnquiryFieldErrors = {};
 
@@ -1919,24 +1943,12 @@ function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
       nextFieldErrors.email = "Email must include @.";
     }
 
-    if (enquiryForm.receiverWhatsappNumber.trim() && !isValidTenDigitPhone(enquiryForm.receiverWhatsappNumber)) {
-      nextFieldErrors.receiverWhatsappNumber = "Receiver WhatsApp number must be exactly 10 digits.";
-    }
-
     if (!enquiryForm.state.trim()) {
       nextFieldErrors.state = "State is required.";
     }
 
-    if (!enquiryForm.city.trim()) {
-      nextFieldErrors.city = "City is required.";
-    }
-
     if (enquiryForm.pincode.trim() && !/^\d{6}$/.test(normalizePincodeInput(enquiryForm.pincode))) {
       nextFieldErrors.pincode = "Main pincode must be a valid 6-digit number.";
-    }
-
-    if (enquiryForm.destinationPincode.trim() && !/^\d{6}$/.test(normalizePincodeInput(enquiryForm.destinationPincode))) {
-      nextFieldErrors.destinationPincode = "Destination pincode must be a valid 6-digit number.";
     }
 
     if (!enquiryForm.potentialProduct) {
@@ -1982,7 +1994,6 @@ function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
             company: enquiryForm.company,
             phone: normalizedPhone,
             email: normalizedEmail,
-            receiverWhatsappNumber: normalizedReceiverWhatsapp,
             address: enquiryForm.address,
             state: enquiryForm.state,
             city: enquiryForm.city,
@@ -2035,15 +2046,10 @@ function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
       if (message.toLowerCase().includes("email")) {
         backendFieldErrors.email = "Enter a valid email address.";
       }
-      if (message.toLowerCase().includes("receiver whatsapp")) {
-        backendFieldErrors.receiverWhatsappNumber = "Receiver WhatsApp number must be exactly 10 digits.";
-      }
       if (message.toLowerCase().includes("select a product")) {
         backendFieldErrors.potentialProduct = "Product is required.";
       }
-      if (message.toLowerCase().includes("destination pincode")) {
-        backendFieldErrors.destinationPincode = "Destination pincode must be a valid 6-digit number.";
-      } else if (message.toLowerCase().includes("pincode")) {
+      if (message.toLowerCase().includes("pincode")) {
         backendFieldErrors.pincode = "Main pincode must be a valid 6-digit number.";
       }
 
@@ -2287,7 +2293,11 @@ function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
         throw new Error(payload.message || "Failed to mark quotation as sent");
       }
 
-      await refreshOperations(false);
+      try {
+        await refreshOperations(false);
+      } catch {
+        // Keep success state when the follow-up refresh briefly fails.
+      }
       setActiveView("sentQuotations");
       setActionState({
         key: `quotation-mark-sent-${quotationId}`,
@@ -2509,7 +2519,11 @@ function updateLineItemRow(
       setLineItemRows([createLineItemRow()]);
       closeEntryPanel();
       setActiveView("quotationDrafts");
-      await refreshOperations(false);
+      try {
+        await refreshOperations(false);
+      } catch {
+        // Keep success state when the follow-up refresh briefly fails.
+      }
       } catch (submitError) {
         const message =
           submitError instanceof Error ? submitError.message : "Failed to create line items";
@@ -2851,25 +2865,6 @@ function updateLineItemRow(
               {enquiryFieldErrors.email ? <span className="field-error">{enquiryFieldErrors.email}</span> : null}
             </label>
             <label>
-              <span>Receiver WhatsApp Number</span>
-              <input
-                inputMode="numeric"
-                maxLength={10}
-                value={enquiryForm.receiverWhatsappNumber}
-                placeholder="Optional business number"
-                onChange={(event) => {
-                  clearEnquiryFieldError("receiverWhatsappNumber");
-                  setEnquiryForm((current) => ({
-                    ...current,
-                    receiverWhatsappNumber: normalizePhoneInput(event.target.value)
-                  }));
-                }}
-              />
-              {enquiryFieldErrors.receiverWhatsappNumber ? (
-                <span className="field-error">{enquiryFieldErrors.receiverWhatsappNumber}</span>
-              ) : null}
-            </label>
-            <label>
               <span>Pincode</span>
               <input
                 inputMode="numeric"
@@ -2904,7 +2899,7 @@ function updateLineItemRow(
               {enquiryFieldErrors.state ? <span className="field-error">{enquiryFieldErrors.state}</span> : null}
             </label>
             <label>
-              <span>City *</span>
+              <span>City</span>
               <input
                 value={enquiryForm.city}
                 onChange={(event) => {
@@ -2993,71 +2988,6 @@ function updateLineItemRow(
                   setEnquiryForm((current) => ({ ...current, requirementSummary: event.target.value }))
                 }
               />
-            </label>
-            <label className="form-span-2">
-              <span>Destination address</span>
-              <textarea
-                rows={2}
-                value={enquiryForm.destinationAddress}
-                onChange={(event) => {
-                  clearEnquiryFieldError("destinationAddress");
-                  setEnquiryForm((current) => ({ ...current, destinationAddress: event.target.value }));
-                }}
-              />
-              {enquiryFieldErrors.destinationAddress ? (
-                <span className="field-error">{enquiryFieldErrors.destinationAddress}</span>
-              ) : null}
-            </label>
-            <label>
-              <span>Destination pincode</span>
-              <input
-                inputMode="numeric"
-                value={enquiryForm.destinationPincode}
-                onChange={(event) => {
-                  clearEnquiryFieldError("destinationPincode");
-                  const value = normalizePincodeInput(event.target.value);
-                  setEnquiryForm((current) => ({ ...current, destinationPincode: value }));
-                  if (value.length === 6) {
-                    void autofillFromPincode(value, "destination");
-                  }
-                }}
-              />
-              {enquiryFieldErrors.destinationPincode ? (
-                <span className="field-error">{enquiryFieldErrors.destinationPincode}</span>
-              ) : null}
-            </label>
-            <label>
-              <span>Destination state</span>
-              <select
-                value={enquiryForm.destinationState}
-                onChange={(event) => {
-                  clearEnquiryFieldError("destinationState");
-                  setEnquiryForm((current) => ({ ...current, destinationState: event.target.value }));
-                }}
-              >
-                <option value="">Select state</option>
-                {stateOptions.map((stateOption) => (
-                  <option key={stateOption} value={stateOption}>
-                    {stateOption}
-                  </option>
-                ))}
-              </select>
-              {enquiryFieldErrors.destinationState ? (
-                <span className="field-error">{enquiryFieldErrors.destinationState}</span>
-              ) : null}
-            </label>
-            <label>
-              <span>Destination city</span>
-              <input
-                value={enquiryForm.destinationCity}
-                onChange={(event) => {
-                  clearEnquiryFieldError("destinationCity");
-                  setEnquiryForm((current) => ({ ...current, destinationCity: event.target.value }));
-                }}
-              />
-              {enquiryFieldErrors.destinationCity ? (
-                <span className="field-error">{enquiryFieldErrors.destinationCity}</span>
-              ) : null}
             </label>
             </div>
 
@@ -3861,11 +3791,26 @@ function updateLineItemRow(
         eyebrow="Enquiries"
         title="All inbound requests from Airtable forms"
         headerAction={
-          <button className="action-inline-button" type="button" onClick={openEnquiryEntry}>
-            Create Enquiry
-          </button>
+          <div className="table-header-actions">
+            <label className="table-filter-inline">
+              <span>Status</span>
+              <select
+                value={enquiryStatusFilter}
+                onChange={(event) => setEnquiryStatusFilter(event.target.value)}
+              >
+                {enquiryStatusOptions.map((statusOption) => (
+                  <option key={statusOption} value={statusOption}>
+                    {statusOption}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button className="action-inline-button" type="button" onClick={openEnquiryEntry}>
+              Create Enquiry
+            </button>
+          </div>
         }
-        rows={operations.enquiries}
+        rows={filteredEnquiries}
         columns={
           <>
             <th>Enquiry</th>
@@ -3874,7 +3819,6 @@ function updateLineItemRow(
             <th>Customer</th>
             <th>Quotation</th>
             <th>Requirement</th>
-            <th>Docs</th>
             <th>Folder</th>
             <th>Action</th>
           </>
@@ -3899,9 +3843,6 @@ function updateLineItemRow(
                 <strong>{enquiry.leadName || "Unnamed lead"}</strong>
                 <span>{enquiry.phone || enquiry.email || "Contact missing"}</span>
                 <span className="table-submeta">{enquiry.state || "State pending"}</span>
-                {enquiry.receiverWhatsappNumber ? (
-                  <span className="table-submeta">Receiver WA {enquiry.receiverWhatsappNumber}</span>
-                ) : null}
               </td>
               <td>
                 <span className={`status-chip ${statusTone(enquiry.parserStatus)}`}>
@@ -3912,19 +3853,6 @@ function updateLineItemRow(
               <td>{quotation?.quotationNumber || "Not created"}</td>
               <td>
                 <strong>{enquiry.requirementSummary || "Product not selected"}</strong>
-              </td>
-              <td>
-                {enquiry.mappedProductDocuments.length ? (
-                  <button
-                    className="action-inline-button"
-                    type="button"
-                    onClick={() => openEnquiryDocuments(enquiry.id)}
-                  >
-                    Docs ({enquiry.mappedProductDocuments.length})
-                  </button>
-                ) : (
-                  "No docs"
-                )}
               </td>
               <td>
                 {enquiry.driveFolderUrl ? (
@@ -3952,16 +3880,18 @@ function updateLineItemRow(
                   >
                     ✎
                   </button>
-                  <button
-                    className="action-inline-button"
-                    type="button"
-                    onClick={() => void handleGenerateDraftFromEnquiry(enquiry.id)}
-                    disabled={actionState?.key === `enquiry-draft-${enquiry.id}` && actionState.status === "loading"}
-                  >
-                    {actionState?.key === `enquiry-draft-${enquiry.id}` && actionState.status === "loading"
-                      ? "Generating..."
-                      : "Generate Draft"}
-                  </button>
+                  {["New", "New Enquiries", "Parsed"].includes(enquiry.parserStatus || "") ? (
+                    <button
+                      className="action-inline-button"
+                      type="button"
+                      onClick={() => void handleGenerateDraftFromEnquiry(enquiry.id)}
+                      disabled={actionState?.key === `enquiry-draft-${enquiry.id}` && actionState.status === "loading"}
+                    >
+                      {actionState?.key === `enquiry-draft-${enquiry.id}` && actionState.status === "loading"
+                        ? "Generating..."
+                        : "Generate Draft"}
+                    </button>
+                  ) : null}
                   {(!enquiry.linkedCustomerId || !enquiry.quotations.length) &&
                   (enquiry.parserStatus === "New" || enquiry.parserStatus === "Parsed") ? (
                     <button

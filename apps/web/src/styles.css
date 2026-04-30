@@ -924,6 +924,23 @@ a:hover {
   gap: 10px;
 }
 
+.table-filter-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.table-filter-inline select {
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #ffffff;
+  color: var(--ink);
+}
+
 .feed-list {
   display: grid;
   gap: 8px;

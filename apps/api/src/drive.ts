@@ -210,7 +210,7 @@ export async function findFolderByName(folderName: string) {
   return data.files[0] ?? null;
 }
 
-async function findFileByNameInFolder(fileName: string, folderId: string) {
+async function findFilesByNameInFolder(fileName: string, folderId: string) {
   if (!isDriveConfigured()) {
     throw new Error("Google Drive is not configured");
   }
@@ -249,10 +249,18 @@ async function findFileByNameInFolder(fileName: string, folderId: string) {
   }
 
   const data = (await response.json()) as GoogleDriveListResponse;
+  return data.files;
+}
+
+async function findFileByNameInFolder(fileName: string, folderId: string) {
+  const files = await findFilesByNameInFolder(fileName, folderId);
+  const normalizedFileName = String(fileName || "").trim();
+  const ext = path.extname(normalizedFileName);
+  const baseName = ext ? normalizedFileName.slice(0, -ext.length) : normalizedFileName;
   const exactMatch =
-    data.files.find((file) => file.name === normalizedFileName) ||
-    data.files.find((file) => file.name === baseName);
-  return exactMatch ?? data.files[0] ?? null;
+    files.find((file) => file.name === normalizedFileName) ||
+    files.find((file) => file.name === baseName);
+  return exactMatch ?? files[0] ?? null;
 }
 
 async function deleteDriveFile(fileId: string) {
@@ -433,7 +441,13 @@ export async function uploadFileToFolder(
   );
 
   let existing: GoogleDriveFile | null = await findFileByNameInFolder(fileName, folderId);
-  if ((options?.convertToGoogleSheet || options?.replaceExisting) && existing) {
+  const sameNameFiles = await findFilesByNameInFolder(fileName, folderId);
+  const duplicateFiles = sameNameFiles.filter((file) => !existing || file.id !== existing.id);
+  for (const duplicateFile of duplicateFiles) {
+    await deleteDriveFile(duplicateFile.id);
+  }
+
+  if (options?.replaceExisting && existing) {
     await deleteDriveFile(existing.id);
     existing = null;
   }
