@@ -18,7 +18,8 @@ import {
   regenerateQuotationDraft,
   sendQuotationEmail,
   sendQuotationWhatsApp,
-  processPendingEnquiries
+  processPendingEnquiries,
+  syncQuotationWhatsAppDeliveryStatus
 } from "./intake-processor.js";
 import { getOperationsSnapshot } from "./operations.js";
 import {
@@ -44,7 +45,11 @@ import {
 } from "./product-documents.js";
 import { getRecord } from "./airtable.js";
 import { getProjectSnapshot, getProjectSummary } from "./project.js";
-import { extractWhatsAppWebhookMessages, processWhatsAppEnquiry } from "./whatsapp-intake.js";
+import {
+  extractWhatsAppWebhookMessages,
+  extractWhatsAppWebhookStatusEvents,
+  processWhatsAppEnquiry
+} from "./whatsapp-intake.js";
 import { isSmtpConfigured, resolveDocumentAttachment, sendMail } from "./mailer.js";
 
 const app = express();
@@ -402,10 +407,18 @@ app.post("/api/whatsapp/enquiries", async (request, response) => {
 
 app.post("/api/whatsapp/webhook", async (request, response) => {
   try {
+    const statusEvents = extractWhatsAppWebhookStatusEvents(request.body);
     const messages = extractWhatsAppWebhookMessages(request.body);
     console.log(
-      `[whatsapp-webhook] received payload with ${messages.length} text message(s)`
+      `[whatsapp-webhook] received payload with ${messages.length} text message(s) and ${statusEvents.length} status event(s)`
     );
+
+    for (const statusEvent of statusEvents) {
+      console.log(
+        `[whatsapp-webhook] processing status messageId=${statusEvent.messageId || "unknown"} status=${statusEvent.status || "unknown"} recipient=${statusEvent.recipientPhone || "unknown"} phoneNumberId=${statusEvent.phoneNumberId || "unknown"}`
+      );
+      await syncQuotationWhatsAppDeliveryStatus(statusEvent);
+    }
 
     const results = [];
     for (const message of messages) {
@@ -421,6 +434,7 @@ app.post("/api/whatsapp/webhook", async (request, response) => {
 
     response.status(200).json({
       status: "ok",
+      statusEventCount: statusEvents.length,
       processedCount: results.length,
       results
     });

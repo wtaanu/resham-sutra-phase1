@@ -97,6 +97,29 @@ const metaWebhookSchema = z.object({
                       text: z.object({ body: z.string().optional() }).optional()
                     })
                   )
+                  .optional(),
+                statuses: z
+                  .array(
+                    z.object({
+                      id: z.string().optional(),
+                      status: z.string().optional(),
+                      recipient_id: z.string().optional(),
+                      errors: z
+                        .array(
+                          z.object({
+                            code: z.number().optional(),
+                            title: z.string().optional(),
+                            message: z.string().optional(),
+                            error_data: z
+                              .object({
+                                details: z.string().optional()
+                              })
+                              .optional()
+                          })
+                        )
+                        .optional()
+                    })
+                  )
                   .optional()
               })
             })
@@ -1035,4 +1058,37 @@ export function extractWhatsAppWebhookMessages(payload: unknown) {
   }
 
   return messages;
+}
+
+export function extractWhatsAppWebhookStatusEvents(payload: unknown) {
+  const parsed = metaWebhookSchema.parse(payload);
+  const statuses: Array<{
+    messageId: string;
+    status: string;
+    recipientPhone: string;
+    phoneNumberId: string;
+    errorMessage: string;
+  }> = [];
+
+  for (const entry of parsed.entry) {
+    for (const change of entry.changes) {
+      const phoneNumberId = change.value.metadata?.phone_number_id || "";
+      for (const statusItem of change.value.statuses || []) {
+        const errorMessage = (statusItem.errors || [])
+          .map((error) => error.error_data?.details || error.message || error.title || "")
+          .filter(Boolean)
+          .join(" | ");
+
+        statuses.push({
+          messageId: statusItem.id || "",
+          status: statusItem.status || "",
+          recipientPhone: statusItem.recipient_id || "",
+          phoneNumberId,
+          errorMessage
+        });
+      }
+    }
+  }
+
+  return statuses;
 }

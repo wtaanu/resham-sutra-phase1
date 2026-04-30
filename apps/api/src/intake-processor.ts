@@ -89,6 +89,10 @@ type QuotationFields = {
   "Sent Date"?: string;
   "WhatsApp Sent Date Time"?: string;
   "Email Sent Date Time"?: string;
+  "WhatsApp Outbound Message ID"?: string;
+  "WhatsApp Delivery Status"?: string;
+  "WhatsApp Delivery Updated At"?: string;
+  "WhatsApp Delivery Error"?: string;
   "Send Quotation"?: boolean;
   "Send Reminder"?: boolean;
   "Mark Accepted"?: boolean;
@@ -128,7 +132,11 @@ const optionalQuotationFields = [
   "Logged Date Time",
   "Draft Created Time",
   "WhatsApp Sent Date Time",
-  "Email Sent Date Time"
+  "Email Sent Date Time",
+  "WhatsApp Outbound Message ID",
+  "WhatsApp Delivery Status",
+  "WhatsApp Delivery Updated At",
+  "WhatsApp Delivery Error"
 ] as const;
 
 function linkedRecordIds(...recordIds: Array<string | undefined>) {
@@ -956,6 +964,97 @@ async function markQuotationSent(
   }, optionalQuotationFields);
 }
 
+export type WhatsAppStatusEvent = {
+  messageId: string;
+  status: string;
+  recipientPhone: string;
+  phoneNumberId: string;
+  errorMessage: string;
+};
+
+export async function syncQuotationWhatsAppDeliveryStatus(event: WhatsAppStatusEvent) {
+  const messageId = String(event.messageId || "").trim();
+  if (!messageId) {
+    return null;
+  }
+
+  const escapedMessageId = messageId.replace(/'/g, "\\'");
+  const quotations = await listRecords<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
+    fields: [
+      "Status",
+      "Linked Enquiry",
+      "Sent Date",
+      "WhatsApp Sent Date Time",
+      "Quotation Number",
+      "WhatsApp Outbound Message ID",
+      "WhatsApp Delivery Status",
+      "WhatsApp Delivery Updated At",
+      "WhatsApp Delivery Error"
+    ],
+    filterByFormula: `{WhatsApp Outbound Message ID}='${escapedMessageId}'`,
+    maxRecords: 10
+  });
+
+  const quotation = quotations[0];
+  if (!quotation) {
+    console.warn("[whatsapp-status] no quotation found for outbound message", {
+      messageId,
+      status: event.status,
+      recipientPhone: event.recipientPhone
+    });
+    return null;
+  }
+
+  const normalizedStatus = String(event.status || "").trim().toLowerCase();
+  const deliveryTimestamp = new Date().toISOString();
+  const shouldMarkSent =
+    normalizedStatus === "sent" ||
+    normalizedStatus === "delivered" ||
+    normalizedStatus === "read";
+
+  const quotationFields: Record<string, unknown> = {
+    "WhatsApp Delivery Status": event.status,
+    "WhatsApp Delivery Updated At": deliveryTimestamp,
+    "WhatsApp Delivery Error": event.errorMessage || ""
+  };
+
+  if (shouldMarkSent) {
+    quotationFields.Status = "Sent Quote";
+    quotationFields["Sent Date"] = quotation.fields["Sent Date"] || deliveryTimestamp;
+    quotationFields["WhatsApp Sent Date Time"] =
+      quotation.fields["WhatsApp Sent Date Time"] || deliveryTimestamp;
+  }
+
+  const updated = await updateRecordWithOptionalFieldFallback<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
+    id: quotation.id,
+    fields: quotationFields
+  }, optionalQuotationFields);
+
+  if (shouldMarkSent) {
+    const enquiryId = quotation.fields["Linked Enquiry"]?.[0];
+    if (enquiryId) {
+      await updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
+        id: enquiryId,
+        fields: {
+          ...enquiryStatusFields("Sent Quote")
+        }
+      });
+    }
+  }
+
+  console.info("[whatsapp-status] quotation delivery status updated", {
+    quotationId: quotation.id,
+    quotationNumber: updated.fields["Quotation Number"] || quotation.id,
+    messageId,
+    status: event.status,
+    recipientPhone: event.recipientPhone,
+    errorMessage: event.errorMessage,
+    shouldMarkSent
+  });
+
+  return updated;
+}
+
 async function createDraftForReadyEnquiry(
   enquiry: AirtableRecord<EnquiryFields>,
   customer: AirtableRecord<CustomerFields>,
@@ -1272,19 +1371,26 @@ export async function sendQuotationWhatsApp(quotationId: string) {
     sendResult
   });
 
-  const updatedQuotation = await markQuotationSent(quotation, "WhatsApp");
-  if (enquiry.id) {
-    await updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
-      id: enquiry.id,
+  const outboundMessageId = String(sendResult?.messages?.[0]?.id || "").trim();
+  const updatedQuotation = await updateRecordWithOptionalFieldFallback<QuotationFields>(
+    env.AIRTABLE_QUOTATIONS_TABLE,
+    {
+      id: quotation.id,
       fields: {
-        ...enquiryStatusFields("Sent Quote")
+        "WhatsApp Outbound Message ID": outboundMessageId,
+        "WhatsApp Delivery Status": "accepted",
+        "WhatsApp Delivery Updated At": new Date().toISOString(),
+        "WhatsApp Delivery Error": "",
+        "Send Quotation": true
       }
-    });
-  }
-  console.info("[quotation-send-whatsapp] quotation marked as sent", {
+    },
+    optionalQuotationFields
+  );
+  console.info("[quotation-send-whatsapp] quotation marked as accepted by Meta pending delivery callback", {
     quotationId,
     quotationNumber,
-    recipientPhone
+    recipientPhone,
+    outboundMessageId
   });
   return {
     quotation: updatedQuotation,
