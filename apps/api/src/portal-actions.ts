@@ -16,6 +16,7 @@ import {
   generateFinalPdfForQuotation,
   refreshDraftForQuotation
 } from "./intake-processor.js";
+import { syncEnquiryToZohoBigin } from "./zoho-bigin.js";
 
 type EnquiryFields = {
   "Enquiry ID"?: string;
@@ -40,6 +41,10 @@ type EnquiryFields = {
   "Requested Asset"?: string;
   "Potential Product"?: string;
   "Receiver WhatsApp Number"?: string;
+  "Zoho Bigin Record ID"?: string;
+  "Zoho Bigin Sync Status"?: string;
+  "Zoho Bigin Synced At"?: string;
+  "Zoho Bigin Sync Error"?: string;
 };
 
 type CustomerFields = {
@@ -191,7 +196,14 @@ const optionalEmailSchema = z
   .string()
   .trim()
   .refine((value) => value === "" || value.includes("@"), "Email must include @");
-const optionalEnquiryFields = ["Logged Date Time", "Receiver WhatsApp Number"] as const;
+const optionalEnquiryFields = [
+  "Logged Date Time",
+  "Receiver WhatsApp Number",
+  "Zoho Bigin Record ID",
+  "Zoho Bigin Sync Status",
+  "Zoho Bigin Synced At",
+  "Zoho Bigin Sync Error"
+] as const;
 const optionalQuotationFields = [
   "Logged Date Time",
   "Draft Created Time",
@@ -422,6 +434,59 @@ function normalizePhone(value: unknown) {
 
 function normalizeEmail(value: unknown) {
   return String(value ?? "").trim().toLowerCase();
+}
+
+async function syncEnquiryToZohoAndPersist(enquiry: AirtableRecord<EnquiryFields>) {
+  try {
+    const result = await syncEnquiryToZohoBigin({
+      recordId: String(enquiry.fields["Zoho Bigin Record ID"] || "").trim(),
+      enquiryId: String(enquiry.fields["Enquiry ID"] || enquiry.id),
+      leadName: String(enquiry.fields["Lead Name"] || ""),
+      company: String(enquiry.fields.Company || ""),
+      phone: normalizePhone(enquiry.fields.Phone),
+      email: normalizeEmail(enquiry.fields.Email),
+      address: String(enquiry.fields.Address || ""),
+      city: String(enquiry.fields.City || ""),
+      state: String(enquiry.fields.State || ""),
+      pincode: String(enquiry.fields.Pincode || ""),
+      destinationAddress: String(enquiry.fields["Destination Address"] || ""),
+      destinationCity: String(enquiry.fields["Destination City"] || ""),
+      destinationState: String(enquiry.fields["Destination State"] || ""),
+      destinationPincode: String(enquiry.fields["Destination Pincode"] || ""),
+      parserStatus: String(enquiry.fields["Parser Status"] || ""),
+      requirementSummary: String(enquiry.fields["Requirement Summary"] || ""),
+      receiverWhatsappNumber: normalizePhone(enquiry.fields["Receiver WhatsApp Number"])
+    });
+
+    if (!result) {
+      return enquiry;
+    }
+
+    return updateRecordWithOptionalFieldFallback<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
+      id: enquiry.id,
+      fields: {
+        "Zoho Bigin Record ID": result.recordId,
+        "Zoho Bigin Sync Status": `Synced (${result.action})`,
+        "Zoho Bigin Synced At": new Date().toISOString(),
+        "Zoho Bigin Sync Error": ""
+      }
+    }, optionalEnquiryFields);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown Zoho Bigin sync error";
+    console.warn("[zoho-bigin] enquiry sync skipped", {
+      enquiryId: enquiry.id,
+      message
+    });
+
+    return updateRecordWithOptionalFieldFallback<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
+      id: enquiry.id,
+      fields: {
+        "Zoho Bigin Sync Status": "Sync Failed",
+        "Zoho Bigin Synced At": new Date().toISOString(),
+        "Zoho Bigin Sync Error": message
+      }
+    }, optionalEnquiryFields).catch(() => enquiry);
+  }
 }
 
 function buildManualEnquiryDedupKey(input: z.infer<typeof enquiryPayloadSchema>) {
@@ -1049,11 +1114,12 @@ export async function createPortalEnquiry(payload: unknown) {
   });
 
   const provisioned = await createCustomerForEnquiry(created.id);
+  const syncedEnquiry = await syncEnquiryToZohoAndPersist(provisioned.enquiry);
 
   return {
-    enquiryRecordId: provisioned.enquiry.id,
-    enquiryId: provisioned.enquiry.fields["Enquiry ID"] || created.fields["Enquiry ID"] || "",
-    parserStatus: provisioned.enquiry.fields["Parser Status"] || created.fields["Parser Status"] || parserStatus,
+    enquiryRecordId: syncedEnquiry.id,
+    enquiryId: syncedEnquiry.fields["Enquiry ID"] || created.fields["Enquiry ID"] || "",
+    parserStatus: syncedEnquiry.fields["Parser Status"] || created.fields["Parser Status"] || parserStatus,
     linkedCustomerId: provisioned.customer.id,
     quotationRecordId: provisioned.quotation.id,
     quotationNumber: provisioned.quotation.fields["Quotation Number"] || "",
@@ -1176,11 +1242,12 @@ export async function updatePortalEnquiry(enquiryId: string, payload: unknown) {
   }
 
   const provisioned = await createCustomerForEnquiry(updatedEnquiry.id);
+  const syncedEnquiry = await syncEnquiryToZohoAndPersist(provisioned.enquiry);
 
   return {
-    enquiryRecordId: provisioned.enquiry.id,
-    enquiryId: provisioned.enquiry.fields["Enquiry ID"] || updatedEnquiry.fields["Enquiry ID"] || "",
-    parserStatus: provisioned.enquiry.fields["Parser Status"] || updatedEnquiry.fields["Parser Status"] || parserStatus,
+    enquiryRecordId: syncedEnquiry.id,
+    enquiryId: syncedEnquiry.fields["Enquiry ID"] || updatedEnquiry.fields["Enquiry ID"] || "",
+    parserStatus: syncedEnquiry.fields["Parser Status"] || updatedEnquiry.fields["Parser Status"] || parserStatus,
     linkedCustomerId: provisioned.customer.id,
     quotationRecordId: provisioned.quotation.id,
     quotationNumber: provisioned.quotation.fields["Quotation Number"] || "",

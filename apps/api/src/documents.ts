@@ -265,7 +265,8 @@ async function resolveTemplateBuffer(localTemplatePath: string) {
 
   try {
     const templateFolder = await ensureDefaultTemplateFolder();
-    const templateFileName = path.basename(localTemplatePath);
+    const templateFileName =
+      env.GOOGLE_DRIVE_DEFAULT_TEMPLATE_FILE_NAME?.trim() || path.basename(localTemplatePath);
     let templateFile = await findDriveFileInFolder(templateFileName, templateFolder.folderId);
 
     if (!templateFile) {

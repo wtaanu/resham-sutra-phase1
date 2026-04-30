@@ -215,15 +215,24 @@ async function findFileByNameInFolder(fileName: string, folderId: string) {
     throw new Error("Google Drive is not configured");
   }
 
-  const query = [
-    `name='${escapeDriveQuery(fileName)}'`,
-    "trashed=false",
-    `'${folderId}' in parents`
-  ].join(" and ");
+  const normalizedFileName = String(fileName || "").trim();
+  const ext = path.extname(normalizedFileName);
+  const baseName = ext ? normalizedFileName.slice(0, -ext.length) : normalizedFileName;
+  const nameCandidates = Array.from(
+    new Set([normalizedFileName, baseName].filter(Boolean))
+  );
+  const nameFormula =
+    nameCandidates.length === 1
+      ? `name='${escapeDriveQuery(nameCandidates[0])}'`
+      : `(${nameCandidates
+          .map((candidate) => `name='${escapeDriveQuery(candidate)}'`)
+          .join(" or ")})`;
+
+  const query = [nameFormula, "trashed=false", `'${folderId}' in parents`].join(" and ");
 
   const params = new URLSearchParams({
     q: query,
-    fields: "files(id,name,webViewLink)"
+    fields: "files(id,name,webViewLink,mimeType)"
   });
 
   const response = await fetch(
@@ -240,7 +249,10 @@ async function findFileByNameInFolder(fileName: string, folderId: string) {
   }
 
   const data = (await response.json()) as GoogleDriveListResponse;
-  return data.files[0] ?? null;
+  const exactMatch =
+    data.files.find((file) => file.name === normalizedFileName) ||
+    data.files.find((file) => file.name === baseName);
+  return exactMatch ?? data.files[0] ?? null;
 }
 
 async function deleteDriveFile(fileId: string) {
