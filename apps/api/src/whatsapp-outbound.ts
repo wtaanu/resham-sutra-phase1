@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { env } from "./config.js";
 
 type SendQuotationWhatsAppInput = {
@@ -5,6 +6,8 @@ type SendQuotationWhatsAppInput = {
   documentUrl: string;
   filename: string;
   caption: string;
+  localFilePath?: string;
+  contentType?: string;
 };
 
 function normalizeWhatsappRecipient(value: string) {
@@ -28,6 +31,56 @@ export function isWhatsAppOutboundConfigured() {
   return Boolean(env.META_SYSTEM_USER_ACCESS_TOKEN && env.META_WHATSAPP_PHONE_NUMBER_ID);
 }
 
+async function uploadDocumentMediaToWhatsApp(input: {
+  localFilePath: string;
+  filename: string;
+  contentType?: string;
+}) {
+  const bytes = await readFile(input.localFilePath);
+  const form = new FormData();
+  form.append("messaging_product", "whatsapp");
+  form.append(
+    "file",
+    new Blob([bytes], { type: input.contentType || "application/pdf" }),
+    input.filename
+  );
+  form.append("type", input.contentType || "application/pdf");
+
+  const response = await fetch(
+    `https://graph.facebook.com/v22.0/${env.META_WHATSAPP_PHONE_NUMBER_ID}/media`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.META_SYSTEM_USER_ACCESS_TOKEN}`
+      },
+      body: form
+    }
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error("[whatsapp-send] Meta media upload failed", {
+      filename: input.filename,
+      status: response.status,
+      body: errorText
+    });
+    throw new Error(`WhatsApp media upload failed: ${errorText}`);
+  }
+
+  const payload = await response.json();
+  const mediaId = String(payload?.id || "").trim();
+  if (!mediaId) {
+    throw new Error("WhatsApp media upload succeeded but no media id was returned.");
+  }
+
+  console.info("[whatsapp-send] Meta media upload succeeded", {
+    filename: input.filename,
+    mediaId
+  });
+
+  return mediaId;
+}
+
 export async function sendQuotationDocumentOnWhatsApp(input: SendQuotationWhatsAppInput) {
   if (!isWhatsAppOutboundConfigured()) {
     throw new Error("WhatsApp outbound is not configured yet.");
@@ -45,6 +98,20 @@ export async function sendQuotationDocumentOnWhatsApp(input: SendQuotationWhatsA
     documentUrl: input.documentUrl
   });
 
+  let documentPayload: Record<string, string> | null = null;
+  if (input.localFilePath) {
+    const mediaId = await uploadDocumentMediaToWhatsApp({
+      localFilePath: input.localFilePath,
+      filename: input.filename,
+      contentType: input.contentType
+    });
+    documentPayload = {
+      id: mediaId,
+      filename: input.filename,
+      caption: input.caption
+    };
+  }
+
   const response = await fetch(
     `https://graph.facebook.com/v22.0/${env.META_WHATSAPP_PHONE_NUMBER_ID}/messages`,
     {
@@ -57,11 +124,13 @@ export async function sendQuotationDocumentOnWhatsApp(input: SendQuotationWhatsA
         messaging_product: "whatsapp",
         to: recipient,
         type: "document",
-        document: {
-          link: input.documentUrl,
-          filename: input.filename,
-          caption: input.caption
-        }
+        document:
+          documentPayload ||
+          {
+            link: input.documentUrl,
+            filename: input.filename,
+            caption: input.caption
+          }
       })
     }
   );

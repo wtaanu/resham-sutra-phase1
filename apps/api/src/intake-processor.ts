@@ -1360,7 +1360,9 @@ export async function sendQuotationWhatsApp(quotationId: string) {
     to: recipientPhone,
     documentUrl: document.publicUrl,
     filename: document.fileName,
-    caption: `Quotation ${quotationNumber} from Resham Sutra`
+    caption: `Quotation ${quotationNumber} from Resham Sutra`,
+    localFilePath: document.attachment?.path,
+    contentType: document.attachment?.contentType || "application/pdf"
   });
 
   console.info("[quotation-send-whatsapp] outbound document send completed", {
