@@ -506,12 +506,58 @@ function buildBiginDealName(input: BiginEnquiryPayload) {
 }
 
 function buildZohoCriteria(fieldApiName: string, value: string) {
-  const normalizedValue = String(value || "").trim().replace(/,/g, "\\,").replace(/\)/g, "\\)");
+  const normalizedValue = String(value || "")
+    .trim()
+    .replace(/\r?\n/g, " ")
+    .replace(/,/g, "\\,")
+    .replace(/\)/g, "\\)");
   return `(${fieldApiName}:equals:${normalizedValue})`;
 }
 
+function getBiginRecordId(record: { id?: string; details?: { id?: string } } | undefined) {
+  return String(record?.id || record?.details?.id || "");
+}
+
+async function findZohoBiginProductByWord(input: BiginEnquiryPayload, value: string) {
+  const normalizedValue = String(value || "").trim().replace(/\r?\n/g, " ");
+  if (!normalizedValue) {
+    return "";
+  }
+
+  const moduleName = env.ZOHO_BIGIN_PRODUCT_MODULE_API_NAME;
+  const context: ZohoBiginRequestContext = {
+    operation: "lookup",
+    moduleName,
+    enquiryId: input.enquiryId,
+    nonEmptyFields: { word: normalizedValue }
+  };
+
+  try {
+    console.info("[zoho-bigin] product word lookup start", context);
+    const result = await zohoBiginRequest(
+      `${moduleName}/search?word=${encodeURIComponent(normalizedValue)}`,
+      { method: "GET" },
+      context
+    );
+    const productId = getBiginRecordId(result.data?.[0]);
+    if (productId) {
+      console.info("[zoho-bigin] product word lookup matched", {
+        ...context,
+        productId
+      });
+    }
+    return productId;
+  } catch (error) {
+    console.warn("[zoho-bigin] product word lookup failed; continuing without product link", {
+      ...context,
+      error: serializeError(error)
+    });
+    return "";
+  }
+}
+
 async function findZohoBiginProductByField(input: BiginEnquiryPayload, fieldApiName: string, value: string) {
-  const normalizedValue = String(value || "").trim();
+  const normalizedValue = String(value || "").trim().replace(/\r?\n/g, " ");
   if (!fieldApiName || !normalizedValue) {
     return "";
   }
@@ -525,23 +571,30 @@ async function findZohoBiginProductByField(input: BiginEnquiryPayload, fieldApiN
     nonEmptyFields: { [fieldApiName]: normalizedValue }
   };
 
-  console.info("[zoho-bigin] product lookup start", context);
-  const result = await zohoBiginRequest(
-    `${moduleName}/search?criteria=${encodeURIComponent(buildZohoCriteria(fieldApiName, normalizedValue))}`,
-    { method: "GET" },
-    context
-  );
-  const first = result.data?.[0];
-  const productId = String(first?.id || first?.details?.id || "");
+  try {
+    console.info("[zoho-bigin] product criteria lookup start", context);
+    const result = await zohoBiginRequest(
+      `${moduleName}/search?criteria=${encodeURIComponent(buildZohoCriteria(fieldApiName, normalizedValue))}`,
+      { method: "GET" },
+      context
+    );
+    const productId = getBiginRecordId(result.data?.[0]);
 
-  if (productId) {
-    console.info("[zoho-bigin] product lookup matched", {
+    if (productId) {
+      console.info("[zoho-bigin] product criteria lookup matched", {
+        ...context,
+        productId
+      });
+    }
+
+    return productId;
+  } catch (error) {
+    console.warn("[zoho-bigin] product criteria lookup failed; trying word lookup", {
       ...context,
-      productId
+      error: serializeError(error)
     });
+    return findZohoBiginProductByWord(input, normalizedValue);
   }
-
-  return productId;
 }
 
 async function findZohoBiginProduct(input: BiginEnquiryPayload) {
