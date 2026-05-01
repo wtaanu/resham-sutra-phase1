@@ -27,7 +27,7 @@ type BiginRecordResponse = {
 };
 
 type ZohoBiginRequestContext = {
-  operation: "insert_or_upsert" | "update" | "token_refresh" | "auth_exchange";
+  operation: "insert_or_upsert" | "update" | "lookup" | "token_refresh" | "auth_exchange";
   moduleName?: string;
   recordId?: string;
   enquiryId?: string;
@@ -38,6 +38,7 @@ type ZohoBiginRequestContext = {
 
 export type BiginEnquiryPayload = {
   recordId?: string;
+  dealRecordId?: string;
   enquiryId: string;
   loggedDateTime: string;
   leadName: string;
@@ -55,10 +56,19 @@ export type BiginEnquiryPayload = {
   parserStatus: string;
   requirementSummary: string;
   receiverWhatsappNumber: string;
+  quotationRef?: string;
+  productName?: string;
+  productKey?: string;
+  productDescription?: string;
+  productUnitPrice?: number;
+  productFreight?: number;
+  productGstRate?: number;
+  productCategory?: string;
 };
 
 export type BiginSyncResult = {
   recordId: string;
+  dealRecordId: string;
   action: string;
   duplicateField: string;
   response: Record<string, unknown>;
@@ -291,28 +301,6 @@ function buildMailingCode(input: BiginEnquiryPayload) {
   return String(input.pincode || "").trim();
 }
 
-function deriveBiginPipelineStage(parserStatus: string) {
-  const normalized = String(parserStatus || "").trim().toLowerCase();
-  if (
-    normalized === "draft quote" ||
-    normalized === "approved quote" ||
-    normalized === "xls created" ||
-    normalized === "xlsx created" ||
-    normalized === "draft created"
-  ) {
-    return "To Quote";
-  }
-  if (
-    normalized === "sent quote" ||
-    normalized === "sent quotations" ||
-    normalized === "sent quotation" ||
-    normalized === "ordered"
-  ) {
-    return "Quoted";
-  }
-  return "Enquiry";
-}
-
 function setConfiguredField(record: Record<string, unknown>, fieldApiName: string, value: unknown) {
   const normalizedFieldApiName = String(fieldApiName || "").trim();
   if (normalizedFieldApiName) {
@@ -320,18 +308,18 @@ function setConfiguredField(record: Record<string, unknown>, fieldApiName: strin
   }
 }
 
-function mapEnquiryToBiginRecord(input: BiginEnquiryPayload) {
+function mapEnquiryToBiginRecord(input: BiginEnquiryPayload, accountId = "") {
   const name = splitLeadName(input.leadName);
   const record: Record<string, unknown> = {
     First_Name: name.firstName,
     Last_Name: name.lastName,
     Email: input.email,
     Mobile: input.phone,
-    "Mailing Street": input.address,
-    "Mailing City": buildMailingCity(input),
-    "Mailing State": buildMailingState(input),
-    "Mailing Country": env.ZOHO_BIGIN_DEFAULT_MAILING_COUNTRY,
-    "Mailing Zip": buildMailingCode(input),
+    Mailing_Street: input.address,
+    Mailing_City: buildMailingCity(input),
+    Mailing_State: buildMailingState(input),
+    Mailing_Country: env.ZOHO_BIGIN_DEFAULT_MAILING_COUNTRY,
+    Mailing_Zip: buildMailingCode(input),
     Description: [
       input.requirementSummary ? `Requirement: ${input.requirementSummary}` : "",
       input.parserStatus ? `Status: ${input.parserStatus}` : "",
@@ -341,16 +329,14 @@ function mapEnquiryToBiginRecord(input: BiginEnquiryPayload) {
       .join("\n")
   };
 
-  setConfiguredField(record, env.ZOHO_BIGIN_COMPANY_FIELD_API_NAME, input.company);
+  if (accountId) {
+    setConfiguredField(record, env.ZOHO_BIGIN_COMPANY_FIELD_API_NAME, { id: accountId });
+  }
 
   if (env.ZOHO_BIGIN_PHONE_FIELD_API_NAME !== "Mobile") {
     setConfiguredField(record, env.ZOHO_BIGIN_PHONE_FIELD_API_NAME, input.phone);
   }
 
-  const pipelineStageFieldApiName = String(env.ZOHO_BIGIN_PIPELINE_STAGE_FIELD_API_NAME || "").trim();
-  if (pipelineStageFieldApiName) {
-    record[pipelineStageFieldApiName] = deriveBiginPipelineStage(input.parserStatus);
-  }
 
   return record;
 }
@@ -436,13 +422,247 @@ async function zohoBiginRequest(path: string, init: RequestInit, context: ZohoBi
   }
 }
 
+async function ensureZohoBiginAccount(company: string, enquiryId: string) {
+  const accountName = String(company || "").trim();
+  if (!accountName) {
+    return "";
+  }
+
+  const moduleName = env.ZOHO_BIGIN_ACCOUNT_MODULE_API_NAME;
+  const accountNameField = env.ZOHO_BIGIN_ACCOUNT_NAME_FIELD_API_NAME;
+  const record = sanitizeBiginPayload({
+    [accountNameField]: accountName
+  });
+  const context: ZohoBiginRequestContext = {
+    operation: "insert_or_upsert",
+    moduleName,
+    enquiryId,
+    fieldNames: Object.keys(record),
+    nonEmptyFields: describeBiginFieldValues(record),
+    duplicateCheckFields: [accountNameField]
+  };
+
+  console.info("[zoho-bigin] prepared account lookup payload", context);
+  const result = await zohoBiginRequest(`${moduleName}/upsert`, {
+    method: "POST",
+    body: JSON.stringify({
+      data: [record],
+      duplicate_check_fields: [accountNameField]
+    })
+  }, context);
+
+  const first = result.data?.[0];
+  const accountId = String(first?.details?.id || "");
+  if (!accountId) {
+    throw new Error(`Zoho Bigin account upsert did not return an account ID for ${accountName}.`);
+  }
+
+  return accountId;
+}
+
+function addDaysIsoDate(days: number) {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function buildDuplicateCheckFieldsFrom(value: string) {
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function deriveBiginDealStage(parserStatus: string) {
+  const normalized = String(parserStatus || "").trim().toLowerCase();
+  if (normalized === "approved quote" || normalized === "sent quote" || normalized === "ordered") {
+    return env.ZOHO_BIGIN_DEAL_STAGE_QUOTED_VALUE;
+  }
+  if (
+    normalized === "draft quote" ||
+    normalized === "xls created" ||
+    normalized === "xlsx created" ||
+    normalized === "draft created"
+  ) {
+    return env.ZOHO_BIGIN_DEAL_STAGE_TO_QUOTE_VALUE;
+  }
+  return env.ZOHO_BIGIN_DEAL_STAGE_ENQUIRY_VALUE;
+}
+
+function shouldAttachQuotationRef(parserStatus: string) {
+  return deriveBiginDealStage(parserStatus) === env.ZOHO_BIGIN_DEAL_STAGE_QUOTED_VALUE;
+}
+
+function buildBiginDealName(input: BiginEnquiryPayload) {
+  return [
+    input.enquiryId,
+    input.company || input.leadName,
+    input.productName || input.productKey || input.requirementSummary
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .join(" - ")
+    .slice(0, 120) || input.enquiryId;
+}
+
+function buildZohoCriteria(fieldApiName: string, value: string) {
+  const normalizedValue = String(value || "").trim().replace(/,/g, "\\,").replace(/\)/g, "\\)");
+  return `(${fieldApiName}:equals:${normalizedValue})`;
+}
+
+async function findZohoBiginProductByField(input: BiginEnquiryPayload, fieldApiName: string, value: string) {
+  const normalizedValue = String(value || "").trim();
+  if (!fieldApiName || !normalizedValue) {
+    return "";
+  }
+
+  const moduleName = env.ZOHO_BIGIN_PRODUCT_MODULE_API_NAME;
+  const context: ZohoBiginRequestContext = {
+    operation: "lookup",
+    moduleName,
+    enquiryId: input.enquiryId,
+    fieldNames: [fieldApiName],
+    nonEmptyFields: { [fieldApiName]: normalizedValue }
+  };
+
+  console.info("[zoho-bigin] product lookup start", context);
+  const result = await zohoBiginRequest(
+    `${moduleName}/search?criteria=${encodeURIComponent(buildZohoCriteria(fieldApiName, normalizedValue))}`,
+    { method: "GET" },
+    context
+  );
+  const first = result.data?.[0];
+  const productId = String(first?.id || first?.details?.id || "");
+
+  if (productId) {
+    console.info("[zoho-bigin] product lookup matched", {
+      ...context,
+      productId
+    });
+  }
+
+  return productId;
+}
+
+async function findZohoBiginProduct(input: BiginEnquiryPayload) {
+  if (!env.ZOHO_BIGIN_DEAL_PRODUCT_FIELD_API_NAME) {
+    return "";
+  }
+
+  const productCodeField = String(env.ZOHO_BIGIN_PRODUCT_CODE_FIELD_API_NAME || "").trim();
+  const productNameField = String(env.ZOHO_BIGIN_PRODUCT_NAME_FIELD_API_NAME || "").trim();
+  const productIdByCode = await findZohoBiginProductByField(input, productCodeField, input.productKey || "");
+  if (productIdByCode) {
+    return productIdByCode;
+  }
+
+  const productIdByName = await findZohoBiginProductByField(input, productNameField, input.productName || "");
+  if (!productIdByName && (input.productKey || input.productName)) {
+    console.warn("[zoho-bigin] product lookup did not match an existing Bigin product", {
+      enquiryId: input.enquiryId,
+      productKey: input.productKey || "",
+      productName: input.productName || ""
+    });
+  }
+
+  return productIdByName;
+}
+
+function mapEnquiryToBiginDealRecord(input: BiginEnquiryPayload, ids: {
+  contactId: string;
+  accountId: string;
+  productId: string;
+}) {
+  const record: Record<string, unknown> = {
+    [env.ZOHO_BIGIN_DEAL_NAME_FIELD_API_NAME]: buildBiginDealName(input),
+    [env.ZOHO_BIGIN_DEAL_STAGE_FIELD_API_NAME]: deriveBiginDealStage(input.parserStatus),
+    Description: [
+      input.requirementSummary ? `Requirement: ${input.requirementSummary}` : "",
+      input.parserStatus ? `Airtable Status: ${input.parserStatus}` : "",
+      input.enquiryId ? `Airtable Enquiry ID: ${input.enquiryId}` : ""
+    ]
+      .filter(Boolean)
+      .join("\n")
+  };
+
+  setConfiguredField(record, env.ZOHO_BIGIN_DEAL_PIPELINE_FIELD_API_NAME, env.ZOHO_BIGIN_DEAL_PIPELINE_NAME);
+  setConfiguredField(record, env.ZOHO_BIGIN_DEAL_CLOSING_DATE_FIELD_API_NAME, addDaysIsoDate(30));
+  if (ids.contactId) {
+    setConfiguredField(record, env.ZOHO_BIGIN_DEAL_CONTACT_FIELD_API_NAME, { id: ids.contactId });
+  }
+  if (ids.accountId) {
+    setConfiguredField(record, env.ZOHO_BIGIN_DEAL_ACCOUNT_FIELD_API_NAME, { id: ids.accountId });
+  }
+  if (ids.productId) {
+    setConfiguredField(record, env.ZOHO_BIGIN_DEAL_PRODUCT_FIELD_API_NAME, { id: ids.productId });
+  }
+  if (input.quotationRef && shouldAttachQuotationRef(input.parserStatus)) {
+    setConfiguredField(record, env.ZOHO_BIGIN_DEAL_QUOTATION_REF_FIELD_API_NAME, input.quotationRef);
+  }
+
+  return record;
+}
+
+async function syncZohoBiginDeal(input: BiginEnquiryPayload, ids: {
+  contactId: string;
+  accountId: string;
+  productId: string;
+}) {
+  const moduleName = env.ZOHO_BIGIN_DEAL_MODULE_API_NAME;
+  const record = sanitizeBiginPayload(mapEnquiryToBiginDealRecord(input, ids));
+  const duplicateCheckFields = buildDuplicateCheckFieldsFrom(env.ZOHO_BIGIN_DEAL_DUPLICATE_CHECK_FIELDS);
+  const context: ZohoBiginRequestContext = {
+    operation: input.dealRecordId ? "update" : "insert_or_upsert",
+    moduleName,
+    recordId: input.dealRecordId,
+    enquiryId: input.enquiryId,
+    fieldNames: Object.keys(record),
+    nonEmptyFields: describeBiginFieldValues(record),
+    duplicateCheckFields
+  };
+
+  console.info("[zoho-bigin] prepared deal sync payload", context);
+
+  const result = input.dealRecordId
+    ? await zohoBiginRequest(`${moduleName}/${input.dealRecordId}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          data: [
+            {
+              id: input.dealRecordId,
+              ...record
+            }
+          ]
+        })
+      }, context)
+    : await zohoBiginRequest(`${moduleName}/upsert`, {
+        method: "POST",
+        body: JSON.stringify({
+          data: [record],
+          duplicate_check_fields: duplicateCheckFields
+        })
+      }, context);
+
+  const first = result.data?.[0];
+  const dealId = String(first?.details?.id || input.dealRecordId || "");
+  if (!dealId) {
+    throw new Error("Zoho Bigin deal sync did not return a record ID.");
+  }
+
+  return {
+    dealId,
+    action: String(first?.action || (input.dealRecordId ? "update" : "upsert")),
+    response: first || {}
+  };
+}
 export async function syncEnquiryToZohoBigin(input: BiginEnquiryPayload): Promise<BiginSyncResult | null> {
   if (!isZohoBiginConfigured()) {
     return null;
   }
 
   const moduleName = env.ZOHO_BIGIN_MODULE_API_NAME;
-  const record = sanitizeBiginPayload(mapEnquiryToBiginRecord(input));
+  const accountId = await ensureZohoBiginAccount(input.company, input.enquiryId);
+  const record = sanitizeBiginPayload(mapEnquiryToBiginRecord(input, accountId));
   const duplicateCheckFields = buildDuplicateCheckFields();
   const context: ZohoBiginRequestContext = {
     operation: input.recordId ? "update" : "insert_or_upsert",
@@ -482,13 +702,24 @@ export async function syncEnquiryToZohoBigin(input: BiginEnquiryPayload): Promis
   const first = result.data?.[0];
   const recordId = String(first?.details?.id || input.recordId || "");
   if (!recordId) {
-    throw new Error("Zoho Bigin did not return a record ID.");
+    throw new Error("Zoho Bigin contact sync did not return a record ID.");
   }
+
+  const productId = await findZohoBiginProduct(input);
+  const deal = await syncZohoBiginDeal(input, {
+    contactId: recordId,
+    accountId,
+    productId
+  });
 
   return {
     recordId,
+    dealRecordId: deal.dealId,
     action: String(first?.action || (input.recordId ? "update" : "upsert")),
     duplicateField: String(first?.duplicate_field || ""),
-    response: first || {}
+    response: {
+      contact: first || {},
+      deal: deal.response
+    }
   };
 }

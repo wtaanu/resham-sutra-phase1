@@ -41,6 +41,7 @@ type EnquiryFields = {
   "Potential Product"?: string;
   "Receiver WhatsApp Number"?: string;
   "Zoho Bigin Record ID"?: string;
+  "Zoho Bigin Deal ID"?: string;
   "Zoho Bigin Sync Status"?: string;
   "Zoho Bigin Synced At"?: string;
   "Zoho Bigin Sync Error"?: string;
@@ -91,6 +92,8 @@ type ProductFields = {
   "Pkg & Transport"?: number;
   "Freight Amount"?: number;
   Freight?: number;
+  "Product Category"?: string;
+  Category?: string;
 };
 
 type QuotationLineItemFields = {
@@ -199,6 +202,7 @@ const optionalEnquiryFields = [
   "Logged Date Time",
   "Receiver WhatsApp Number",
   "Zoho Bigin Record ID",
+  "Zoho Bigin Deal ID",
   "Zoho Bigin Sync Status",
   "Zoho Bigin Synced At",
   "Zoho Bigin Sync Error"
@@ -451,9 +455,74 @@ function serializeError(error: unknown) {
   };
 }
 
+async function resolveZohoBiginContext(enquiry: AirtableRecord<EnquiryFields>) {
+  const quotationId = enquiry.fields.Quotations?.[0] || "";
+  const productId = String(enquiry.fields["Potential Product"] || "").trim();
+  let quotationRef = "";
+  let productName = "";
+  let productKey = "";
+  let productDescription = "";
+  let productUnitPrice = 0;
+  let productFreight = 0;
+  let productGstRate = 0;
+  let productCategory = "";
+  if (quotationId) {
+    try {
+      const quotation = await getRecord<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, quotationId);
+      quotationRef = String(quotation.fields["Quotation Number"] || quotation.fields["Reference Number"] || quotation.id || "").trim();
+    } catch (error) {
+      console.warn("[zoho-bigin] quotation ref lookup failed", {
+        enquiryId: enquiry.id,
+        quotationId,
+        error: serializeError(error)
+      });
+    }
+  }
+
+  if (productId) {
+    try {
+      const product = await getRecord<ProductFields>(env.AIRTABLE_PRODUCTS_TABLE, productId);
+      productKey = String(product.fields["Product Key"] || "").trim();
+      productName = String(
+        product.fields["Product Name"] ||
+          [product.fields.Model, product.fields.Narration].filter(Boolean).join(" - ") ||
+          productKey ||
+          product.id
+      ).trim();
+      productDescription = String(
+        product.fields.Narration ||
+          [product.fields["Product Name"], product.fields.Model].filter(Boolean).join(" - ") ||
+          productKey
+      ).trim();
+      productUnitPrice = Number(product.fields["Bulk Sale Price"] || product.fields.MRP || 0);
+      productFreight = Number(product.fields["Freight Amount"] || product.fields.Freight || product.fields["Pkg & Transport"] || 0);
+      productGstRate = Number(product.fields["GST %"] || product.fields["GST Amount"] || 0);
+      productCategory = String(product.fields["Product Category"] || product.fields.Category || "").trim();
+    } catch (error) {
+      console.warn("[zoho-bigin] product lookup failed", {
+        enquiryId: enquiry.id,
+        productId,
+        error: serializeError(error)
+      });
+    }
+  }
+
+  return {
+    quotationRef,
+    productName,
+    productKey,
+    productDescription,
+    productUnitPrice,
+    productFreight,
+    productGstRate,
+    productCategory
+  };
+}
 async function syncEnquiryToZohoAndPersist(enquiry: AirtableRecord<EnquiryFields>) {
+  const zohoContext = await resolveZohoBiginContext(enquiry);
   const syncPayload = {
     recordId: String(enquiry.fields["Zoho Bigin Record ID"] || "").trim(),
+    dealRecordId: String(enquiry.fields["Zoho Bigin Deal ID"] || "").trim(),
     enquiryId: String(enquiry.fields["Enquiry ID"] || enquiry.id),
     loggedDateTime: String(enquiry.fields["Logged Date Time"] || ""),
     leadName: String(enquiry.fields["Lead Name"] || ""),
@@ -470,7 +539,15 @@ async function syncEnquiryToZohoAndPersist(enquiry: AirtableRecord<EnquiryFields
     destinationPincode: String(enquiry.fields["Destination Pincode"] || ""),
     parserStatus: String(enquiry.fields["Parser Status"] || ""),
     requirementSummary: String(enquiry.fields["Requirement Summary"] || ""),
-    receiverWhatsappNumber: normalizePhone(enquiry.fields["Receiver WhatsApp Number"])
+    receiverWhatsappNumber: normalizePhone(enquiry.fields["Receiver WhatsApp Number"]),
+    quotationRef: zohoContext.quotationRef,
+    productName: zohoContext.productName,
+    productKey: zohoContext.productKey,
+    productDescription: zohoContext.productDescription,
+    productUnitPrice: zohoContext.productUnitPrice,
+    productFreight: zohoContext.productFreight,
+    productGstRate: zohoContext.productGstRate,
+    productCategory: zohoContext.productCategory
   };
 
   console.info("[zoho-bigin] enquiry sync requested from portal actions", {
@@ -489,6 +566,7 @@ async function syncEnquiryToZohoAndPersist(enquiry: AirtableRecord<EnquiryFields
       id: enquiry.id,
       fields: {
         "Zoho Bigin Record ID": result.recordId,
+        "Zoho Bigin Deal ID": result.dealRecordId,
         "Zoho Bigin Sync Status": `Synced (${result.action})`,
         "Zoho Bigin Synced At": new Date().toISOString(),
         "Zoho Bigin Sync Error": ""
