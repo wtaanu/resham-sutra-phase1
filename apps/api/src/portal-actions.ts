@@ -58,6 +58,10 @@ type CustomerFields = {
   State?: string;
   City?: string;
   Pincode?: string | number;
+  "Destination Address"?: string;
+  "Destination State"?: string;
+  "Destination City"?: string;
+  "Destination Pincode"?: string | number;
   "Drive Folder URL"?: string;
 };
 
@@ -73,6 +77,7 @@ type QuotationFields = {
   "Final PDF URL"?: string;
   "Final PDF Generated At"?: string;
   "Drive Folder URL"?: string;
+  Orders?: string;
   "Reference Number"?: string;
   "Buyer Block"?: string;
   "Sent Date"?: string;
@@ -132,11 +137,17 @@ type OrderFields = {
   "Order Risk/Attention Flag (AI)"?: string;
   "Order Value"?: number;
   "Payment Status"?: string;
+  "Payment Terms"?: string;
+  "Order Ref Number Client"?: string;
   "Delivery Status"?: string;
   Address?: string;
   State?: string;
   City?: string;
   Pincode?: string | number;
+  "Destination Address"?: string;
+  "Destination State"?: string;
+  "Destination City"?: string;
+  "Destination Pincode"?: string | number;
 };
 
 type OrderLineItemFields = {
@@ -212,7 +223,22 @@ const optionalQuotationFields = [
   "Draft Created Time",
   "WhatsApp Sent Date Time",
   "Email Sent Date Time",
-  "Final PDF Generated At"
+  "Final PDF Generated At",
+  "Orders"
+] as const;
+const optionalCustomerDestinationFields = [
+  "Destination Address",
+  "Destination State",
+  "Destination City",
+  "Destination Pincode"
+] as const;
+const optionalOrderFields = [
+  "Payment Terms",
+  "Order Ref Number Client",
+  "Destination Address",
+  "Destination State",
+  "Destination City",
+  "Destination Pincode"
 ] as const;
 const ENQUIRY_STATUS_PARSED = "Parsed";
 const ENQUIRY_STATUS_MANUAL = "New Enquiries";
@@ -339,10 +365,16 @@ const orderPayloadSchema = z.object({
   totalAmount: z.coerce.number().nonnegative().optional().default(0),
   orderNotes: z.string().trim().optional().default(""),
   paymentStatus: z.enum(["Paid", "Pending", "Half Payment"]).default("Pending"),
+  paymentTerms: z.string().trim().optional().default(""),
+  orderRefNumberClient: z.string().trim().optional().default(""),
   address: z.string().trim().optional().default(""),
   state: z.string().trim().optional().default(""),
   city: z.string().trim().optional().default(""),
   pincode: optionalPincodeSchema,
+  destinationAddress: z.string().trim().optional().default(""),
+  destinationState: z.string().trim().optional().default(""),
+  destinationCity: z.string().trim().optional().default(""),
+  destinationPincode: optionalPincodeSchema,
   items: z.array(
     z.object({
       id: z.string().trim().optional().default(""),
@@ -1098,11 +1130,95 @@ async function nextOrderIdentifier() {
   });
 
   const maxValue = orders.reduce((currentMax, order) => {
-    const match = String(order.fields["Order Number"] || "").match(/^ORD-(\d+)$/);
+    const match = String(order.fields["Order Number"] || "").match(/^DT-(\d+)$/i);
     return Math.max(currentMax, match ? Number(match[1]) : 0);
   }, 0);
 
-  return `ORD-${String(maxValue + 1).padStart(3, "0")}`;
+  return `DT-${String(maxValue + 1).padStart(3, "0")}`;
+}
+
+function resolveOrderDestination(
+  input: z.infer<typeof orderPayloadSchema>,
+  customer: AirtableRecord<CustomerFields> | null,
+  enquiry: AirtableRecord<EnquiryFields> | null,
+  existing?: AirtableRecord<OrderFields> | null
+) {
+  const address =
+    input.destinationAddress ||
+    input.address ||
+    customer?.fields["Destination Address"] ||
+    customer?.fields.Address ||
+    enquiry?.fields["Destination Address"] ||
+    enquiry?.fields.Address ||
+    existing?.fields["Destination Address"] ||
+    existing?.fields.Address ||
+    "";
+  const state =
+    input.destinationState ||
+    input.state ||
+    customer?.fields["Destination State"] ||
+    customer?.fields.State ||
+    enquiry?.fields["Destination State"] ||
+    enquiry?.fields.State ||
+    existing?.fields["Destination State"] ||
+    existing?.fields.State ||
+    "";
+  const city =
+    input.destinationCity ||
+    input.city ||
+    customer?.fields["Destination City"] ||
+    customer?.fields.City ||
+    enquiry?.fields["Destination City"] ||
+    enquiry?.fields.City ||
+    existing?.fields["Destination City"] ||
+    existing?.fields.City ||
+    "";
+  const pincode =
+    toPincodeString(input.destinationPincode) ||
+    toPincodeString(input.pincode) ||
+    toPincodeString(String(customer?.fields["Destination Pincode"] || "")) ||
+    toPincodeString(String(customer?.fields.Pincode || "")) ||
+    toPincodeString(String(enquiry?.fields["Destination Pincode"] || "")) ||
+    toPincodeString(String(enquiry?.fields.Pincode || "")) ||
+    toPincodeString(String(existing?.fields["Destination Pincode"] || "")) ||
+    toPincodeString(String(existing?.fields.Pincode || ""));
+
+  return {
+    address,
+    state,
+    city,
+    pincode
+  };
+}
+
+async function updateCustomerDestinationFromOrder(
+  customerId: string,
+  destination: { address?: string; state?: string; city?: string; pincode?: string | number }
+) {
+  if (!customerId || (!destination.address && !destination.state && !destination.city && !destination.pincode)) {
+    return;
+  }
+
+  await updateRecordWithOptionalFieldFallback<CustomerFields>(
+    env.AIRTABLE_CUSTOMERS_TABLE,
+    {
+      id: customerId,
+      fields: {
+        "Destination Address": destination.address || "",
+        "Destination State": destination.state || "",
+        "Destination City": destination.city || "",
+        "Destination Pincode": toPincodeString(String(destination.pincode || "")) || ""
+      }
+    },
+    optionalCustomerDestinationFields
+  ).catch((error) => {
+    console.error("[order-destination] failed to update customer destination fields", {
+      customerId,
+      message: error instanceof Error ? error.message : "Unknown error",
+      stack: error instanceof Error ? error.stack : undefined,
+      destination
+    });
+  });
 }
 
 export async function createPortalEnquiry(payload: unknown) {
@@ -1703,6 +1819,17 @@ export async function createOrderFromQuotation(quotationId: string, payload?: un
     (Array.isArray(order.fields.Quotation) && order.fields.Quotation.includes(quotationId))
   );
   if (existing) {
+    await updateRecordWithOptionalFieldFallback<QuotationFields>(
+      env.AIRTABLE_QUOTATIONS_TABLE,
+      {
+        id: quotationId,
+        fields: {
+          Status: QUOTATION_STATUS_ORDERED,
+          Orders: existing.fields["Order Number"] || existing.id
+        }
+      },
+      optionalQuotationFields
+    );
     return existing;
   }
 
@@ -1718,7 +1845,8 @@ export async function createOrderFromQuotation(quotationId: string, payload?: un
       ? input.items
       : mapPortalQuotationItemsToOrderItems(metrics.items, productLookup);
   const orderNumber = await nextOrderIdentifier();
-  const created = await createRecord<OrderFields>(env.AIRTABLE_ORDERS_TABLE, {
+  const destination = resolveOrderDestination(input, customer, enquiry);
+  const orderFields: Record<string, unknown> = {
     "Order Number": orderNumber,
     "Order Date": input.orderDate || new Date().toISOString(),
     Quotation: quotationId,
@@ -1736,15 +1864,31 @@ export async function createOrderFromQuotation(quotationId: string, payload?: un
     "Order Notes": input.orderNotes,
     "Order Value": input.totalAmount || metrics.quotationGrandTotal,
     "Payment Status": input.paymentStatus,
-    Address: input.address || enquiry?.fields["Destination Address"] || enquiry?.fields.Address || customer?.fields.Address || "",
-    State: input.state || enquiry?.fields["Destination State"] || enquiry?.fields.State || customer?.fields.State || "",
-    City: input.city || enquiry?.fields["Destination City"] || enquiry?.fields.City || customer?.fields.City || "",
-    Pincode:
-      toPincodeString(input.pincode) ||
-      toPincodeString(String(enquiry?.fields["Destination Pincode"] || "")) ||
-      toPincodeString(String(enquiry?.fields.Pincode || "")) ||
-      toPincodeString(String(customer?.fields.Pincode || ""))
-  });
+    "Payment Terms": input.paymentTerms,
+    "Order Ref Number Client": input.orderRefNumberClient,
+    Address: input.address || destination.address,
+    State: input.state || destination.state,
+    City: input.city || destination.city,
+    Pincode: toPincodeString(input.pincode) || destination.pincode,
+    "Destination Address": destination.address,
+    "Destination State": destination.state,
+    "Destination City": destination.city,
+    "Destination Pincode": destination.pincode
+  };
+  let created: AirtableRecord<OrderFields>;
+  try {
+    created = await createRecord<OrderFields>(env.AIRTABLE_ORDERS_TABLE, orderFields);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    const retryFields = stripOptionalFields(orderFields, optionalOrderFields, message);
+    if (!retryFields) {
+      throw error;
+    }
+
+    created = await createRecord<OrderFields>(env.AIRTABLE_ORDERS_TABLE, retryFields);
+  }
+
+  await updateCustomerDestinationFromOrder(customerId, destination);
 
   await replaceOrderLineItemsForOrder({
     orderId: created.id,
@@ -1754,12 +1898,17 @@ export async function createOrderFromQuotation(quotationId: string, payload?: un
     items: orderItems
   });
 
-  await updateRecord<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
-    id: quotationId,
-    fields: {
-      Status: QUOTATION_STATUS_ORDERED
-    }
-  });
+  await updateRecordWithOptionalFieldFallback<QuotationFields>(
+    env.AIRTABLE_QUOTATIONS_TABLE,
+    {
+      id: quotationId,
+      fields: {
+        Status: QUOTATION_STATUS_ORDERED,
+        Orders: created.fields["Order Number"] || orderNumber
+      }
+    },
+    optionalQuotationFields
+  );
   if (enquiryId) {
     await updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
       id: enquiryId,
@@ -1788,7 +1937,10 @@ export async function updatePortalOrder(orderId: string, payload: unknown, actor
   const quotationMetrics = await loadQuotationLineItemMetrics(input.quotationId);
   const customerId = input.customerId || quotation.fields["Linked Customer"]?.[0] || "";
   const enquiryId = input.enquiryId || quotation.fields["Linked Enquiry"]?.[0] || "";
+  const customer = customerId ? await getRecord<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, customerId) : null;
+  const enquiry = enquiryId ? await getRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, enquiryId) : null;
   const orderItems = input.items;
+  const destination = resolveOrderDestination(input, customer, enquiry, existing);
   const fields: Record<string, unknown> = {
     "Order Date": input.orderDate || existing.fields["Order Date"] || new Date().toISOString(),
     Quotation: input.quotationId,
@@ -1805,16 +1957,39 @@ export async function updatePortalOrder(orderId: string, payload: unknown, actor
     "Order Value per Item": orderItems.map((item, index) => `${index + 1}. ${formatLineItemValue(item.totalAmount)}`).join("\n"),
     "Order Value": input.totalAmount,
     "Payment Status": input.paymentStatus,
-    Address: input.address,
-    State: input.state,
-    City: input.city,
-    Pincode: toPincodeString(input.pincode)
+    "Payment Terms": input.paymentTerms,
+    "Order Ref Number Client": input.orderRefNumberClient,
+    Address: input.address || destination.address,
+    State: input.state || destination.state,
+    City: input.city || destination.city,
+    Pincode: toPincodeString(input.pincode) || destination.pincode,
+    "Destination Address": destination.address,
+    "Destination State": destination.state,
+    "Destination City": destination.city,
+    "Destination Pincode": destination.pincode
   };
 
-  const updated = await updateRecord<OrderFields>(env.AIRTABLE_ORDERS_TABLE, {
-    id: orderId,
-    fields
-  });
+  const updated = await updateRecordWithOptionalFieldFallback<OrderFields>(
+    env.AIRTABLE_ORDERS_TABLE,
+    {
+      id: orderId,
+      fields
+    },
+    optionalOrderFields
+  );
+
+  await updateCustomerDestinationFromOrder(customerId, destination);
+
+  await updateRecordWithOptionalFieldFallback<QuotationFields>(
+    env.AIRTABLE_QUOTATIONS_TABLE,
+    {
+      id: input.quotationId,
+      fields: {
+        Orders: updated.fields["Order Number"] || existing.fields["Order Number"] || orderId
+      }
+    },
+    optionalQuotationFields
+  );
 
   await replaceOrderLineItemsForOrder({
     orderId,

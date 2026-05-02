@@ -263,20 +263,6 @@ async function findFileByNameInFolder(fileName: string, folderId: string) {
   return exactMatch ?? files[0] ?? null;
 }
 
-async function deleteDriveFile(fileId: string) {
-  const response = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, {
-    method: "DELETE",
-    headers: {
-      Authorization: `Bearer ${await getDriveAccessToken()}`
-    }
-  });
-
-  if (!response.ok) {
-    const message = await response.text();
-    throw new Error(`Drive delete failed (${response.status}): ${message}`);
-  }
-}
-
 export async function ensureDefaultTemplateFolder() {
   if (!isDriveConfigured()) {
     throw new Error("Google Drive is not configured");
@@ -440,17 +426,7 @@ export async function uploadFileToFolder(
     fileName
   );
 
-  let existing: GoogleDriveFile | null = await findFileByNameInFolder(fileName, folderId);
-  const sameNameFiles = await findFilesByNameInFolder(fileName, folderId);
-  const duplicateFiles = sameNameFiles.filter((file) => !existing || file.id !== existing.id);
-  for (const duplicateFile of duplicateFiles) {
-    await deleteDriveFile(duplicateFile.id);
-  }
-
-  if (options?.replaceExisting && existing) {
-    await deleteDriveFile(existing.id);
-    existing = null;
-  }
+  const existing: GoogleDriveFile | null = await findFileByNameInFolder(fileName, folderId);
 
   const uploadUrl = existing
     ? `https://www.googleapis.com/upload/drive/v3/files/${existing.id}?uploadType=multipart&fields=id,name,webViewLink,mimeType`

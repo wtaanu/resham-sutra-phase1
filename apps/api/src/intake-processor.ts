@@ -710,47 +710,6 @@ async function ensureFolder(customer: AirtableRecord<CustomerFields>) {
   };
 }
 
-async function syncFolderLinks(
-  enquiry: AirtableRecord<EnquiryFields>,
-  customer: AirtableRecord<CustomerFields>,
-  quotation: AirtableRecord<QuotationFields>,
-  folderUrl: string
-) {
-  if (!folderUrl) {
-    return {
-      enquiry,
-      quotation
-    };
-  }
-
-  const enquiryNeedsUpdate = enquiry.fields["Drive Folder URL"] !== folderUrl;
-  const quotationNeedsUpdate = quotation.fields["Drive Folder URL"] !== folderUrl;
-
-  const [updatedEnquiry, updatedQuotation] = await Promise.all([
-    enquiryNeedsUpdate
-      ? updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
-          id: enquiry.id,
-          fields: {
-            "Drive Folder URL": folderUrl
-          }
-        })
-      : Promise.resolve(enquiry),
-    quotationNeedsUpdate
-      ? updateRecord<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
-          id: quotation.id,
-          fields: {
-            "Drive Folder URL": folderUrl
-          }
-        })
-      : Promise.resolve(quotation)
-  ]);
-
-  return {
-    enquiry: updatedEnquiry,
-    quotation: updatedQuotation
-  };
-}
-
 function buildBuyerBlock(enquiry: AirtableRecord<EnquiryFields>) {
   return [
     enquiry.fields["Lead Name"] || "",
@@ -978,7 +937,6 @@ async function ensureQuotationShell(
         "Linked Customer": linkedRecordIds(customer.id),
         Status: enquiry.fields["Parser Status"] || "Parsed",
         "Draft Format": "XLSX",
-        "Drive Folder URL": enquiry.fields["Drive Folder URL"] || "",
         "Reference Number": enquiryReference,
         "Buyer Block": buildBuyerBlock(enquiry),
         "Send Quotation": false,
@@ -996,7 +954,6 @@ async function ensureQuotationShell(
             "Linked Customer": linkedRecordIds(customer.id),
             Status: enquiry.fields["Parser Status"] || "Parsed",
             "Draft Format": "XLSX",
-            "Drive Folder URL": enquiry.fields["Drive Folder URL"] || "",
             "Reference Number": enquiryReference,
             "Buyer Block": buildBuyerBlock(enquiry),
             "Send Quotation": false,
@@ -1305,7 +1262,6 @@ async function createDraftForReadyEnquiry(
     fields: {
       "Draft File URL": draftFileUrl,
       "Draft Created Time": new Date().toISOString(),
-      "Drive Folder URL": folder.folderUrl || null,
       Status: nextQuotationStatus,
       "Quotation Number": quotationNumber
     }
@@ -1315,7 +1271,6 @@ async function createDraftForReadyEnquiry(
       {
         "Draft File URL": draftFileUrl,
         "Draft Created Time": new Date().toISOString(),
-        "Drive Folder URL": folder.folderUrl || null,
         Status: nextQuotationStatus,
         "Quotation Number": quotationNumber
       },
@@ -1338,8 +1293,7 @@ async function createDraftForReadyEnquiry(
     fields: {
       ...enquiryStatusFields("Draft Quote"),
       "Linked Customer": linkedRecordIds(customer.id),
-      Quotations: linkedRecordIds(quotation.id),
-      "Drive Folder URL": folder.folderUrl || null
+      Quotations: linkedRecordIds(quotation.id)
     }
   });
   await syncEnquiryToZohoAndPersist(updatedEnquiry);
@@ -1439,7 +1393,6 @@ export async function generateFinalPdfForQuotation(quotationId: string) {
     fields: {
       "Final PDF URL": finalPdfUrl,
       "Final PDF Generated At": finalPdfGeneratedAt,
-      "Drive Folder URL": folder.folderUrl || quotation.fields["Drive Folder URL"] || null,
       Status: "Approved Quote",
       "Quotation Number": quotationNumber
     }
@@ -1450,8 +1403,7 @@ export async function generateFinalPdfForQuotation(quotationId: string) {
     fields: {
       ...enquiryStatusFields("Approved Quote"),
       Quotations: linkedRecordIds(quotation.id),
-      "Linked Customer": linkedRecordIds(customer.id),
-      "Drive Folder URL": folder.folderUrl || enquiry.fields["Drive Folder URL"] || null
+      "Linked Customer": linkedRecordIds(customer.id)
     }
   });
   await syncEnquiryToZohoAndPersist(updatedEnquiry);
@@ -1769,15 +1721,6 @@ export async function createCustomerForEnquiry(enquiryId: string) {
   const folder = await ensureFolder(customer);
   let syncedEnquiry = await syncEnquiryAddressFromCustomer(enquiry, customer);
 
-  if (folder.folderUrl && syncedEnquiry.fields["Drive Folder URL"] !== folder.folderUrl) {
-    syncedEnquiry = await updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
-      id: syncedEnquiry.id,
-      fields: {
-        "Drive Folder URL": folder.folderUrl
-      }
-    });
-  }
-
   const quotation = await ensureQuotationShell(syncedEnquiry, customer);
 
   const updatedEnquiry = await updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
@@ -1785,8 +1728,7 @@ export async function createCustomerForEnquiry(enquiryId: string) {
     fields: {
       ...enquiryStatusFields("Parsed"),
       "Linked Customer": linkedRecordIds(customer.id),
-      Quotations: linkedRecordIds(quotation.id),
-      "Drive Folder URL": folder.folderUrl || null
+      Quotations: linkedRecordIds(quotation.id)
     }
   });
 
@@ -1795,19 +1737,16 @@ export async function createCustomerForEnquiry(enquiryId: string) {
     fields: {
       "Linked Enquiry": linkedRecordIds(updatedEnquiry.id),
       "Linked Customer": linkedRecordIds(customer.id),
-      "Drive Folder URL": folder.folderUrl || null,
       Status: isLockedQuotationStatus(quotation.fields.Status)
         ? String(quotation.fields.Status || "")
         : String(updatedEnquiry.fields["Parser Status"] || quotation.fields.Status || "Parsed")
     }
   });
 
-  const syncedRecords = await syncFolderLinks(updatedEnquiry, customer, updatedQuotation, folder.folderUrl);
-
   return {
-    enquiry: syncedRecords.enquiry,
+    enquiry: updatedEnquiry,
     customer,
-    quotation: syncedRecords.quotation,
+    quotation: updatedQuotation,
     folder
   };
 }
