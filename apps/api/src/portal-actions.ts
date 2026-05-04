@@ -35,7 +35,6 @@ type EnquiryFields = {
   "Parser Status"?: string;
   "Linked Customer"?: string[];
   Quotations?: string[];
-  "Drive Folder URL"?: string;
   "Requirement Summary"?: string;
   "Requested Asset"?: string;
   "Potential Product"?: string;
@@ -941,7 +940,6 @@ async function createQuotationShellForEnquiry(
         "Linked Customer": safeLinkedValue(customerId),
         Status: enquiry.fields["Parser Status"] || ENQUIRY_STATUS_PARSED,
         "Draft Format": "XLSX",
-        "Drive Folder URL": enquiry.fields["Drive Folder URL"] || "",
         "Reference Number": quotationReference,
         "Buyer Block": buildBuyerBlock({
           leadName: enquiry.fields["Lead Name"],

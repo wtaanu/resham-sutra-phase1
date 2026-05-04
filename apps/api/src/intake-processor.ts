@@ -613,8 +613,7 @@ async function ensureCustomer(enquiry: AirtableRecord<EnquiryFields>) {
         "Address",
         "State",
         "City",
-        "Pincode",
-        "Drive Folder URL"
+        "Pincode"
       ],
       maxRecords: 500
     });
@@ -1016,6 +1015,39 @@ function mapDraftLineItems(items: AirtableRecord<QuotationLineItemFields>[]) {
   }));
 }
 
+async function createFallbackPdfFromQuotationData(input: {
+  quotation: AirtableRecord<QuotationFields>;
+  quotationNumber: string;
+  customer: AirtableRecord<CustomerFields>;
+  enquiry: AirtableRecord<EnquiryFields>;
+  buyerBlock: string;
+  templateCode: "domestic-standard" | "myanmar-proforma";
+  folderUrl: string;
+  lineItems: AirtableRecord<QuotationLineItemFields>[];
+  reason: string;
+}) {
+  console.warn("[quotation-pdf] falling back to local PDF generation", {
+    quotationId: input.quotation.id,
+    quotationNumber: input.quotationNumber,
+    reason: input.reason
+  });
+
+  return createPdfDocument({
+    quotationRecordId: input.quotation.id,
+    quotationNumber: input.quotationNumber,
+    templateCode: input.templateCode,
+    draftFormat: "PDF",
+    customerName: input.customer.fields["Customer Name"] || input.enquiry.fields["Lead Name"] || "",
+    customerFolderName: buildCustomerFolderName(input.customer),
+    company: input.customer.fields.Company || input.enquiry.fields.Company || "",
+    buyerBlock: input.buyerBlock,
+    consigneeBlock: buildConsigneeBlock(input.enquiry),
+    terms: buildQuotationTerms(input.templateCode),
+    driveFolderName: input.folderUrl,
+    lineItems: mapDraftLineItems(input.lineItems)
+  });
+}
+
 async function fileExists(filePath: string) {
   try {
     await access(filePath);
@@ -1384,47 +1416,70 @@ export async function generateFinalPdfForQuotation(quotationId: string) {
         stack: error instanceof Error ? error.stack : undefined
       });
 
-      const convertedDraft = await uploadFileToFolder(
-        localDraftArtifact.filePath,
-        `${quotationNumber}.xlsx`,
-        folder.folderId,
-        {
-          convertToGoogleSheet: true
-        }
-      );
-      const convertedDraftFileId = extractDriveFileId(convertedDraft.fileUrl);
-      if (!convertedDraftFileId) {
-        throw new Error(
-          `Final PDF export could not recover because the converted draft file URL is invalid. Original Drive PDF export failed: ${message}`
+      try {
+        const convertedDraft = await uploadFileToFolder(
+          localDraftArtifact.filePath,
+          `${quotationNumber}.xlsx`,
+          folder.folderId,
+          {
+            convertToGoogleSheet: true
+          }
         );
-      }
-
-      await updateRecord<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
-        id: quotation.id,
-        fields: {
-          "Draft File URL": convertedDraft.fileUrl
+        const convertedDraftFileId = extractDriveFileId(convertedDraft.fileUrl);
+        if (!convertedDraftFileId) {
+          throw new Error("Converted draft file URL did not contain a Drive file ID.");
         }
-      });
 
-      const pdfBuffer = await exportDriveFile(convertedDraftFileId, "application/pdf");
-      await mkdir(path.dirname(localPdfArtifact.filePath), { recursive: true });
-      await writeFile(localPdfArtifact.filePath, pdfBuffer);
-      pdf = {
-        kind: "pdf" as const,
-        quotationRecordId: quotation.id,
-        quotationNumber,
-        filePath: localPdfArtifact.filePath,
-        payloadPath: "",
-        fileUrl: localPdfArtifact.fileUrl,
-        previewUrl: "",
-        payloadUrl: "",
-        message: "Final PDF exported after converting the stored quotation sheet to Google Sheets."
-      };
+        await updateRecord<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
+          id: quotation.id,
+          fields: {
+            "Draft File URL": convertedDraft.fileUrl
+          }
+        });
+
+        const pdfBuffer = await exportDriveFile(convertedDraftFileId, "application/pdf");
+        await mkdir(path.dirname(localPdfArtifact.filePath), { recursive: true });
+        await writeFile(localPdfArtifact.filePath, pdfBuffer);
+        pdf = {
+          kind: "pdf" as const,
+          quotationRecordId: quotation.id,
+          quotationNumber,
+          filePath: localPdfArtifact.filePath,
+          payloadPath: "",
+          fileUrl: localPdfArtifact.fileUrl,
+          previewUrl: "",
+          payloadUrl: "",
+          message: "Final PDF exported after converting the stored quotation sheet to Google Sheets."
+        };
+      } catch (conversionError) {
+        pdf = await createFallbackPdfFromQuotationData({
+          quotation,
+          quotationNumber,
+          customer,
+          enquiry,
+          buyerBlock,
+          templateCode,
+          folderUrl: folder.folderUrl,
+          lineItems,
+          reason:
+            conversionError instanceof Error
+              ? conversionError.message
+              : "Google Drive draft conversion failed"
+        });
+      }
     }
   } else {
-    throw new Error(
-      "Final PDF export requires the live quotation draft sheet in Drive. Generate or regenerate the draft first."
-    );
+    pdf = await createFallbackPdfFromQuotationData({
+      quotation,
+      quotationNumber,
+      customer,
+      enquiry,
+      buyerBlock,
+      templateCode,
+      folderUrl: folder.folderUrl,
+      lineItems,
+      reason: "Quotation has no live Google Sheet draft file ID."
+    });
   }
 
   let finalPdfUrl = pdf.fileUrl;
@@ -1656,7 +1711,6 @@ async function syncParsedEnquiriesWithLineItems() {
       "Parser Status",
       "Linked Customer",
       "Quotations",
-      "Drive Folder URL",
       "Receiver WhatsApp Number"
     ],
     filterByFormula: "{Parser Status}='Parsed'",
@@ -1741,7 +1795,6 @@ async function syncNewEnquiriesWithCustomers() {
       "Parser Status",
       "Linked Customer",
       "Quotations",
-      "Drive Folder URL",
       "Receiver WhatsApp Number"
     ],
     filterByFormula: "OR({Parser Status}='New', {Parser Status}='New Enquiries')",
@@ -1823,7 +1876,6 @@ export async function processPendingEnquiries() {
       "Parser Status",
       "Linked Customer",
       "Quotations",
-      "Drive Folder URL",
       "Receiver WhatsApp Number"
     ],
     filterByFormula:
@@ -1880,7 +1932,7 @@ export async function processPendingEnquiries() {
           enquiryId: enquiry.fields["Enquiry ID"] || enquiry.id,
           customerRecordId: customer.id,
           quotationRecordId: quotation.id,
-          driveFolderUrl: quotation.fields["Drive Folder URL"] || enquiry.fields["Drive Folder URL"] || "",
+          driveFolderUrl: quotation.fields["Drive Folder URL"] || "",
           status: "skipped",
           message: "Draft already exists"
         });

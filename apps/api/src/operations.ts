@@ -24,7 +24,6 @@ type EnquiryFields = {
   "Parser Status"?: string;
   "Linked Customer"?: string[];
   Quotations?: string[];
-  "Drive Folder URL"?: string;
   "Requirement Summary"?: string;
   "Potential Product"?: string;
   "Receiver WhatsApp Number"?: string;
@@ -309,7 +308,7 @@ export async function getOperationsSnapshot() {
         linkedCustomerId: record.fields["Linked Customer"]?.[0] || "",
         quotations: mergedQuotations,
         mappedProductDocuments,
-        driveFolderUrl: record.fields["Drive Folder URL"] || "",
+        driveFolderUrl: "",
         requirementSummary: record.fields["Requirement Summary"] || "",
         potentialProduct: record.fields["Potential Product"] || "",
         receiverWhatsappNumber: record.fields["Receiver WhatsApp Number"] || ""

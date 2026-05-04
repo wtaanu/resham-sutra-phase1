@@ -733,7 +733,6 @@ async function findExistingWhatsAppEnquiry(fingerprint: string) {
         "Parser Status",
         "Linked Customer",
         "Quotations",
-        "Drive Folder URL",
         "Requirement Summary",
         "Potential Product",
         "Notes"
