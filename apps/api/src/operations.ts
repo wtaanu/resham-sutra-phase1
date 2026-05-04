@@ -1,5 +1,5 @@
 import { stat } from "node:fs/promises";
-import { listRecords } from "./airtable.js";
+import { listRecords, listRecordsPage, type AirtableRecord } from "./airtable.js";
 import { env } from "./config.js";
 import { getStoredDocumentArtifact } from "./documents.js";
 import { ensureDefaultTemplateFolder, isDriveConfigured } from "./drive.js";
@@ -194,6 +194,50 @@ function buildQuotationLineItemMetrics(
   return metricsByQuotationId;
 }
 
+function mapCustomerRecord(record: AirtableRecord<CustomerFields>) {
+  return {
+    id: record.id,
+    clientId: record.fields["Client ID"] || "",
+    customerName: record.fields["Customer Name"] || "",
+    company: record.fields.Company || "",
+    phone: record.fields.Phone || "",
+    email: record.fields.Email || "",
+    address: record.fields.Address || "",
+    state: record.fields.State || "",
+    city: record.fields.City || "",
+    pincode: record.fields.Pincode || "",
+    customerType: record.fields["Customer Type"] || "",
+    driveFolderUrl: record.fields["Drive Folder URL"] || ""
+  };
+}
+
+export async function getOperationsCustomersPage(input?: { offset?: string; pageSize?: number }) {
+  const page = await listRecordsPage<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, {
+    fields: [
+      "Client ID",
+      "Customer Name",
+      "Company",
+      "Phone",
+      "Email",
+      "Address",
+      "State",
+      "City",
+      "Pincode",
+      "Customer Type",
+      "Drive Folder URL"
+    ],
+    offset: input?.offset,
+    pageSize: input?.pageSize ?? 25,
+    sort: [{ field: "Client ID", direction: "asc" }]
+  });
+
+  return {
+    customers: page.records.map(mapCustomerRecord),
+    nextOffset: page.offset,
+    pageSize: page.pageSize
+  };
+}
+
 export async function getOperationsSnapshot() {
   const [enquiries, customers, quotations, quotationLineItems, orders, products] = await Promise.all([
     safeList<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
@@ -343,20 +387,7 @@ export async function getOperationsSnapshot() {
         receiverWhatsappNumber: record.fields["Receiver WhatsApp Number"] || ""
       };
     }),
-    customers: customers.map((record) => ({
-      id: record.id,
-      clientId: record.fields["Client ID"] || "",
-      customerName: record.fields["Customer Name"] || "",
-      company: record.fields.Company || "",
-      phone: record.fields.Phone || "",
-      email: record.fields.Email || "",
-      address: record.fields.Address || "",
-      state: record.fields.State || "",
-      city: record.fields.City || "",
-      pincode: record.fields.Pincode || "",
-      customerType: record.fields["Customer Type"] || "",
-      driveFolderUrl: record.fields["Drive Folder URL"] || ""
-    })),
+    customers: customers.map(mapCustomerRecord),
     quotations: quotations.map((record) => ({
       id: record.id,
       quotationNumber: record.fields["Quotation Number"] || record.id,

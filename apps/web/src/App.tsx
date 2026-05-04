@@ -141,6 +141,13 @@ type OperationsResponse = {
   products: ProductRecord[];
 };
 
+type CustomersPageResponse = {
+  status: string;
+  customers: CustomerRecord[];
+  nextOffset: string;
+  pageSize: number;
+};
+
 type ViewKey =
   | "dashboard"
   | "orders"
@@ -311,6 +318,15 @@ type PaginatedTableProps<T> = {
   emptyTitle: string;
   emptyBody: string;
   pageSize?: number;
+  pagination?: {
+    canNext: boolean;
+    canPrevious: boolean;
+    isLoading?: boolean;
+    label: string;
+    metaLabel?: string;
+    onNext: () => void;
+    onPrevious: () => void;
+  };
 };
 
 const apiUrl = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
@@ -724,7 +740,8 @@ function PaginatedTable<T>({
   emptyTitle,
   emptyBody,
   headerAction,
-  pageSize = 8
+  pageSize = 8,
+  pagination
 }: PaginatedTableProps<T>) {
   const [page, setPage] = useState(1);
   const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
@@ -734,7 +751,7 @@ function PaginatedTable<T>({
   }, [rows.length, title]);
 
   const start = (page - 1) * pageSize;
-  const pageRows = rows.slice(start, start + pageSize);
+  const pageRows = pagination ? rows : rows.slice(start, start + pageSize);
 
   return (
     <section className="panel">
@@ -746,7 +763,7 @@ function PaginatedTable<T>({
         </div>
         <div className="table-header-actions">
           {headerAction}
-          <span className="table-meta">{rows.length} records</span>
+          <span className="table-meta">{pagination?.metaLabel || `${rows.length} records`}</span>
         </div>
       </div>
 
@@ -762,18 +779,22 @@ function PaginatedTable<T>({
           </div>
           <div className="pagination-bar">
             <span>
-              Page {page} of {totalPages}
+              {pagination?.label || `Page ${page} of ${totalPages}`}
             </span>
             <div className="pagination-actions">
-              <button type="button" disabled={page === 1} onClick={() => setPage(page - 1)}>
+              <button
+                type="button"
+                disabled={pagination ? !pagination.canPrevious || pagination.isLoading : page === 1}
+                onClick={() => (pagination ? pagination.onPrevious() : setPage(page - 1))}
+              >
                 Previous
               </button>
               <button
                 type="button"
-                disabled={page === totalPages}
-                onClick={() => setPage(page + 1)}
+                disabled={pagination ? !pagination.canNext || pagination.isLoading : page === totalPages}
+                onClick={() => (pagination ? pagination.onNext() : setPage(page + 1))}
               >
-                Next
+                {pagination?.isLoading ? "Loading..." : "Next"}
               </button>
             </div>
           </div>
@@ -861,6 +882,25 @@ export default function App() {
   const [authActionState, setAuthActionState] = useState<ActionState | null>(null);
   const [profileOpen, setProfileOpen] = useState(false);
   const [operations, setOperations] = useState<OperationsResponse | null>(null);
+  const [customerPage, setCustomerPage] = useState<{
+    currentOffset: string;
+    error: string;
+    initialized: boolean;
+    loading: boolean;
+    nextOffset: string;
+    page: number;
+    previousOffsets: string[];
+    rows: CustomerRecord[];
+  }>({
+    currentOffset: "",
+    error: "",
+    initialized: false,
+    loading: false,
+    nextOffset: "",
+    page: 1,
+    previousOffsets: [],
+    rows: []
+  });
   const [activeView, setActiveView] = useState<ViewKey>("dashboard");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -924,6 +964,7 @@ export default function App() {
     if (response.status === 401) {
       setCurrentUser(null);
       setOperations(null);
+      setCustomerPage((current) => ({ ...current, initialized: false, rows: [] }));
       setProfileOpen(false);
       setActionState(null);
       setEntryMode(null);
@@ -1017,6 +1058,7 @@ export default function App() {
     } finally {
       setCurrentUser(null);
       setOperations(null);
+      setCustomerPage((current) => ({ ...current, initialized: false, rows: [] }));
       setProfileOpen(false);
       setActionState(null);
       setEntryMode(null);
@@ -1142,6 +1184,14 @@ export default function App() {
       window.removeEventListener("focus", handleFocus);
     };
   }, [authLoading, currentUser]);
+
+  useEffect(() => {
+    if (activeView !== "customers" || !currentUser || customerPage.initialized || customerPage.loading) {
+      return;
+    }
+
+    void loadCustomerPage("", "reset");
+  }, [activeView, currentUser, customerPage.initialized, customerPage.loading]);
 
   useEffect(() => {
     if (!destinationSameAsMain) {
@@ -1661,6 +1711,80 @@ export default function App() {
     setProductDropdownOpen(false);
   }
 
+  async function loadCustomerPage(offset: string, direction: "next" | "previous" | "reset") {
+    if (!currentUser) {
+      return;
+    }
+
+    const previousState = customerPage;
+    try {
+      setCustomerPage((current) => ({ ...current, loading: true, error: "" }));
+      const params = new URLSearchParams({ pageSize: "25" });
+      if (offset) {
+        params.set("offset", offset);
+      }
+
+      const response = await apiFetch(`${apiUrl}/api/operations/customers?${params.toString()}`);
+      if (!response.ok) {
+        throw new Error(`Customers API returned ${response.status}`);
+      }
+
+      const data = (await response.json()) as CustomersPageResponse;
+      setCustomerPage((current) => {
+        if (direction === "next") {
+          return {
+            ...current,
+            currentOffset: offset,
+            error: "",
+            initialized: true,
+            loading: false,
+            nextOffset: data.nextOffset,
+            page: current.page + 1,
+            previousOffsets: [...current.previousOffsets, current.currentOffset],
+            rows: data.customers
+          };
+        }
+
+        if (direction === "previous") {
+          return {
+            ...current,
+            currentOffset: offset,
+            error: "",
+            initialized: true,
+            loading: false,
+            nextOffset: data.nextOffset,
+            page: Math.max(1, current.page - 1),
+            previousOffsets: current.previousOffsets.slice(0, -1),
+            rows: data.customers
+          };
+        }
+
+        return {
+          ...current,
+          currentOffset: "",
+          error: "",
+          initialized: true,
+          loading: false,
+          nextOffset: data.nextOffset,
+          page: 1,
+          previousOffsets: [],
+          rows: data.customers
+        };
+      });
+    } catch (loadError) {
+      const message = loadError instanceof Error ? loadError.message : "Failed to load customers";
+      setCustomerPage({
+        ...previousState,
+        error: message,
+        initialized: previousState.initialized,
+        loading: false
+      });
+      if (message.includes("sign in again")) {
+        setAuthError(message);
+      }
+    }
+  }
+
   function openCustomerEntry(customer?: CustomerRecord) {
     setEntryMode("customer");
     setEditingCustomerId(customer?.id || "");
@@ -2115,6 +2239,7 @@ function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
       setCustomerForm(createBlankCustomerForm());
       closeEntryPanel();
       setActiveView("customers");
+      setCustomerPage((current) => ({ ...current, initialized: false }));
       void refreshOperations(true);
       } catch (error) {
         setActionState({
@@ -3952,7 +4077,18 @@ function updateLineItemRow(
       return null;
     }
 
+    const customerRows = customerPage.initialized ? customerPage.rows : operations.customers;
+    const previousOffset = customerPage.previousOffsets[customerPage.previousOffsets.length - 1] || "";
+
     return (
+      <>
+      {customerPage.error ? (
+        <section className="action-banner error">
+          <strong>Customers</strong>
+          <span>{customerPage.error}</span>
+          {renderBannerCloseButton(() => setCustomerPage((current) => ({ ...current, error: "" })))}
+        </section>
+      ) : null}
       <PaginatedTable
         eyebrow="Customers"
         title="Master account records generated from enquiry intake"
@@ -3961,7 +4097,7 @@ function updateLineItemRow(
             New Customer
           </button>
         }
-        rows={operations.customers}
+        rows={customerRows}
         columns={
           <>
             <th>Client ID</th>
@@ -3973,8 +4109,25 @@ function updateLineItemRow(
             <th>Action</th>
           </>
         }
-        emptyTitle="No customers yet"
-        emptyBody="Customer records created from enquiries will appear here."
+        emptyTitle={customerPage.loading ? "Loading customers..." : "No customers yet"}
+        emptyBody={
+          customerPage.loading
+            ? "Fetching the current customer page."
+            : "Customer records created from enquiries will appear here."
+        }
+        pagination={{
+          canNext: Boolean(customerPage.nextOffset),
+          canPrevious: customerPage.previousOffsets.length > 0,
+          isLoading: customerPage.loading,
+          label: `Page ${customerPage.page}`,
+          metaLabel: `${customerRows.length} records on this page`,
+          onNext: () => {
+            if (customerPage.nextOffset) {
+              void loadCustomerPage(customerPage.nextOffset, "next");
+            }
+          },
+          onPrevious: () => void loadCustomerPage(previousOffset, "previous")
+        }}
         renderRow={(customer) => (
           <tr key={customer.id}>
             <td>{customer.clientId || "Pending"}</td>
@@ -4005,6 +4158,7 @@ function updateLineItemRow(
           </tr>
         )}
       />
+      </>
     );
   };
 

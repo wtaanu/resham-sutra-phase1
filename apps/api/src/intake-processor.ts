@@ -538,34 +538,70 @@ function findMatchingCustomer(
   return null;
 }
 
+async function listCustomerMatchRecords() {
+  return listRecords<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, {
+    fields: [
+      "Client ID",
+      "Customer Name",
+      "Company",
+      "Phone",
+      "WhatsApp",
+      "Email",
+      "Address",
+      "State",
+      "City",
+      "Pincode"
+    ]
+  });
+}
+
 async function ensureCustomer(enquiry: AirtableRecord<EnquiryFields>) {
   return withCustomerLocks(customerLockKeys(enquiry), async () => {
     const linkedCustomerId = enquiry.fields["Linked Customer"]?.[0] || "";
     if (linkedCustomerId) {
       const linkedCustomer = await getCustomerById(linkedCustomerId);
+      const enquiryPhone = normalizePhone(enquiry.fields.Phone);
+      const enquiryEmail = normalizeEmail(enquiry.fields.Email);
+      const linkedPhone = normalizePhone(linkedCustomer.fields.Phone || linkedCustomer.fields.WhatsApp);
+      const linkedEmail = normalizeEmail(linkedCustomer.fields.Email);
+      const contactMatches =
+        Boolean(enquiryPhone && linkedPhone && enquiryPhone === linkedPhone) ||
+        Boolean(enquiryEmail && linkedEmail && enquiryEmail === linkedEmail);
+      const canApplyEnquiryIdentity = contactMatches || (!linkedPhone && !linkedEmail);
+      const enquiryOrExisting = (enquiryValue: unknown, existingValue: unknown, fallback = "") =>
+        canApplyEnquiryIdentity && enquiryValue ? enquiryValue : existingValue || fallback;
       const updatedCustomerFields = withOptionalNumberField(
         {
-          "Customer Name": enquiry.fields["Lead Name"] || linkedCustomer.fields["Customer Name"] || "Unknown Client",
-          Company: enquiry.fields.Company || linkedCustomer.fields.Company || "",
-          Phone: enquiry.fields.Phone || linkedCustomer.fields.Phone || "",
-          WhatsApp: enquiry.fields.Phone || linkedCustomer.fields.WhatsApp || "",
-          Email: enquiry.fields.Email || linkedCustomer.fields.Email || "",
-          Address: enquiry.fields.Address || linkedCustomer.fields.Address || "",
-          State: enquiry.fields.State || linkedCustomer.fields.State || "",
-          City: enquiry.fields.City || linkedCustomer.fields.City || "",
+          "Customer Name": enquiryOrExisting(
+            enquiry.fields["Lead Name"],
+            linkedCustomer.fields["Customer Name"],
+            "Unknown Client"
+          ),
+          Company: enquiryOrExisting(enquiry.fields.Company, linkedCustomer.fields.Company),
+          Phone: enquiryOrExisting(enquiry.fields.Phone, linkedCustomer.fields.Phone),
+          WhatsApp: enquiryOrExisting(enquiry.fields.Phone, linkedCustomer.fields.WhatsApp),
+          Email: enquiryOrExisting(enquiry.fields.Email, linkedCustomer.fields.Email),
+          Address: enquiryOrExisting(enquiry.fields.Address, linkedCustomer.fields.Address),
+          State: enquiryOrExisting(enquiry.fields.State, linkedCustomer.fields.State),
+          City: enquiryOrExisting(enquiry.fields.City, linkedCustomer.fields.City),
           "Customer Type": linkedCustomer.fields["Customer Type"] || "Domestic"
         },
         "Pincode",
-        toPincodeNumber(enquiry.fields.Pincode) ?? toPincodeNumber(linkedCustomer.fields.Pincode)
+        (canApplyEnquiryIdentity ? toPincodeNumber(enquiry.fields.Pincode) : undefined) ??
+          toPincodeNumber(linkedCustomer.fields.Pincode)
       );
 
       console.log("[ensure-customer:update] preparing Airtable write", {
         customerId: linkedCustomer.id,
         enquiryId: enquiry.id,
+        contactMatches,
+        canApplyEnquiryIdentity,
         pincodeNumber:
-          toPincodeNumber(enquiry.fields.Pincode) ?? toPincodeNumber(linkedCustomer.fields.Pincode),
+          (canApplyEnquiryIdentity ? toPincodeNumber(enquiry.fields.Pincode) : undefined) ??
+          toPincodeNumber(linkedCustomer.fields.Pincode),
         pincodeText:
-          toPincodeString(enquiry.fields.Pincode) ?? toPincodeString(linkedCustomer.fields.Pincode)
+          (canApplyEnquiryIdentity ? toPincodeString(enquiry.fields.Pincode) : undefined) ??
+          toPincodeString(linkedCustomer.fields.Pincode)
       });
 
       try {
@@ -588,7 +624,8 @@ async function ensureCustomer(enquiry: AirtableRecord<EnquiryFields>) {
         const retryFields = withOptionalStringField(
           { ...updatedCustomerFields },
           "Pincode",
-          toPincodeString(enquiry.fields.Pincode) ?? toPincodeString(linkedCustomer.fields.Pincode)
+          (canApplyEnquiryIdentity ? toPincodeString(enquiry.fields.Pincode) : undefined) ??
+            toPincodeString(linkedCustomer.fields.Pincode)
         );
         console.log("[ensure-customer:update] retrying with string pincode", {
           customerId: linkedCustomer.id,
@@ -602,21 +639,7 @@ async function ensureCustomer(enquiry: AirtableRecord<EnquiryFields>) {
       }
     }
 
-    const customers = await listRecords<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, {
-      fields: [
-        "Client ID",
-        "Customer Name",
-        "Company",
-        "Phone",
-        "WhatsApp",
-        "Email",
-        "Address",
-        "State",
-        "City",
-        "Pincode"
-      ],
-      maxRecords: 500
-    });
+    const customers = await listCustomerMatchRecords();
 
     const matchedCustomer = findMatchingCustomer(enquiry, customers);
     if (matchedCustomer) {
@@ -1724,28 +1747,16 @@ async function syncParsedEnquiriesWithLineItems() {
   const lineItems = await listAllLineItems();
 
   for (const enquiry of parsedEnquiries) {
-    let customerId = enquiry.fields["Linked Customer"]?.[0] || "";
-    let quotationId = enquiry.fields.Quotations?.[0] || "";
+    const customerId = enquiry.fields["Linked Customer"]?.[0] || "";
+    const quotationId = enquiry.fields.Quotations?.[0] || "";
 
     if (!customerId || !quotationId) {
-      const customer = await ensureCustomer(enquiry);
-      const syncedEnquiry = await syncEnquiryAddressFromCustomer(enquiry, customer);
-      const quotation = await ensureQuotationShell(syncedEnquiry, customer);
-
-      customerId = customer.id;
-      quotationId = quotation.id;
-
-      await updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
-        id: enquiry.id,
-        fields: {
-          ...enquiryStatusFields("Parsed"),
-          "Linked Customer": linkedRecordIds(customerId),
-          Quotations: linkedRecordIds(quotationId)
-        }
+      console.log("[intake-processor] skipped parsed enquiry without explicit customer and quotation links", {
+        enquiryRecordId: enquiry.id,
+        enquiryId: enquiry.fields["Enquiry ID"] || "",
+        hasLinkedCustomer: Boolean(customerId),
+        hasQuotation: Boolean(quotationId)
       });
-    }
-
-    if (!quotationId) {
       continue;
     }
 
@@ -1802,16 +1813,23 @@ async function syncNewEnquiriesWithCustomers() {
   });
 
   for (const enquiry of newEnquiries) {
-    const customer = await ensureCustomer(enquiry);
-    const syncedEnquiry = await syncEnquiryAddressFromCustomer(enquiry, customer);
-    const quotation = await ensureQuotationShell(syncedEnquiry, customer);
+    const customerId = enquiry.fields["Linked Customer"]?.[0] || "";
+    const quotationId = enquiry.fields.Quotations?.[0] || "";
+
+    if (!customerId || !quotationId) {
+      console.log("[intake-processor] skipped new enquiry without explicit customer and quotation links", {
+        enquiryRecordId: enquiry.id,
+        enquiryId: enquiry.fields["Enquiry ID"] || "",
+        hasLinkedCustomer: Boolean(customerId),
+        hasQuotation: Boolean(quotationId)
+      });
+      continue;
+    }
 
     await updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
       id: enquiry.id,
       fields: {
-        ...enquiryStatusFields("Parsed"),
-        "Linked Customer": linkedRecordIds(customer.id),
-        Quotations: linkedRecordIds(quotation.id)
+        ...enquiryStatusFields("Parsed")
       }
     });
   }

@@ -94,6 +94,48 @@ export async function listRecords<TFields extends Record<string, unknown>>(
   return options?.maxRecords ? records.slice(0, options.maxRecords) : records;
 }
 
+export async function listRecordsPage<TFields extends Record<string, unknown>>(
+  tableName: string,
+  options?: {
+    fields?: string[];
+    filterByFormula?: string;
+    offset?: string;
+    pageSize?: number;
+    sort?: Array<{ field: string; direction?: "asc" | "desc" }>;
+  }
+) {
+  const params = new URLSearchParams();
+  const pageSize = Math.min(100, Math.max(1, options?.pageSize ?? 25));
+
+  params.set("pageSize", String(pageSize));
+
+  if (options?.filterByFormula) {
+    params.set("filterByFormula", options.filterByFormula);
+  }
+
+  if (options?.offset) {
+    params.set("offset", options.offset);
+  }
+
+  options?.fields?.forEach((field) => params.append("fields[]", field));
+  options?.sort?.forEach((sort, index) => {
+    params.set(`sort[${index}][field]`, sort.field);
+    params.set(`sort[${index}][direction]`, sort.direction ?? "asc");
+  });
+
+  const query = params.toString();
+  const path = `/${encodeURIComponent(tableName)}?${query}`;
+  const response = await airtableRequest<AirtableListResponse<TFields>>(path, {
+    method: "GET"
+  });
+
+  return {
+    records: response.records,
+    offset: response.offset || "",
+    pageSize
+  };
+}
+
 export async function getRecord<TFields extends Record<string, unknown>>(
   tableName: string,
   recordId: string

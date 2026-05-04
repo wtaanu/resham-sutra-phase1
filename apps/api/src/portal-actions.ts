@@ -755,8 +755,7 @@ async function findExistingCustomerByContact(input: z.infer<typeof enquiryPayloa
       "State",
       "City",
       "Pincode"
-    ],
-    maxRecords: 500
+    ]
   });
 
   return (
@@ -1109,8 +1108,7 @@ function formatLineItemValue(value: number) {
 
 async function nextCustomerIdentifier() {
   const customers = await listRecords<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, {
-    fields: ["Client ID"],
-    maxRecords: 1000
+    fields: ["Client ID"]
   });
 
   const maxValue = customers.reduce((currentMax, customer) => {

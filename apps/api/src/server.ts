@@ -21,7 +21,7 @@ import {
   processPendingEnquiries,
   syncQuotationWhatsAppDeliveryStatus
 } from "./intake-processor.js";
-import { getOperationsSnapshot } from "./operations.js";
+import { getOperationsCustomersPage, getOperationsSnapshot } from "./operations.js";
 import {
   createOrderFromQuotation,
   createPortalCustomer,
@@ -187,6 +187,28 @@ app.get("/api/operations", requireAuthenticatedUser, async (_request, response) 
     response.status(500).json({
       status: "error",
       message: error instanceof Error ? error.message : "Failed to load operations snapshot"
+    });
+  }
+});
+
+app.get("/api/operations/customers", requireAuthenticatedUser, async (request, response) => {
+  try {
+    const pageSize = Number(request.query.pageSize || 25);
+    const offset = String(request.query.offset || "");
+    const page = await getOperationsCustomersPage({
+      offset,
+      pageSize: Number.isFinite(pageSize) ? pageSize : 25
+    });
+
+    response.json({
+      status: "ok",
+      ...page
+    });
+  } catch (error) {
+    logRouteError("GET /api/operations/customers", error);
+    response.status(500).json({
+      status: "error",
+      message: error instanceof Error ? error.message : "Failed to load customers"
     });
   }
 });
