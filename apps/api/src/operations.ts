@@ -3,7 +3,6 @@ import { listRecords } from "./airtable.js";
 import { env } from "./config.js";
 import { getStoredDocumentArtifact } from "./documents.js";
 import { ensureDefaultTemplateFolder, isDriveConfigured } from "./drive.js";
-import { loadQuotationLineItemMetrics } from "./portal-actions.js";
 import { listProductDocuments } from "./product-documents.js";
 
 type EnquiryFields = {
@@ -69,6 +68,7 @@ type QuotationFields = {
 type QuotationLineItemFields = {
   Quotation?: string[];
   "Linked Product"?: string[];
+  "Total Amount"?: number;
 };
 
 type OrderFields = {
@@ -113,6 +113,9 @@ type ProductFields = {
   Freight?: number;
   "Source Sheet"?: string;
 };
+
+const OPERATIONS_SNAPSHOT_LIMIT = 100;
+const OPERATIONS_LINE_ITEM_LIMIT = 1000;
 
 async function safeList<TFields extends Record<string, unknown>>(
   tableName: string,
@@ -168,23 +171,52 @@ function stageCount<T extends { fields: Record<string, unknown> }>(
   return records.filter((record) => String(record.fields[fieldName] || "") === expected).length;
 }
 
+function buildQuotationLineItemMetrics(
+  quotationLineItems: Array<{ fields: QuotationLineItemFields }>
+) {
+  const metricsByQuotationId = new Map<string, { lineItemCount: number; quotationGrandTotal: number }>();
+
+  for (const item of quotationLineItems) {
+    const quotationIds = item.fields.Quotation || [];
+    for (const quotationId of quotationIds) {
+      const existing = metricsByQuotationId.get(quotationId) || {
+        lineItemCount: 0,
+        quotationGrandTotal: 0
+      };
+      existing.lineItemCount += 1;
+      existing.quotationGrandTotal = Number(
+        (existing.quotationGrandTotal + Number(item.fields["Total Amount"] || 0)).toFixed(2)
+      );
+      metricsByQuotationId.set(quotationId, existing);
+    }
+  }
+
+  return metricsByQuotationId;
+}
+
 export async function getOperationsSnapshot() {
   const [enquiries, customers, quotations, quotationLineItems, orders, products] = await Promise.all([
     safeList<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
+      maxRecords: OPERATIONS_SNAPSHOT_LIMIT,
       sort: [{ field: "Created At", direction: "desc" }]
     }),
     safeList<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, {
+      maxRecords: OPERATIONS_SNAPSHOT_LIMIT,
       sort: [{ field: "Client ID", direction: "asc" }]
     }),
     safeList<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
+      maxRecords: OPERATIONS_SNAPSHOT_LIMIT,
       sort: [{ field: "Quotation Number", direction: "desc" }]
     }),
     safeList<QuotationLineItemFields>(env.AIRTABLE_QUOTATION_LINE_ITEMS_TABLE, {
-      fields: ["Quotation", "Linked Product"]
+      maxRecords: OPERATIONS_LINE_ITEM_LIMIT,
+      fields: ["Quotation", "Linked Product", "Total Amount"]
     }),
     safeList<OrderFields>(env.AIRTABLE_ORDERS_TABLE, {
+      maxRecords: OPERATIONS_SNAPSHOT_LIMIT
     }),
     safeList<ProductFields>(env.AIRTABLE_PRODUCTS_TABLE, {
+      maxRecords: OPERATIONS_SNAPSHOT_LIMIT
     })
   ]);
 
@@ -213,10 +245,7 @@ export async function getOperationsSnapshot() {
 
   const quotationById = new Map(quotations.map((record) => [record.id, record]));
   const customersById = new Map(customers.map((record) => [record.id, record.fields]));
-  const quotationMetricEntries = await Promise.all(
-    quotations.map(async (record) => [record.id, await loadQuotationLineItemMetrics(record.id)] as const)
-  );
-  const quotationMetricsById = new Map(quotationMetricEntries);
+  const quotationMetricsById = buildQuotationLineItemMetrics(quotationLineItems);
   const pdfGeneratedAtEntries = await Promise.all(
     quotations.map(async (record) => {
       const generatedAt = await resolvePdfGeneratedAt(
@@ -343,7 +372,7 @@ export async function getOperationsSnapshot() {
       whatsappSentDateTime: record.fields["WhatsApp Sent Date Time"] || "",
       emailSentDateTime: record.fields["Email Sent Date Time"] || "",
       finalPdfGeneratedAt: pdfGeneratedAtByQuotationId.get(record.id) || "",
-      lineItemCount: quotationMetricsById.get(record.id)?.lineItemCount || quotationLineItems.filter((item) => item.fields.Quotation?.includes(record.id)).length,
+      lineItemCount: quotationMetricsById.get(record.id)?.lineItemCount || 0,
       quotationGrandTotal: quotationMetricsById.get(record.id)?.quotationGrandTotal || 0,
       sendQuotation: Boolean(record.fields["Send Quotation"]),
       sendReminder: Boolean(record.fields["Send Reminder"]),

@@ -1128,7 +1128,7 @@ export default function App() {
 
     const intervalId = window.setInterval(() => {
       void loadOperations(true);
-    }, 15000);
+    }, 60000);
 
     const handleFocus = () => {
       void loadOperations(true);
