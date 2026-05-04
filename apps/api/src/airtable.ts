@@ -2,6 +2,7 @@ import { env } from "./config.js";
 
 type AirtableListResponse<TFields extends Record<string, unknown>> = {
   records: AirtableRecord<TFields>[];
+  offset?: string;
 };
 
 export type AirtableRecord<TFields extends Record<string, unknown>> = {
@@ -55,30 +56,42 @@ export async function listRecords<TFields extends Record<string, unknown>>(
     sort?: Array<{ field: string; direction?: "asc" | "desc" }>;
   }
 ) {
-  const params = new URLSearchParams();
+  const records: AirtableRecord<TFields>[] = [];
+  let offset = "";
 
-  if (options?.filterByFormula) {
-    params.set("filterByFormula", options.filterByFormula);
-  }
+  do {
+    const params = new URLSearchParams();
 
-  if (options?.maxRecords) {
-    params.set("maxRecords", String(options.maxRecords));
-  }
+    if (options?.filterByFormula) {
+      params.set("filterByFormula", options.filterByFormula);
+    }
 
-  options?.fields?.forEach((field) => params.append("fields[]", field));
-  options?.sort?.forEach((sort, index) => {
-    params.set(`sort[${index}][field]`, sort.field);
-    params.set(`sort[${index}][direction]`, sort.direction ?? "asc");
-  });
+    if (options?.maxRecords) {
+      params.set("maxRecords", String(options.maxRecords));
+    }
 
-  const query = params.toString();
-  const path = `/${encodeURIComponent(tableName)}${query ? `?${query}` : ""}`;
+    if (offset) {
+      params.set("offset", offset);
+    }
 
-  const response = await airtableRequest<AirtableListResponse<TFields>>(path, {
-    method: "GET"
-  });
+    options?.fields?.forEach((field) => params.append("fields[]", field));
+    options?.sort?.forEach((sort, index) => {
+      params.set(`sort[${index}][field]`, sort.field);
+      params.set(`sort[${index}][direction]`, sort.direction ?? "asc");
+    });
 
-  return response.records;
+    const query = params.toString();
+    const path = `/${encodeURIComponent(tableName)}${query ? `?${query}` : ""}`;
+
+    const response = await airtableRequest<AirtableListResponse<TFields>>(path, {
+      method: "GET"
+    });
+
+    records.push(...response.records);
+    offset = response.offset || "";
+  } while (offset && (!options?.maxRecords || records.length < options.maxRecords));
+
+  return options?.maxRecords ? records.slice(0, options.maxRecords) : records;
 }
 
 export async function getRecord<TFields extends Record<string, unknown>>(

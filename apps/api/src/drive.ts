@@ -263,6 +263,10 @@ async function findFileByNameInFolder(fileName: string, folderId: string) {
   return exactMatch ?? files[0] ?? null;
 }
 
+function isGoogleSheet(file: GoogleDriveFile | null) {
+  return file?.mimeType === "application/vnd.google-apps.spreadsheet";
+}
+
 export async function ensureDefaultTemplateFolder() {
   if (!isDriveConfigured()) {
     throw new Error("Google Drive is not configured");
@@ -397,6 +401,10 @@ export async function uploadFileToFolder(
   }
 
   const fileBuffer = await readFile(filePath);
+  const normalizedFileName = String(fileName || "").trim();
+  const ext = path.extname(normalizedFileName);
+  const baseName = ext ? normalizedFileName.slice(0, -ext.length) : normalizedFileName;
+  const uploadName = options?.convertToGoogleSheet ? baseName || normalizedFileName : normalizedFileName;
   const form = new FormData();
 
   form.append(
@@ -404,7 +412,7 @@ export async function uploadFileToFolder(
     new Blob(
       [
         JSON.stringify({
-          name: fileName,
+          name: uploadName,
           ...(options?.convertToGoogleSheet
             ? { mimeType: "application/vnd.google-apps.spreadsheet" }
             : {})
@@ -426,7 +434,16 @@ export async function uploadFileToFolder(
     fileName
   );
 
-  const existing: GoogleDriveFile | null = await findFileByNameInFolder(fileName, folderId);
+  const existingFiles = await findFilesByNameInFolder(fileName, folderId);
+  const exactExisting =
+    existingFiles.find((file) => file.name === normalizedFileName) ||
+    existingFiles.find((file) => file.name === baseName) ||
+    existingFiles[0] ||
+    null;
+  const existing = options?.convertToGoogleSheet
+    ? existingFiles.find((file) => isGoogleSheet(file) && (file.name === baseName || file.name === normalizedFileName)) ||
+      null
+    : exactExisting;
 
   const uploadUrl = existing
     ? `https://www.googleapis.com/upload/drive/v3/files/${existing.id}?uploadType=multipart&fields=id,name,webViewLink,mimeType`
@@ -439,7 +456,7 @@ export async function uploadFileToFolder(
       new Blob(
         [
           JSON.stringify({
-            name: fileName,
+            name: uploadName,
             parents: [folderId],
             ...(options?.convertToGoogleSheet
               ? { mimeType: "application/vnd.google-apps.spreadsheet" }

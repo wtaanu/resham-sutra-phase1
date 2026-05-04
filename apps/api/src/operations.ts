@@ -172,26 +172,20 @@ function stageCount<T extends { fields: Record<string, unknown> }>(
 export async function getOperationsSnapshot() {
   const [enquiries, customers, quotations, quotationLineItems, orders, products] = await Promise.all([
     safeList<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
-      maxRecords: 50,
       sort: [{ field: "Created At", direction: "desc" }]
     }),
     safeList<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, {
-      maxRecords: 50,
       sort: [{ field: "Client ID", direction: "asc" }]
     }),
     safeList<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
-      maxRecords: 50,
       sort: [{ field: "Quotation Number", direction: "desc" }]
     }),
     safeList<QuotationLineItemFields>(env.AIRTABLE_QUOTATION_LINE_ITEMS_TABLE, {
-      maxRecords: 500,
       fields: ["Quotation", "Linked Product"]
     }),
     safeList<OrderFields>(env.AIRTABLE_ORDERS_TABLE, {
-      maxRecords: 50
     }),
     safeList<ProductFields>(env.AIRTABLE_PRODUCTS_TABLE, {
-      maxRecords: 50
     })
   ]);
 

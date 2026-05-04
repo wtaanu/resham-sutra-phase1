@@ -1347,6 +1347,7 @@ export async function generateFinalPdfForQuotation(quotationId: string) {
   const folder = await ensureFolder(customer);
   const quotationNumber = quotation.fields["Quotation Number"] || (await nextQuotationNumber());
   const localPdfArtifact = getStoredDocumentArtifact(buildCustomerFolderName(customer), quotationNumber, "pdf");
+  const localDraftArtifact = getStoredDocumentArtifact(buildCustomerFolderName(customer), quotationNumber, "xlsx");
 
   let pdf;
   const draftDriveFileId = extractDriveFileId(String(quotation.fields["Draft File URL"] || ""));
@@ -1368,9 +1369,57 @@ export async function generateFinalPdfForQuotation(quotationId: string) {
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown Drive export failure.";
-      throw new Error(
-        `Final PDF export must come from the live quotation sheet. Drive PDF export failed: ${message}`
+      const draftExists = await fileExists(localDraftArtifact.filePath);
+      if (!folder.folderId || !draftExists) {
+        throw new Error(
+          `Final PDF export must come from the live quotation sheet. Drive PDF export failed: ${message}`
+        );
+      }
+
+      console.warn("[quotation-pdf] draft Drive export failed; converting stored XLSX to Google Sheet", {
+        quotationId,
+        quotationNumber,
+        draftDriveFileId,
+        message,
+        stack: error instanceof Error ? error.stack : undefined
+      });
+
+      const convertedDraft = await uploadFileToFolder(
+        localDraftArtifact.filePath,
+        `${quotationNumber}.xlsx`,
+        folder.folderId,
+        {
+          convertToGoogleSheet: true
+        }
       );
+      const convertedDraftFileId = extractDriveFileId(convertedDraft.fileUrl);
+      if (!convertedDraftFileId) {
+        throw new Error(
+          `Final PDF export could not recover because the converted draft file URL is invalid. Original Drive PDF export failed: ${message}`
+        );
+      }
+
+      await updateRecord<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
+        id: quotation.id,
+        fields: {
+          "Draft File URL": convertedDraft.fileUrl
+        }
+      });
+
+      const pdfBuffer = await exportDriveFile(convertedDraftFileId, "application/pdf");
+      await mkdir(path.dirname(localPdfArtifact.filePath), { recursive: true });
+      await writeFile(localPdfArtifact.filePath, pdfBuffer);
+      pdf = {
+        kind: "pdf" as const,
+        quotationRecordId: quotation.id,
+        quotationNumber,
+        filePath: localPdfArtifact.filePath,
+        payloadPath: "",
+        fileUrl: localPdfArtifact.fileUrl,
+        previewUrl: "",
+        payloadUrl: "",
+        message: "Final PDF exported after converting the stored quotation sheet to Google Sheets."
+      };
     }
   } else {
     throw new Error(
