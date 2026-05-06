@@ -72,6 +72,14 @@ body {
   margin-bottom: 16px;
 }
 
+.logo-fallback {
+  display: inline-grid;
+  place-items: center;
+  color: var(--ink);
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
 .auth-copy {
   margin: 10px 0 0;
   color: var(--muted);

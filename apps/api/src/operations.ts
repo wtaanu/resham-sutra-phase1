@@ -255,6 +255,14 @@ function mapCustomerRecord(record: AirtableRecord<CustomerFields>) {
   };
 }
 
+function latestFirst<TFields extends Record<string, unknown>>(records: Array<AirtableRecord<TFields>>) {
+  return [...records].sort((left, right) => {
+    const leftTime = Date.parse(left.createdTime || "");
+    const rightTime = Date.parse(right.createdTime || "");
+    return (Number.isNaN(rightTime) ? 0 : rightTime) - (Number.isNaN(leftTime) ? 0 : leftTime);
+  });
+}
+
 function quoteFormulaValue(value: string) {
   return value.replace(/'/g, "\\'");
 }
@@ -364,12 +372,11 @@ export async function getOperationsCustomersPage(input?: { includeTotal?: boolea
       "Drive Folder URL"
     ],
     offset: input?.offset,
-    pageSize: input?.pageSize ?? 25,
-    sort: [{ field: "Client ID", direction: "asc" }]
+    pageSize: input?.pageSize ?? 25
   });
 
   return {
-    customers: page.records.map(mapCustomerRecord),
+    customers: latestFirst(page.records).map(mapCustomerRecord),
     nextOffset: page.offset,
     pageSize: page.pageSize,
     totalCount: await totalCountPromise
@@ -387,12 +394,11 @@ export async function getOperationsEnquiriesPage(input?: { includeTotal?: boolea
     fields: ENQUIRY_PAGE_FIELDS,
     filterByFormula,
     offset: input?.offset,
-    pageSize: input?.pageSize ?? 25,
-    sort: [{ field: "Created At", direction: "desc" }]
+    pageSize: input?.pageSize ?? 25
   });
 
   return {
-    enquiries: page.records.map(mapEnquiryRecord),
+    enquiries: latestFirst(page.records).map(mapEnquiryRecord),
     nextOffset: page.offset,
     pageSize: page.pageSize,
     totalCount: await totalCountPromise
@@ -424,12 +430,10 @@ export async function getOperationsSnapshot() {
   const [enquiries, customers, quotations, quotationLineItems, orders, products] = await Promise.all([
     safeList<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
       fields: ENQUIRY_PAGE_FIELDS,
-      maxRecords: OPERATIONS_SNAPSHOT_LIMIT,
-      sort: [{ field: "Created At", direction: "desc" }]
+      maxRecords: OPERATIONS_SNAPSHOT_LIMIT
     }),
     safeList<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, {
-      maxRecords: OPERATIONS_SNAPSHOT_LIMIT,
-      sort: [{ field: "Client ID", direction: "asc" }]
+      maxRecords: OPERATIONS_SNAPSHOT_LIMIT
     }),
     safeList<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
       fields: QUOTATION_PAGE_FIELDS,
@@ -554,7 +558,7 @@ export async function getOperationsSnapshot() {
       orders: totalOrders,
       products: totalProducts
     },
-    enquiries: enquiries.map((record) => {
+    enquiries: latestFirst(enquiries).map((record) => {
       const directQuotations = record.fields.Quotations || [];
       const fallbackQuotations = quotationIdsByEnquiryId.get(record.id) || [];
       const mergedQuotations = Array.from(new Set([...directQuotations, ...fallbackQuotations]));
@@ -603,11 +607,11 @@ export async function getOperationsSnapshot() {
         receiverWhatsappNumber: record.fields["Receiver WhatsApp Number"] || ""
       };
     }),
-    customers: customers.map(mapCustomerRecord),
+    customers: latestFirst(customers).map(mapCustomerRecord),
     quotations: quotations.map((record) =>
       mapQuotationRecord(record, quotationMetricsById, pdfGeneratedAtByQuotationId)
     ),
-    orders: orders.map((record) => ({
+    orders: latestFirst(orders).map((record) => ({
       id: record.id,
       orderNumber: record.fields["Order Number"] || record.id,
       linkedCustomerId:

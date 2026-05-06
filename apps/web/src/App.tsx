@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import logoFallbackUrl from "./assets/resham-sutra-logo.png";
 import logoUrl from "./assets/resham-sutra-logo-small.png";
 
 type Metric = {
@@ -355,6 +356,28 @@ type PaginatedTableProps<T> = {
 
 const apiUrl = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
 
+function ReshamSutraLogo({ className }: { className: string }) {
+  const [src, setSrc] = useState(logoUrl);
+
+  if (!src) {
+    return (
+      <span className={`${className} logo-fallback`} aria-label="Resham Sutra">
+        RS
+      </span>
+    );
+  }
+
+  return (
+    <img
+      className={className}
+      src={src}
+      alt="Resham Sutra"
+      decoding="async"
+      onError={() => setSrc((current) => (current === logoUrl ? logoFallbackUrl : ""))}
+    />
+  );
+}
+
 const viewOptions: NavView[] = [
   { key: "dashboard", label: "Dashboard" },
   { key: "orders", label: "Orders" },
@@ -364,6 +387,16 @@ const viewOptions: NavView[] = [
   { key: "customers", label: "Customers" },
   { key: "enquiries", label: "Enquiries" },
   { key: "products", label: "Products" }
+];
+
+const enquiryWorkflowStatuses = [
+  "New",
+  "New Enquiries",
+  "Parsed",
+  "Draft Quote",
+  "Approved Quote",
+  "Sent Quote",
+  "Ordered"
 ];
 
 const stateOptions = [
@@ -2224,7 +2257,10 @@ function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
 
   const enquiryStatusOptions = useMemo(() => {
     const uniqueStatuses = Array.from(
-      new Set((operations?.enquiries || []).map((enquiry) => enquiry.parserStatus || ""))
+      new Set([
+        ...enquiryWorkflowStatuses,
+        ...(operations?.enquiries || []).map((enquiry) => enquiry.parserStatus || "")
+      ])
     ).filter(Boolean);
     return ["All", ...uniqueStatuses];
   }, [operations?.enquiries]);
@@ -4937,7 +4973,7 @@ function updateLineItemRow(
     return (
       <main className="auth-shell">
         <section className="auth-card auth-card-loading">
-          <img className="auth-logo" src={logoUrl} alt="Resham Sutra" />
+          <ReshamSutraLogo className="auth-logo" />
           <p className="eyebrow">Secure Access</p>
           <h1>Loading your workspace</h1>
           <p>Checking for an active ReshamSutra session.</p>
@@ -4950,7 +4986,7 @@ function updateLineItemRow(
     return (
       <main className="auth-shell">
         <section className="auth-card">
-          <img className="auth-logo" src={logoUrl} alt="Resham Sutra" />
+          <ReshamSutraLogo className="auth-logo" />
           <p className="eyebrow">Secure Access</p>
           <h1>Sign in to ReshamSutra Operations</h1>
           <p className="auth-copy">
@@ -5085,7 +5121,7 @@ function updateLineItemRow(
       <aside className="sidebar">
         <div className="brand-card">
           <div className="brand-row">
-            <img className="brand-logo" src={logoUrl} alt="Resham Sutra" />
+            <ReshamSutraLogo className="brand-logo" />
             {!sidebarCollapsed ? (
               <div className="brand-text">
                 <h1>ReshamSutra</h1>
