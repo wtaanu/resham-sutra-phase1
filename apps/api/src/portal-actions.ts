@@ -234,6 +234,7 @@ const optionalCustomerDestinationFields = [
 const optionalOrderFields = [
   "Payment Terms",
   "Order Ref Number Client",
+  "Line Items",
   "Destination Address",
   "Destination State",
   "Destination City",
@@ -1826,13 +1827,11 @@ export async function createOrderFromQuotation(quotationId: string, payload?: un
     ...(payload && typeof payload === "object" ? payload : {})
   });
   const existingOrders = await listRecords<OrderFields>(env.AIRTABLE_ORDERS_TABLE, {
-    fields: ["Order Number", "Linked Quotation", "Quotation", "Customer", "Enquiries", "Order Status", "Order Date", "Total Amount"],
+    fields: ["Order Number", "Linked Quotation", "Linked Customer", "Line Items", "Order Status", "Order Date", "Total Amount"],
     maxRecords: 500
   });
   const existing = existingOrders.find((order) =>
-    order.fields["Linked Quotation"]?.includes(quotationId) ||
-    order.fields.Quotation === quotationId ||
-    (Array.isArray(order.fields.Quotation) && order.fields.Quotation.includes(quotationId))
+    order.fields["Linked Quotation"]?.includes(quotationId)
   );
   if (existing) {
     await updateRecordWithOptionalFieldFallback<QuotationFields>(
@@ -1865,9 +1864,6 @@ export async function createOrderFromQuotation(quotationId: string, payload?: un
   const orderFields: Record<string, unknown> = {
     "Order Number": orderNumber,
     "Order Date": input.orderDate || new Date().toISOString(),
-    Quotation: linkedRecordIds(quotationId),
-    Customer: linkedRecordIds(customerId),
-    Enquiries: linkedRecordIds(enquiryId),
     "Linked Quotation": safeLinkedValue(quotationId),
     "Linked Customer": safeLinkedValue(customerId),
     "Order Status": input.orderStatus,
@@ -1906,13 +1902,23 @@ export async function createOrderFromQuotation(quotationId: string, payload?: un
 
   await updateCustomerDestinationFromOrder(customerId, destination);
 
-  await replaceOrderLineItemsForOrder({
+  const createdOrderLineItems = await replaceOrderLineItemsForOrder({
     orderId: created.id,
     quotationId,
     customerId,
     enquiryId,
     items: orderItems
   });
+  await updateRecordWithOptionalFieldFallback<OrderFields>(
+    env.AIRTABLE_ORDERS_TABLE,
+    {
+      id: created.id,
+      fields: {
+        "Line Items": linkedRecordIds(...createdOrderLineItems.map((item) => item.id))
+      }
+    },
+    optionalOrderFields
+  );
 
   await updateRecordWithOptionalFieldFallback<QuotationFields>(
     env.AIRTABLE_QUOTATIONS_TABLE,
@@ -1959,9 +1965,6 @@ export async function updatePortalOrder(orderId: string, payload: unknown, actor
   const destination = resolveOrderDestination(input, customer, enquiry, existing);
   const fields: Record<string, unknown> = {
     "Order Date": input.orderDate || existing.fields["Order Date"] || new Date().toISOString(),
-    Quotation: linkedRecordIds(input.quotationId),
-    Customer: linkedRecordIds(customerId),
-    Enquiries: linkedRecordIds(enquiryId),
     "Linked Quotation": safeLinkedValue(input.quotationId),
     "Linked Customer": safeLinkedValue(customerId),
     "Order Status": input.orderStatus,
@@ -2007,13 +2010,23 @@ export async function updatePortalOrder(orderId: string, payload: unknown, actor
     optionalQuotationFields
   );
 
-  await replaceOrderLineItemsForOrder({
+  const updatedOrderLineItems = await replaceOrderLineItemsForOrder({
     orderId,
     quotationId: input.quotationId,
     customerId,
     enquiryId,
     items: orderItems
   });
+  await updateRecordWithOptionalFieldFallback<OrderFields>(
+    env.AIRTABLE_ORDERS_TABLE,
+    {
+      id: orderId,
+      fields: {
+        "Line Items": linkedRecordIds(...updatedOrderLineItems.map((item) => item.id))
+      }
+    },
+    optionalOrderFields
+  );
 
   await createChangeLogEntry(env.AIRTABLE_ORDER_CHANGE_LOG_TABLE, {
     entityRecordId: updated.id,

@@ -113,11 +113,17 @@ type OrderRecord = {
   orderRiskAttentionFlag?: string;
   orderValue: number;
   paymentStatus: string;
+  paymentTerms: string;
+  orderRefNumberClient: string;
   deliveryStatus: string;
   address: string;
   state: string;
   city: string;
   pincode: string;
+  destinationAddress: string;
+  destinationState: string;
+  destinationCity: string;
+  destinationPincode: string;
 };
 
 type ProductRecord = {
@@ -266,10 +272,16 @@ type OrderFormState = {
   totalAmount: string;
   orderNotes: string;
   paymentStatus: "Paid" | "Pending" | "Half Payment";
+  paymentTerms: string;
+  orderRefNumberClient: string;
   address: string;
   state: string;
   city: string;
   pincode: string;
+  destinationAddress: string;
+  destinationState: string;
+  destinationCity: string;
+  destinationPincode: string;
 };
 
 type OrderLineItemRow = {
@@ -722,10 +734,16 @@ function createBlankOrderForm(): OrderFormState {
     totalAmount: "",
     orderNotes: "",
     paymentStatus: "Pending",
+    paymentTerms: "",
+    orderRefNumberClient: "",
     address: "",
     state: "",
     city: "",
-    pincode: ""
+    pincode: "",
+    destinationAddress: "",
+    destinationState: "",
+    destinationCity: "",
+    destinationPincode: ""
   };
 }
 
@@ -2107,10 +2125,16 @@ function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
             totalAmount: formatAmountInput(order.totalAmount || order.orderValue || 0),
             orderNotes: order.orderNotes || "",
             paymentStatus: (order.paymentStatus as OrderFormState["paymentStatus"]) || "Pending",
+            paymentTerms: order.paymentTerms || "",
+            orderRefNumberClient: order.orderRefNumberClient || "",
             address: order.address || "",
             state: order.state || "",
             city: order.city || "",
-            pincode: order.pincode || ""
+            pincode: order.pincode || "",
+            destinationAddress: order.destinationAddress || order.address || "",
+            destinationState: order.destinationState || order.state || "",
+            destinationCity: order.destinationCity || order.city || "",
+            destinationPincode: order.destinationPincode || order.pincode || ""
           }
         : {
             quotationId: quotation?.id || "",
@@ -2121,10 +2145,16 @@ function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
             totalAmount: formatAmountInput(quotation?.quotationGrandTotal || 0),
             orderNotes: "",
             paymentStatus: "Pending",
+            paymentTerms: "",
+            orderRefNumberClient: "",
             address: linkedEnquiry?.destinationAddress || linkedEnquiry?.address || "",
             state: linkedEnquiry?.destinationState || linkedEnquiry?.state || "",
             city: linkedEnquiry?.destinationCity || linkedEnquiry?.city || "",
-            pincode: linkedEnquiry?.destinationPincode || linkedEnquiry?.pincode || ""
+            pincode: linkedEnquiry?.destinationPincode || linkedEnquiry?.pincode || "",
+            destinationAddress: linkedEnquiry?.destinationAddress || linkedEnquiry?.address || "",
+            destinationState: linkedEnquiry?.destinationState || linkedEnquiry?.state || "",
+            destinationCity: linkedEnquiry?.destinationCity || linkedEnquiry?.city || "",
+            destinationPincode: linkedEnquiry?.destinationPincode || linkedEnquiry?.pincode || ""
           }
     );
   }
@@ -2645,10 +2675,16 @@ function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
             totalAmount: Number(orderForm.totalAmount || 0),
             orderNotes: orderForm.orderNotes,
             paymentStatus: orderForm.paymentStatus,
+            paymentTerms: orderForm.paymentTerms,
+            orderRefNumberClient: orderForm.orderRefNumberClient,
             address: orderForm.address,
             state: orderForm.state,
             city: orderForm.city,
             pincode: normalizePincodeInput(orderForm.pincode),
+            destinationAddress: orderForm.destinationAddress,
+            destinationState: orderForm.destinationState,
+            destinationCity: orderForm.destinationCity,
+            destinationPincode: normalizePincodeInput(orderForm.destinationPincode),
             items: normalizedOrderItems
           })
         });
@@ -3113,6 +3149,18 @@ function updateLineItemRow(
         return actionState.key === "send-product-documents" ? actionState : null;
       case "lineItems":
         return actionState.key === "portal-line-items" ? actionState : null;
+      case "customer":
+        return actionState.key === "portal-customer" ||
+          actionState.key.startsWith("customer-update-")
+          ? actionState
+          : null;
+      case "quotation":
+        return actionState.key === "portal-quotation" ? actionState : null;
+      case "order":
+        return actionState.key.startsWith("order-create-") ||
+          actionState.key.startsWith("order-update-")
+          ? actionState
+          : null;
       default:
         return null;
     }
@@ -3674,6 +3722,14 @@ function updateLineItemRow(
                   ))}
                 </select>
               </label>
+              <label>
+                <span>Payment Terms</span>
+                <input value={orderForm.paymentTerms} onChange={(event) => setOrderForm((current) => ({ ...current, paymentTerms: event.target.value }))} />
+              </label>
+              <label>
+                <span>Order Ref Number Client</span>
+                <input value={orderForm.orderRefNumberClient} onChange={(event) => setOrderForm((current) => ({ ...current, orderRefNumberClient: event.target.value }))} />
+              </label>
               <label className="form-span-2">
                 <span>Address</span>
                 <textarea rows={2} value={orderForm.address} onChange={(event) => setOrderForm((current) => ({ ...current, address: event.target.value }))} />
@@ -3696,6 +3752,29 @@ function updateLineItemRow(
               <label>
                 <span>Pincode</span>
                 <input inputMode="numeric" value={orderForm.pincode} onChange={(event) => setOrderForm((current) => ({ ...current, pincode: normalizePincodeInput(event.target.value) }))} />
+              </label>
+              <label className="form-span-2">
+                <span>Destination Address</span>
+                <textarea rows={2} value={orderForm.destinationAddress} onChange={(event) => setOrderForm((current) => ({ ...current, destinationAddress: event.target.value }))} />
+              </label>
+              <label>
+                <span>Destination State</span>
+                <select value={orderForm.destinationState} onChange={(event) => setOrderForm((current) => ({ ...current, destinationState: event.target.value }))}>
+                  <option value="">Select state</option>
+                  {stateOptions.map((status) => (
+                    <option key={status} value={status}>
+                      {status}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>Destination City</span>
+                <input value={orderForm.destinationCity} onChange={(event) => setOrderForm((current) => ({ ...current, destinationCity: event.target.value }))} />
+              </label>
+              <label>
+                <span>Destination Pincode</span>
+                <input inputMode="numeric" value={orderForm.destinationPincode} onChange={(event) => setOrderForm((current) => ({ ...current, destinationPincode: normalizePincodeInput(event.target.value) }))} />
               </label>
               <label className="form-span-2">
                 <span>Order notes</span>

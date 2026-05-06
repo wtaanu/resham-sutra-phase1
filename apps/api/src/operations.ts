@@ -90,11 +90,17 @@ type OrderFields = {
   "Order Risk/Attention Flag (AI)"?: string;
   "Order Value"?: number;
   "Payment Status"?: string;
+  "Payment Terms"?: string;
+  "Order Ref Number Client"?: string;
   "Delivery Status"?: string;
   Address?: string;
   State?: string;
   City?: string;
   Pincode?: string | number;
+  "Destination Address"?: string;
+  "Destination State"?: string;
+  "Destination City"?: string;
+  "Destination Pincode"?: string | number;
 };
 
 type ProductFields = {
@@ -637,11 +643,17 @@ export async function getOperationsSnapshot() {
       orderRiskAttentionFlag: record.fields["Order Risk/Attention Flag (AI)"] || "",
       orderValue: record.fields["Order Value"] || record.fields["Total Amount"] || 0,
       paymentStatus: record.fields["Payment Status"] || "",
+      paymentTerms: record.fields["Payment Terms"] || "",
+      orderRefNumberClient: record.fields["Order Ref Number Client"] || "",
       deliveryStatus: record.fields["Delivery Status"] || "",
       address: record.fields.Address || "",
       state: record.fields.State || "",
       city: record.fields.City || "",
-      pincode: String(record.fields.Pincode || "")
+      pincode: String(record.fields.Pincode || ""),
+      destinationAddress: record.fields["Destination Address"] || "",
+      destinationState: record.fields["Destination State"] || "",
+      destinationCity: record.fields["Destination City"] || "",
+      destinationPincode: String(record.fields["Destination Pincode"] || "")
     })),
     products: products.map((record) => ({
       id: record.id,
