@@ -244,13 +244,13 @@ function recordIdFormula(recordIds: string[]) {
   return clauses.length === 1 ? clauses[0] : `OR(${clauses.join(",")})`;
 }
 
-function linkedRecordFormula(fieldName: string, recordIds: string[]) {
-  const uniqueRecordIds = Array.from(new Set(recordIds.filter(Boolean)));
-  if (!uniqueRecordIds.length) {
+function linkedRecordFormula(fieldName: string, linkedDisplayValues: string[]) {
+  const uniqueValues = Array.from(new Set(linkedDisplayValues.filter(Boolean)));
+  if (!uniqueValues.length) {
     return "";
   }
 
-  const clauses = uniqueRecordIds.map((recordId) => `ARRAYJOIN({${fieldName}})='${quoteFormulaValue(recordId)}'`);
+  const clauses = uniqueValues.map((value) => `FIND('${quoteFormulaValue(value)}', ARRAYJOIN({${fieldName}}))`);
   return clauses.length === 1 ? clauses[0] : `OR(${clauses.join(",")})`;
 }
 
@@ -410,7 +410,7 @@ export async function getOperationsQuotationsPage(input?: { includeTotal?: boole
     sort: [{ field: "Quotation Number", direction: "desc" }]
   });
   const customerIds = page.records.flatMap((record) => record.fields["Linked Customer"] || []);
-  const quotationIds = page.records.map((record) => record.id);
+  const quotationNumbers = page.records.map((record) => record.fields["Quotation Number"] || record.id);
   const [linkedCustomers, quotationLineItems] = await Promise.all([
     customerIds.length
       ? listRecords<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, {
@@ -419,10 +419,10 @@ export async function getOperationsQuotationsPage(input?: { includeTotal?: boole
           maxRecords: customerIds.length
         })
       : Promise.resolve([]),
-    quotationIds.length
+    quotationNumbers.length
       ? listRecords<QuotationLineItemFields>(env.AIRTABLE_QUOTATION_LINE_ITEMS_TABLE, {
           fields: ["Quotation", "Linked Product", "Total Amount"],
-          filterByFormula: linkedRecordFormula("Quotation", quotationIds),
+          filterByFormula: linkedRecordFormula("Quotation", quotationNumbers),
           maxRecords: 1000
         })
       : Promise.resolve([])

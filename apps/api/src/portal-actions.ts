@@ -1865,9 +1865,9 @@ export async function createOrderFromQuotation(quotationId: string, payload?: un
   const orderFields: Record<string, unknown> = {
     "Order Number": orderNumber,
     "Order Date": input.orderDate || new Date().toISOString(),
-    Quotation: quotationId,
-    Customer: customerId,
-    Enquiries: enquiryId,
+    Quotation: linkedRecordIds(quotationId),
+    Customer: linkedRecordIds(customerId),
+    Enquiries: linkedRecordIds(enquiryId),
     "Linked Quotation": safeLinkedValue(quotationId),
     "Linked Customer": safeLinkedValue(customerId),
     "Order Status": input.orderStatus,
@@ -1959,9 +1959,9 @@ export async function updatePortalOrder(orderId: string, payload: unknown, actor
   const destination = resolveOrderDestination(input, customer, enquiry, existing);
   const fields: Record<string, unknown> = {
     "Order Date": input.orderDate || existing.fields["Order Date"] || new Date().toISOString(),
-    Quotation: input.quotationId,
-    Customer: customerId,
-    Enquiries: enquiryId,
+    Quotation: linkedRecordIds(input.quotationId),
+    Customer: linkedRecordIds(customerId),
+    Enquiries: linkedRecordIds(enquiryId),
     "Linked Quotation": safeLinkedValue(input.quotationId),
     "Linked Customer": safeLinkedValue(customerId),
     "Order Status": input.orderStatus,
