@@ -124,7 +124,7 @@ type OrderFields = {
   "Linked Quotation"?: string[];
   "Linked Customer"?: string[];
   "Order Status"?: string;
-  "Total Amount"?: number;
+  "Total Amount"?: number | string;
   "Order Notes"?: string;
   "Line Items"?: string[] | string;
   "Quotation Grand Total"?: number | string;
@@ -151,19 +151,19 @@ type OrderFields = {
 
 type OrderLineItemFields = {
   Name?: string;
-  Order?: string[] | string;
-  Quotation?: string[] | string;
-  Enquiries?: string[] | string;
-  Customer?: string[] | string;
-  "Linked Product"?: string[];
+  Order?: string;
+  Quotation?: string;
+  Enquiries?: string;
+  Customer?: string;
+  "Linked Product"?: string;
   "S.No."?: number;
   Description?: string;
   Qty?: number;
   "Rate Per Unit"?: number;
   "Packing & Freight"?: number;
   "Unit Value"?: number;
-  "GST 18%"?: number;
-  "Total Amount"?: number;
+  "GST 18%"?: string;
+  "Total Amount"?: string;
 };
 
 type ChangeLogFields = {
@@ -232,6 +232,7 @@ const optionalCustomerDestinationFields = [
   "Destination Pincode"
 ] as const;
 const optionalOrderFields = [
+  "Total Amount",
   "Payment Terms",
   "Order Ref Number Client",
   "Line Items",
@@ -1053,8 +1054,7 @@ async function replaceOrderLineItemsForOrder(input: {
     maxRecords: 500
   });
   const existingForOrder = existing.filter((item) => {
-    const linkedOrder = Array.isArray(item.fields.Order) ? item.fields.Order[0] || "" : String(item.fields.Order || "");
-    return linkedOrder === input.orderId;
+    return String(item.fields.Order || "") === input.orderId;
   });
 
   if (existingForOrder.length) {
@@ -1069,19 +1069,19 @@ async function replaceOrderLineItemsForOrder(input: {
     env.AIRTABLE_ORDER_LINE_ITEMS_TABLE,
     input.items.map((item, index) => ({
       Name: `${input.orderId}-${String(index + 1).padStart(2, "0")}`,
-      Order: linkedRecordIds(input.orderId),
-      Quotation: linkedRecordIds(input.quotationId),
-      Enquiries: linkedRecordIds(input.enquiryId),
-      Customer: linkedRecordIds(input.customerId),
-      "Linked Product": linkedRecordIds(item.productId),
+      Order: input.orderId,
+      Quotation: input.quotationId,
+      Enquiries: input.enquiryId,
+      Customer: input.customerId,
+      "Linked Product": item.productId,
       "S.No.": item.serialNo || index + 1,
       Description: item.description,
       Qty: item.qty,
       "Rate Per Unit": item.ratePerUnit,
       "Packing & Freight": item.packingFreight,
       "Unit Value": item.unitValue,
-      "GST 18%": item.gst18,
-      "Total Amount": item.totalAmount
+      "GST 18%": String(item.gst18 || 0),
+      "Total Amount": String(item.totalAmount || 0)
     }))
   );
 }
@@ -1105,13 +1105,12 @@ export async function getPortalOrderLineItems(orderId: string) {
 
   return items
     .filter((item) => {
-      const linkedOrder = Array.isArray(item.fields.Order) ? item.fields.Order[0] || "" : String(item.fields.Order || "");
-      return linkedOrder === orderId;
+      return String(item.fields.Order || "") === orderId;
     })
     .sort((left, right) => Number(left.fields["S.No."] || 0) - Number(right.fields["S.No."] || 0))
     .map((item) => ({
       id: item.id,
-      productId: item.fields["Linked Product"]?.[0] || "",
+      productId: String(item.fields["Linked Product"] || ""),
       description: String(item.fields.Description || ""),
       qty: Number(item.fields.Qty || 0),
       ratePerUnit: Number(item.fields["Rate Per Unit"] || 0),
