@@ -894,24 +894,53 @@ function airtablePaymentStatus(value: string) {
   return value;
 }
 
+async function bestEffortDeleteRecords(tableName: string, recordIds: string[]) {
+  const ids = recordIds.filter(Boolean);
+  if (!ids.length) {
+    return;
+  }
+
+  try {
+    await deleteRecords(tableName, ids);
+  } catch (error) {
+    console.error("[portal-order] rollback delete failed", {
+      tableName,
+      recordIds: ids,
+      error: serializeError(error)
+    });
+  }
+}
+
+function logOrderFollowUpFailure(step: string, context: Record<string, unknown>, error: unknown) {
+  console.warn("[portal-order] follow-up update failed", {
+    step,
+    ...context,
+    error: serializeError(error)
+  });
+}
+
 async function updateRecordWithOptionalFieldFallback<T extends Record<string, unknown>>(
   tableName: string,
   payload: { id: string; fields: Record<string, unknown> },
   optionalFields: readonly string[]
 ) {
-  try {
-    return await updateRecord<T>(tableName, payload);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "";
-    const retryFields = stripOptionalFields(payload.fields, optionalFields, message);
-    if (!retryFields) {
-      throw error;
-    }
+  let fields = { ...payload.fields };
 
-    return updateRecord<T>(tableName, {
-      id: payload.id,
-      fields: retryFields
-    });
+  for (;;) {
+    try {
+      return await updateRecord<T>(tableName, {
+        id: payload.id,
+        fields
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      const retryFields = stripOptionalFields(fields, optionalFields, message);
+      if (!retryFields) {
+        throw error;
+      }
+
+      fields = retryFields;
+    }
   }
 }
 
@@ -1073,25 +1102,34 @@ async function replaceOrderLineItemsForOrder(input: {
     return [];
   }
 
-  return createRecords<OrderLineItemFields>(
-    env.AIRTABLE_ORDER_LINE_ITEMS_TABLE,
-    input.items.map((item, index) => ({
-      Name: `${input.orderId}-${String(index + 1).padStart(2, "0")}`,
-      Order: input.orderId,
-      Quotation: input.quotationId,
-      Enquiries: input.enquiryId,
-      Customer: input.customerId,
-      "Linked Product": item.productId,
-      "S.No.": item.serialNo || index + 1,
-      Description: item.description,
-      Qty: item.qty,
-      "Rate Per Unit": item.ratePerUnit,
-      "Packing & Freight": item.packingFreight,
-      "Unit Value": item.unitValue,
-      "GST 18%": String(item.gst18 || 0),
-      "Total Amount": String(item.totalAmount || 0)
-    }))
-  );
+  const lineItemFields = input.items.map((item, index) => ({
+    Name: `${input.orderId}-${String(index + 1).padStart(2, "0")}`,
+    Order: input.orderId,
+    Quotation: input.quotationId,
+    Enquiries: input.enquiryId,
+    Customer: input.customerId,
+    "Linked Product": item.productId,
+    "S.No.": item.serialNo || index + 1,
+    Description: item.description,
+    Qty: item.qty,
+    "Rate Per Unit": item.ratePerUnit,
+    "Packing & Freight": item.packingFreight,
+    "Unit Value": item.unitValue,
+    "GST 18%": String(item.gst18 || 0),
+    "Total Amount": String(item.totalAmount || 0)
+  }));
+
+  const created: AirtableRecord<OrderLineItemFields>[] = [];
+  try {
+    for (const fields of lineItemFields) {
+      created.push(await createRecord<OrderLineItemFields>(env.AIRTABLE_ORDER_LINE_ITEMS_TABLE, fields));
+    }
+  } catch (error) {
+    await bestEffortDeleteRecords(env.AIRTABLE_ORDER_LINE_ITEMS_TABLE, created.map((item) => item.id));
+    throw error;
+  }
+
+  return created;
 }
 
 export async function getPortalOrderLineItems(orderId: string) {
@@ -1234,14 +1272,7 @@ async function updateCustomerDestinationFromOrder(
       }
     },
     optionalCustomerDestinationFields
-  ).catch((error) => {
-    console.error("[order-destination] failed to update customer destination fields", {
-      customerId,
-      message: error instanceof Error ? error.message : "Unknown error",
-      stack: error instanceof Error ? error.stack : undefined,
-      destination
-    });
-  });
+  );
 }
 
 export async function createPortalEnquiry(payload: unknown) {
@@ -1909,56 +1940,71 @@ export async function createOrderFromQuotation(quotationId: string, payload?: un
     created = await createRecord<OrderFields>(env.AIRTABLE_ORDERS_TABLE, retryFields);
   }
 
-  await updateCustomerDestinationFromOrder(customerId, destination);
+  let createdOrderLineItems: AirtableRecord<OrderLineItemFields>[] = [];
+  try {
+    createdOrderLineItems = await replaceOrderLineItemsForOrder({
+      orderId: created.id,
+      quotationId,
+      customerId,
+      enquiryId,
+      items: orderItems
+    });
+  } catch (error) {
+    await bestEffortDeleteRecords(
+      env.AIRTABLE_ORDER_LINE_ITEMS_TABLE,
+      createdOrderLineItems.map((item) => item.id)
+    );
+    await bestEffortDeleteRecords(env.AIRTABLE_ORDERS_TABLE, [created.id]);
+    throw error;
+  }
 
-  const createdOrderLineItems = await replaceOrderLineItemsForOrder({
-    orderId: created.id,
-    quotationId,
-    customerId,
-    enquiryId,
-    items: orderItems
-  });
-  if (createdOrderLineItems.length) {
-    await updateRecordWithOptionalFieldFallback<OrderFields>(
-      env.AIRTABLE_ORDERS_TABLE,
+  try {
+    await updateCustomerDestinationFromOrder(customerId, destination);
+  } catch (error) {
+    logOrderFollowUpFailure("customer_destination", { orderId: created.id, customerId }, error);
+  }
+
+  try {
+    await updateRecordWithOptionalFieldFallback<QuotationFields>(
+      env.AIRTABLE_QUOTATIONS_TABLE,
       {
-        id: created.id,
+        id: quotationId,
         fields: {
-          "Line Items": linkedRecordIds(...createdOrderLineItems.map((item) => item.id))
+          Status: QUOTATION_STATUS_ORDERED,
+          Orders: linkedRecordIds(created.id)
         }
       },
-      optionalOrderFields
+      optionalQuotationFields
     );
+  } catch (error) {
+    logOrderFollowUpFailure("quotation_order_link", { orderId: created.id, quotationId }, error);
   }
 
-  await updateRecordWithOptionalFieldFallback<QuotationFields>(
-    env.AIRTABLE_QUOTATIONS_TABLE,
-    {
-      id: quotationId,
-      fields: {
-        Status: QUOTATION_STATUS_ORDERED,
-        Orders: linkedRecordIds(created.id)
-      }
-    },
-    optionalQuotationFields
-  );
-  if (enquiryId) {
-    await updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
-      id: enquiryId,
-      fields: {
-        "Parser Status": ENQUIRY_STATUS_ORDERED
-      }
+  try {
+    if (enquiryId) {
+      await updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
+        id: enquiryId,
+        fields: {
+          "Parser Status": ENQUIRY_STATUS_ORDERED
+        }
+      });
+    }
+  } catch (error) {
+    logOrderFollowUpFailure("enquiry_status", { orderId: created.id, enquiryId }, error);
+  }
+
+  try {
+    await createChangeLogEntry(env.AIRTABLE_ORDER_CHANGE_LOG_TABLE, {
+      entityRecordId: created.id,
+      entityLabel: created.fields["Order Number"] || created.id,
+      action: "created",
+      before: null,
+      after: created.fields,
+      actor
     });
+  } catch (error) {
+    logOrderFollowUpFailure("change_log", { orderId: created.id }, error);
   }
-
-  await createChangeLogEntry(env.AIRTABLE_ORDER_CHANGE_LOG_TABLE, {
-    entityRecordId: created.id,
-    entityLabel: created.fields["Order Number"] || created.id,
-    action: "created",
-    before: null,
-    after: created.fields,
-    actor
-  });
 
   return created;
 }
@@ -2027,16 +2073,20 @@ export async function updatePortalOrder(orderId: string, payload: unknown, actor
     items: orderItems
   });
   if (updatedOrderLineItems.length) {
-    await updateRecordWithOptionalFieldFallback<OrderFields>(
-      env.AIRTABLE_ORDERS_TABLE,
-      {
-        id: orderId,
-        fields: {
-          "Line Items": linkedRecordIds(...updatedOrderLineItems.map((item) => item.id))
-        }
-      },
-      optionalOrderFields
-    );
+    try {
+      await updateRecordWithOptionalFieldFallback<OrderFields>(
+        env.AIRTABLE_ORDERS_TABLE,
+        {
+          id: orderId,
+          fields: {
+            "Line Items": linkedRecordIds(...updatedOrderLineItems.map((item) => item.id))
+          }
+        },
+        optionalOrderFields
+      );
+    } catch (error) {
+      logOrderFollowUpFailure("order_line_items_link", { orderId }, error);
+    }
   }
 
   await createChangeLogEntry(env.AIRTABLE_ORDER_CHANGE_LOG_TABLE, {
