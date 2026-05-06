@@ -494,6 +494,31 @@ export async function getOperationsSnapshot() {
   const defaultTemplateFolder = isDriveConfigured()
     ? await ensureDefaultTemplateFolder().catch(() => null)
     : null;
+  const [
+    totalEnquiries,
+    totalCustomers,
+    totalQuotations,
+    totalOrders,
+    totalProducts,
+    totalNewEnquiries,
+    totalDraftQuoteEnquiries,
+    totalApprovedQuotations,
+    totalSentQuotations
+  ] = await Promise.all([
+    countRecords(env.AIRTABLE_ENQUIRIES_TABLE, "Enquiry ID"),
+    countRecords(env.AIRTABLE_CUSTOMERS_TABLE, "Client ID"),
+    countRecords(env.AIRTABLE_QUOTATIONS_TABLE, "Quotation Number"),
+    countRecords(env.AIRTABLE_ORDERS_TABLE, "Order Number"),
+    countRecords(env.AIRTABLE_PRODUCTS_TABLE, "Product Key"),
+    countRecords(
+      env.AIRTABLE_ENQUIRIES_TABLE,
+      "Enquiry ID",
+      anyFieldFormula("Parser Status", ["New", "New Enquiries"])
+    ),
+    countRecords(env.AIRTABLE_ENQUIRIES_TABLE, "Enquiry ID", exactFieldFormula("Parser Status", "Draft Quote")),
+    countRecords(env.AIRTABLE_QUOTATIONS_TABLE, "Quotation Number", exactFieldFormula("Status", "Approved Quote")),
+    countRecords(env.AIRTABLE_QUOTATIONS_TABLE, "Quotation Number", exactFieldFormula("Status", "Sent Quote"))
+  ]);
 
   return {
     actions: {
@@ -506,22 +531,22 @@ export async function getOperationsSnapshot() {
     metrics: [
       {
         label: "New Enquiries",
-        value: enquiryIdsWithoutDraft
+        value: totalNewEnquiries
       },
       {
         label: "Draft Quote",
-        value: enquiries.filter((record) => statusValue(record.fields) === "Draft Quote").length
+        value: totalDraftQuoteEnquiries
       },
-      { label: "Approved Quote", value: stageCount(quotations, "Status", "Approved Quote") },
-      { label: "Sent Quote", value: stageCount(quotations, "Status", "Sent Quote") },
-      { label: "Orders", value: orders.length }
+      { label: "Approved Quote", value: totalApprovedQuotations },
+      { label: "Sent Quote", value: totalSentQuotations },
+      { label: "Orders", value: totalOrders }
     ],
     totals: {
-      enquiries: await countRecords(env.AIRTABLE_ENQUIRIES_TABLE, "Enquiry ID"),
-      customers: await countRecords(env.AIRTABLE_CUSTOMERS_TABLE, "Client ID"),
-      quotations: await countRecords(env.AIRTABLE_QUOTATIONS_TABLE, "Quotation Number"),
-      orders: await countRecords(env.AIRTABLE_ORDERS_TABLE, "Order Number"),
-      products: await countRecords(env.AIRTABLE_PRODUCTS_TABLE, "Product Key")
+      enquiries: totalEnquiries,
+      customers: totalCustomers,
+      quotations: totalQuotations,
+      orders: totalOrders,
+      products: totalProducts
     },
     enquiries: enquiries.map((record) => {
       const directQuotations = record.fields.Quotations || [];

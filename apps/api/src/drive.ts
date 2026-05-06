@@ -437,13 +437,13 @@ export async function uploadFileToFolder(
   const existingFiles = await findFilesByNameInFolder(fileName, folderId);
   const exactExisting =
     existingFiles.find((file) => file.name === normalizedFileName) ||
-    existingFiles.find((file) => file.name === baseName) ||
-    existingFiles[0] ||
     null;
   const existing = options?.convertToGoogleSheet
     ? existingFiles.find((file) => isGoogleSheet(file) && (file.name === baseName || file.name === normalizedFileName)) ||
       null
-    : exactExisting;
+    : exactExisting && !String(exactExisting.mimeType || "").startsWith("application/vnd.google-apps.")
+      ? exactExisting
+      : null;
 
   const uploadUrl = existing
     ? `https://www.googleapis.com/upload/drive/v3/files/${existing.id}?uploadType=multipart&fields=id,name,webViewLink,mimeType`
