@@ -110,6 +110,8 @@ type OrderRecord = {
   id: string;
   orderNumber: string;
   linkedCustomerId: string;
+  customerClientId?: string;
+  customerName?: string;
   linkedQuotationId: string;
   linkedEnquiryId?: string;
   orderDate: string;
@@ -2303,6 +2305,17 @@ function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
   const orderByQuotationId = useMemo(() => {
     return new Map((operations?.orders ?? []).map((order) => [order.linkedQuotationId, order]));
   }, [operations?.orders]);
+
+  function resolveOrderCustomerLabel(order: OrderRecord) {
+    return (
+      customerLookup.get(order.linkedCustomerId)?.clientId ||
+      order.customerClientId ||
+      order.customerName ||
+      quotationLookup.get(order.linkedQuotationId)?.customerName ||
+      order.linkedCustomerId ||
+      "Not linked"
+    );
+  }
 
   const availableQuotationOptions = useMemo(() => {
     return [...(operations?.quotations ?? [])].sort((left, right) => {
@@ -5051,7 +5064,7 @@ function updateLineItemRow(
         renderRow={(order) => (
           <tr key={order.id}>
             <td>{order.orderNumber}</td>
-            <td>{customerLookup.get(order.linkedCustomerId)?.customerName || "Not linked"}</td>
+            <td>{resolveOrderCustomerLabel(order)}</td>
             <td>{quotationLookup.get(order.linkedQuotationId)?.quotationNumber || "Not linked"}</td>
             <td>{order.orderStatus || "Pending"}</td>
             <td>{formatDate(order.orderDate)}</td>

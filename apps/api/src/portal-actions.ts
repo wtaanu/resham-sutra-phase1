@@ -1083,6 +1083,7 @@ async function replaceOrderLineItemsForOrder(input: {
   orderId: string;
   quotationId: string;
   customerId: string;
+  customerClientId?: string;
   enquiryId: string;
   items: Array<z.infer<typeof orderPayloadSchema>["items"][number] & { serialNo?: number }>;
 }) {
@@ -1107,7 +1108,7 @@ async function replaceOrderLineItemsForOrder(input: {
     Order: input.orderId,
     Quotation: input.quotationId,
     Enquiries: input.enquiryId,
-    Customer: input.customerId,
+    Customer: input.customerClientId || input.customerId,
     "Linked Product": item.productId,
     "S.No.": item.serialNo || index + 1,
     Description: item.description,
@@ -1133,7 +1134,7 @@ async function replaceOrderLineItemsForOrder(input: {
 }
 
 async function createOrderLineItemWithSchemaFallback(
-  input: { orderId: string; quotationId: string; customerId: string; enquiryId: string },
+  input: { orderId: string; quotationId: string; customerId: string; customerClientId?: string; enquiryId: string },
   fields: Record<string, unknown>
 ) {
   const relationFieldNames = ["Linked Product", "Order", "Quotation", "Enquiries", "Customer"] as const;
@@ -1148,7 +1149,10 @@ async function createOrderLineItemWithSchemaFallback(
         ...fields,
         ...Object.fromEntries(
           linkedFields.map((linkedFieldName) => {
-            const value = String(fields[linkedFieldName] || "");
+            const value =
+              linkedFieldName === "Customer"
+                ? input.customerId
+                : String(fields[linkedFieldName] || "");
             return [linkedFieldName, value ? linkedRecordIds(value) : []];
           })
         )
@@ -2011,6 +2015,7 @@ export async function createOrderFromQuotation(quotationId: string, payload?: un
       orderId: created.id,
       quotationId,
       customerId,
+      customerClientId: customer?.fields["Client ID"] || "",
       enquiryId,
       items: orderItems
     });
@@ -2147,6 +2152,7 @@ export async function updatePortalOrder(orderId: string, payload: unknown, actor
     orderId,
     quotationId: input.quotationId,
     customerId,
+    customerClientId: customer?.fields["Client ID"] || "",
     enquiryId,
     items: orderItems
   });

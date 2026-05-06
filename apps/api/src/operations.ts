@@ -529,6 +529,9 @@ export async function getOperationsSnapshot() {
   const customerNameById = new Map(
     customers.map((record) => [record.id, record.fields["Customer Name"] || record.id])
   );
+  const customerClientIdById = new Map(
+    customers.map((record) => [record.id, record.fields["Client ID"] || record.id])
+  );
   const customerDefaultsById = new Map(customers.map((record) => [record.id, mapCustomerRecord(record)]));
   const enquiryIdsWithoutDraft = enquiries.filter((record) => {
     const directQuotations = record.fields.Quotations || [];
@@ -655,6 +658,14 @@ export async function getOperationsSnapshot() {
       linkedCustomerId:
         record.fields["Linked Customer"]?.[0] ||
         (Array.isArray(record.fields.Customer) ? record.fields.Customer[0] || "" : String(record.fields.Customer || "")),
+      customerName: customerNameById.get(
+        record.fields["Linked Customer"]?.[0] ||
+          (Array.isArray(record.fields.Customer) ? record.fields.Customer[0] || "" : String(record.fields.Customer || ""))
+      ) || "",
+      customerClientId: customerClientIdById.get(
+        record.fields["Linked Customer"]?.[0] ||
+          (Array.isArray(record.fields.Customer) ? record.fields.Customer[0] || "" : String(record.fields.Customer || ""))
+      ) || "",
       linkedQuotationId:
         record.fields["Linked Quotation"]?.[0] ||
         (Array.isArray(record.fields.Quotation) ? record.fields.Quotation[0] || "" : String(record.fields.Quotation || "")),
