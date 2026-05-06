@@ -1851,7 +1851,7 @@ export async function createOrderFromQuotation(quotationId: string, payload?: un
         id: quotationId,
         fields: {
           Status: QUOTATION_STATUS_ORDERED,
-          Orders: existing.fields["Order Number"] || existing.id
+          Orders: linkedRecordIds(existing.id)
         }
       },
       optionalQuotationFields
@@ -1918,16 +1918,18 @@ export async function createOrderFromQuotation(quotationId: string, payload?: un
     enquiryId,
     items: orderItems
   });
-  await updateRecordWithOptionalFieldFallback<OrderFields>(
-    env.AIRTABLE_ORDERS_TABLE,
-    {
-      id: created.id,
-      fields: {
-        "Line Items": linkedRecordIds(...createdOrderLineItems.map((item) => item.id))
-      }
-    },
-    optionalOrderFields
-  );
+  if (createdOrderLineItems.length) {
+    await updateRecordWithOptionalFieldFallback<OrderFields>(
+      env.AIRTABLE_ORDERS_TABLE,
+      {
+        id: created.id,
+        fields: {
+          "Line Items": linkedRecordIds(...createdOrderLineItems.map((item) => item.id))
+        }
+      },
+      optionalOrderFields
+    );
+  }
 
   await updateRecordWithOptionalFieldFallback<QuotationFields>(
     env.AIRTABLE_QUOTATIONS_TABLE,
@@ -1935,7 +1937,7 @@ export async function createOrderFromQuotation(quotationId: string, payload?: un
       id: quotationId,
       fields: {
         Status: QUOTATION_STATUS_ORDERED,
-        Orders: created.fields["Order Number"] || orderNumber
+        Orders: linkedRecordIds(created.id)
       }
     },
     optionalQuotationFields
@@ -2011,7 +2013,7 @@ export async function updatePortalOrder(orderId: string, payload: unknown, actor
     {
       id: input.quotationId,
       fields: {
-        Orders: updated.fields["Order Number"] || existing.fields["Order Number"] || orderId
+        Orders: linkedRecordIds(updated.id)
       }
     },
     optionalQuotationFields
@@ -2024,16 +2026,18 @@ export async function updatePortalOrder(orderId: string, payload: unknown, actor
     enquiryId,
     items: orderItems
   });
-  await updateRecordWithOptionalFieldFallback<OrderFields>(
-    env.AIRTABLE_ORDERS_TABLE,
-    {
-      id: orderId,
-      fields: {
-        "Line Items": linkedRecordIds(...updatedOrderLineItems.map((item) => item.id))
-      }
-    },
-    optionalOrderFields
-  );
+  if (updatedOrderLineItems.length) {
+    await updateRecordWithOptionalFieldFallback<OrderFields>(
+      env.AIRTABLE_ORDERS_TABLE,
+      {
+        id: orderId,
+        fields: {
+          "Line Items": linkedRecordIds(...updatedOrderLineItems.map((item) => item.id))
+        }
+      },
+      optionalOrderFields
+    );
+  }
 
   await createChangeLogEntry(env.AIRTABLE_ORDER_CHANGE_LOG_TABLE, {
     entityRecordId: updated.id,
