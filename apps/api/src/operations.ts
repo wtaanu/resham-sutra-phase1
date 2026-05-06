@@ -66,7 +66,7 @@ type QuotationFields = {
 type QuotationLineItemFields = {
   Quotation?: string[];
   "Linked Product"?: string[];
-  "Total Amount"?: number;
+  "Total Amount"?: number | string;
 };
 
 type OrderFields = {
@@ -81,14 +81,14 @@ type OrderFields = {
   "Total Amount"?: number;
   "Order Notes"?: string;
   "Line Items"?: string[] | string;
-  "Quotation Grand Total"?: number;
+  "Quotation Grand Total"?: number | string;
   "Quotation Status"?: string;
   "Order Line Item Count"?: number;
   "Order Value per Item"?: string;
   "Order Fulfillment Progress"?: string;
   "Order Summary (AI)"?: string;
   "Order Risk/Attention Flag (AI)"?: string;
-  "Order Value"?: number;
+  "Order Value"?: number | string;
   "Payment Status"?: string;
   "Payment Terms"?: string;
   "Order Ref Number Client"?: string;
@@ -632,16 +632,16 @@ export async function getOperationsSnapshot() {
         (Array.isArray(record.fields.Enquiries) ? record.fields.Enquiries[0] || "" : String(record.fields.Enquiries || "")),
       orderDate: record.fields["Order Date"] || "",
       orderStatus: record.fields["Order Status"] || "",
-      totalAmount: record.fields["Total Amount"] || 0,
+      totalAmount: Number(record.fields["Total Amount"] || 0),
       orderNotes: record.fields["Order Notes"] || "",
-      quotationGrandTotal: record.fields["Quotation Grand Total"] || 0,
+      quotationGrandTotal: Number(record.fields["Quotation Grand Total"] || 0),
       quotationStatus: record.fields["Quotation Status"] || "",
       orderLineItemCount: Number(record.fields["Order Line Item Count"] || 0),
       orderValuePerItem: record.fields["Order Value per Item"] || "",
       orderFulfillmentProgress: record.fields["Order Fulfillment Progress"] || "",
       orderSummary: record.fields["Order Summary (AI)"] || "",
       orderRiskAttentionFlag: record.fields["Order Risk/Attention Flag (AI)"] || "",
-      orderValue: record.fields["Order Value"] || record.fields["Total Amount"] || 0,
+      orderValue: Number(record.fields["Order Value"] || record.fields["Total Amount"] || 0),
       paymentStatus: record.fields["Payment Status"] || "",
       paymentTerms: record.fields["Payment Terms"] || "",
       orderRefNumberClient: record.fields["Order Ref Number Client"] || "",

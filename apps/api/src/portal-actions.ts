@@ -111,7 +111,7 @@ type QuotationLineItemFields = {
   "Pkg & Transport"?: number;
   "GST %"?: number;
   "GST Amount"?: number;
-  "Total Amount"?: number;
+  "Total Amount"?: number | string;
   "Unit Value"?: number;
 };
 
@@ -127,14 +127,14 @@ type OrderFields = {
   "Total Amount"?: number;
   "Order Notes"?: string;
   "Line Items"?: string[] | string;
-  "Quotation Grand Total"?: number;
+  "Quotation Grand Total"?: number | string;
   "Quotation Status"?: string;
   "Order Line Item Count"?: number;
   "Order Value per Item"?: string;
   "Order Fulfillment Progress"?: string;
   "Order Summary (AI)"?: string;
   "Order Risk/Attention Flag (AI)"?: string;
-  "Order Value"?: number;
+  "Order Value"?: number | string;
   "Payment Status"?: string;
   "Payment Terms"?: string;
   "Order Ref Number Client"?: string;
@@ -235,6 +235,10 @@ const optionalOrderFields = [
   "Payment Terms",
   "Order Ref Number Client",
   "Line Items",
+  "Quotation Grand Total",
+  "Quotation Status",
+  "Order Fulfillment Progress",
+  "Order Value",
   "Destination Address",
   "Destination State",
   "Destination City",
@@ -1867,14 +1871,12 @@ export async function createOrderFromQuotation(quotationId: string, payload?: un
     "Linked Quotation": safeLinkedValue(quotationId),
     "Linked Customer": safeLinkedValue(customerId),
     "Order Status": input.orderStatus,
-    "Total Amount": input.totalAmount || metrics.quotationGrandTotal,
-    "Quotation Grand Total": metrics.quotationGrandTotal,
+    "Total Amount": String(input.totalAmount || metrics.quotationGrandTotal || 0),
+    "Quotation Grand Total": String(metrics.quotationGrandTotal || 0),
     "Quotation Status": QUOTATION_STATUS_ORDERED,
-    "Order Line Item Count": orderItems.length,
-    "Order Value per Item": orderItems.map((item, index) => `${index + 1}. ${formatLineItemValue(item.totalAmount)}`).join("\n"),
     "Order Fulfillment Progress": "0%",
     "Order Notes": input.orderNotes,
-    "Order Value": input.totalAmount || metrics.quotationGrandTotal,
+    "Order Value": String(input.totalAmount || metrics.quotationGrandTotal || 0),
     "Payment Status": input.paymentStatus,
     "Payment Terms": input.paymentTerms,
     "Order Ref Number Client": input.orderRefNumberClient,
@@ -1968,13 +1970,11 @@ export async function updatePortalOrder(orderId: string, payload: unknown, actor
     "Linked Quotation": safeLinkedValue(input.quotationId),
     "Linked Customer": safeLinkedValue(customerId),
     "Order Status": input.orderStatus,
-    "Total Amount": input.totalAmount,
+    "Total Amount": String(input.totalAmount || 0),
     "Order Notes": input.orderNotes,
-    "Quotation Grand Total": quotationMetrics.quotationGrandTotal,
+    "Quotation Grand Total": String(quotationMetrics.quotationGrandTotal || 0),
     "Quotation Status": quotation.fields.Status || "",
-    "Order Line Item Count": orderItems.length,
-    "Order Value per Item": orderItems.map((item, index) => `${index + 1}. ${formatLineItemValue(item.totalAmount)}`).join("\n"),
-    "Order Value": input.totalAmount,
+    "Order Value": String(input.totalAmount || 0),
     "Payment Status": input.paymentStatus,
     "Payment Terms": input.paymentTerms,
     "Order Ref Number Client": input.orderRefNumberClient,
