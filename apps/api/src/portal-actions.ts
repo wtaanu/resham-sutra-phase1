@@ -1903,12 +1903,14 @@ export async function createOrderFromQuotation(quotationId: string, payload?: un
       : mapPortalQuotationItemsToOrderItems(metrics.items, productLookup);
   const orderNumber = await nextOrderIdentifier();
   const destination = resolveOrderDestination(input, customer, enquiry);
-  const orderFields: Record<string, unknown> = {
+  const coreOrderFields: Record<string, unknown> = {
     "Order Number": orderNumber,
     "Order Date": input.orderDate || new Date().toISOString(),
     "Linked Quotation": safeLinkedValue(quotationId),
     "Linked Customer": safeLinkedValue(customerId),
-    "Order Status": input.orderStatus,
+    "Order Status": input.orderStatus
+  };
+  const orderDetailFields: Record<string, unknown> = {
     "Total Amount": String(input.totalAmount || metrics.quotationGrandTotal || 0),
     "Quotation Grand Total": String(metrics.quotationGrandTotal || 0),
     "Quotation Status": QUOTATION_STATUS_ORDERED,
@@ -1929,10 +1931,10 @@ export async function createOrderFromQuotation(quotationId: string, payload?: un
   };
   let created: AirtableRecord<OrderFields>;
   try {
-    created = await createRecord<OrderFields>(env.AIRTABLE_ORDERS_TABLE, orderFields);
+    created = await createRecord<OrderFields>(env.AIRTABLE_ORDERS_TABLE, coreOrderFields);
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
-    const retryFields = stripOptionalFields(orderFields, optionalOrderFields, message);
+    const retryFields = stripOptionalFields(coreOrderFields, optionalOrderFields, message);
     if (!retryFields) {
       throw error;
     }
@@ -1956,6 +1958,19 @@ export async function createOrderFromQuotation(quotationId: string, payload?: un
     );
     await bestEffortDeleteRecords(env.AIRTABLE_ORDERS_TABLE, [created.id]);
     throw error;
+  }
+
+  try {
+    created = await updateRecordWithOptionalFieldFallback<OrderFields>(
+      env.AIRTABLE_ORDERS_TABLE,
+      {
+        id: created.id,
+        fields: orderDetailFields
+      },
+      optionalOrderFields
+    );
+  } catch (error) {
+    logOrderFollowUpFailure("order_details", { orderId: created.id }, error);
   }
 
   try {
