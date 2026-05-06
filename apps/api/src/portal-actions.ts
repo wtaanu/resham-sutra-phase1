@@ -254,6 +254,7 @@ const QUOTATION_STATUS_DRAFT = "Draft Quote";
 const QUOTATION_STATUS_APPROVED = "Approved Quote";
 const QUOTATION_STATUS_SENT = "Sent Quote";
 const QUOTATION_STATUS_ORDERED = "Ordered";
+const ORDER_FULFILLMENT_PROGRESS_NOT_STARTED = "Not Started";
 const manualEnquiryCreateInflight = new Map<string, Promise<{
   enquiryRecordId: string;
   enquiryId: string;
@@ -883,6 +884,14 @@ function buildBuyerBlock(fields: {
 
 function safeLinkedValue(recordId: string) {
   return linkedRecordIds(recordId);
+}
+
+function airtablePaymentStatus(value: string) {
+  if (value === "Pending") {
+    return "Pending";
+  }
+
+  return value;
 }
 
 async function updateRecordWithOptionalFieldFallback<T extends Record<string, unknown>>(
@@ -1872,10 +1881,10 @@ export async function createOrderFromQuotation(quotationId: string, payload?: un
     "Total Amount": String(input.totalAmount || metrics.quotationGrandTotal || 0),
     "Quotation Grand Total": String(metrics.quotationGrandTotal || 0),
     "Quotation Status": QUOTATION_STATUS_ORDERED,
-    "Order Fulfillment Progress": "0%",
+    "Order Fulfillment Progress": ORDER_FULFILLMENT_PROGRESS_NOT_STARTED,
     "Order Notes": input.orderNotes,
     "Order Value": String(input.totalAmount || metrics.quotationGrandTotal || 0),
-    "Payment Status": input.paymentStatus,
+    "Payment Status": airtablePaymentStatus(input.paymentStatus),
     "Payment Terms": input.paymentTerms,
     "Order Ref Number Client": input.orderRefNumberClient,
     Address: input.address || destination.address,
@@ -1973,7 +1982,7 @@ export async function updatePortalOrder(orderId: string, payload: unknown, actor
     "Quotation Grand Total": String(quotationMetrics.quotationGrandTotal || 0),
     "Quotation Status": quotation.fields.Status || "",
     "Order Value": String(input.totalAmount || 0),
-    "Payment Status": input.paymentStatus,
+    "Payment Status": airtablePaymentStatus(input.paymentStatus),
     "Payment Terms": input.paymentTerms,
     "Order Ref Number Client": input.orderRefNumberClient,
     Address: input.address || destination.address,
