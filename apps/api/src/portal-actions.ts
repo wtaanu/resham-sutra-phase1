@@ -131,7 +131,6 @@ type OrderFields = {
   "Quotation Status"?: string;
   "Order Line Item Count"?: number;
   "Order Value per Item"?: string;
-  "Order Fulfillment Progress"?: string;
   "Order Summary (AI)"?: string;
   "Order Risk/Attention Flag (AI)"?: string;
   "Order Value"?: number | string;
