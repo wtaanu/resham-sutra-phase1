@@ -62,6 +62,10 @@ type CustomerRecord = {
   state: string;
   city: string;
   pincode: string;
+  destinationAddress: string;
+  destinationState: string;
+  destinationCity: string;
+  destinationPincode: string;
   customerType: string;
   driveFolderUrl: string;
 };
@@ -73,6 +77,14 @@ type QuotationRecord = {
   loggedDateTime: string;
   linkedCustomerId: string;
   customerName: string;
+  customerAddress: string;
+  customerState: string;
+  customerCity: string;
+  customerPincode: string;
+  customerDestinationAddress: string;
+  customerDestinationState: string;
+  customerDestinationCity: string;
+  customerDestinationPincode: string;
   linkedEnquiryId: string;
   status: string;
   draftFileUrl: string;
@@ -2112,6 +2124,39 @@ export default function App() {
 
 function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
     const linkedEnquiry = quotation?.linkedEnquiryId ? enquiryLookup.get(quotation.linkedEnquiryId) : undefined;
+    const linkedCustomer = quotation?.linkedCustomerId ? customerLookup.get(quotation.linkedCustomerId) : undefined;
+    const defaultAddress =
+      linkedCustomer?.destinationAddress ||
+      quotation?.customerDestinationAddress ||
+      linkedCustomer?.address ||
+      quotation?.customerAddress ||
+      linkedEnquiry?.destinationAddress ||
+      linkedEnquiry?.address ||
+      "";
+    const defaultState =
+      linkedCustomer?.destinationState ||
+      quotation?.customerDestinationState ||
+      linkedCustomer?.state ||
+      quotation?.customerState ||
+      linkedEnquiry?.destinationState ||
+      linkedEnquiry?.state ||
+      "";
+    const defaultCity =
+      linkedCustomer?.destinationCity ||
+      quotation?.customerDestinationCity ||
+      linkedCustomer?.city ||
+      quotation?.customerCity ||
+      linkedEnquiry?.destinationCity ||
+      linkedEnquiry?.city ||
+      "";
+    const defaultPincode =
+      linkedCustomer?.destinationPincode ||
+      quotation?.customerDestinationPincode ||
+      linkedCustomer?.pincode ||
+      quotation?.customerPincode ||
+      linkedEnquiry?.destinationPincode ||
+      linkedEnquiry?.pincode ||
+      "";
     setEntryMode("order");
     setEditingOrderId(order?.id || "");
     setOrderForm(
@@ -2147,14 +2192,14 @@ function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
             paymentStatus: "Pending",
             paymentTerms: "",
             orderRefNumberClient: "",
-            address: linkedEnquiry?.destinationAddress || linkedEnquiry?.address || "",
-            state: linkedEnquiry?.destinationState || linkedEnquiry?.state || "",
-            city: linkedEnquiry?.destinationCity || linkedEnquiry?.city || "",
-            pincode: linkedEnquiry?.destinationPincode || linkedEnquiry?.pincode || "",
-            destinationAddress: linkedEnquiry?.destinationAddress || linkedEnquiry?.address || "",
-            destinationState: linkedEnquiry?.destinationState || linkedEnquiry?.state || "",
-            destinationCity: linkedEnquiry?.destinationCity || linkedEnquiry?.city || "",
-            destinationPincode: linkedEnquiry?.destinationPincode || linkedEnquiry?.pincode || ""
+            address: defaultAddress,
+            state: defaultState,
+            city: defaultCity,
+            pincode: defaultPincode,
+            destinationAddress: defaultAddress,
+            destinationState: defaultState,
+            destinationCity: defaultCity,
+            destinationPincode: defaultPincode
           }
     );
   }

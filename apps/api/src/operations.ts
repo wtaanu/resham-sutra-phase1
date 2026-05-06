@@ -35,6 +35,10 @@ type CustomerFields = {
   State?: string;
   City?: string;
   Pincode?: string;
+  "Destination Address"?: string;
+  "Destination State"?: string;
+  "Destination City"?: string;
+  "Destination Pincode"?: string;
   "Customer Type"?: string;
   "Drive Folder URL"?: string;
 };
@@ -223,6 +227,10 @@ function mapCustomerRecord(record: AirtableRecord<CustomerFields>) {
     state: record.fields.State || "",
     city: record.fields.City || "",
     pincode: record.fields.Pincode || "",
+    destinationAddress: record.fields["Destination Address"] || "",
+    destinationState: record.fields["Destination State"] || "",
+    destinationCity: record.fields["Destination City"] || "",
+    destinationPincode: record.fields["Destination Pincode"] || "",
     customerType: record.fields["Customer Type"] || "",
     driveFolderUrl: record.fields["Drive Folder URL"] || ""
   };
@@ -318,9 +326,11 @@ function mapQuotationRecord(
   record: AirtableRecord<QuotationFields>,
   quotationMetricsById = new Map<string, { lineItemCount: number; quotationGrandTotal: number }>(),
   pdfGeneratedAtByQuotationId = new Map<string, string>(),
-  customerNameById = new Map<string, string>()
+  customerNameById = new Map<string, string>(),
+  customerDefaultsById = new Map<string, ReturnType<typeof mapCustomerRecord>>()
 ) {
   const linkedCustomerId = record.fields["Linked Customer"]?.[0] || "";
+  const customerDefaults = customerDefaultsById.get(linkedCustomerId);
 
   return {
     id: record.id,
@@ -329,6 +339,14 @@ function mapQuotationRecord(
     loggedDateTime: record.fields["Logged Date Time"] || record.createdTime || "",
     linkedCustomerId,
     customerName: customerNameById.get(linkedCustomerId) || "",
+    customerAddress: customerDefaults?.address || "",
+    customerState: customerDefaults?.state || "",
+    customerCity: customerDefaults?.city || "",
+    customerPincode: customerDefaults?.pincode || "",
+    customerDestinationAddress: customerDefaults?.destinationAddress || "",
+    customerDestinationState: customerDefaults?.destinationState || "",
+    customerDestinationCity: customerDefaults?.destinationCity || "",
+    customerDestinationPincode: customerDefaults?.destinationPincode || "",
     linkedEnquiryId: record.fields["Linked Enquiry"]?.[0] || "",
     status: record.fields.Status || "",
     draftFileUrl: record.fields["Draft File URL"] || "",
@@ -420,7 +438,17 @@ export async function getOperationsQuotationsPage(input?: { includeTotal?: boole
   const [linkedCustomers, quotationLineItems] = await Promise.all([
     customerIds.length
       ? listRecords<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, {
-          fields: ["Customer Name"],
+          fields: [
+            "Customer Name",
+            "Address",
+            "State",
+            "City",
+            "Pincode",
+            "Destination Address",
+            "Destination State",
+            "Destination City",
+            "Destination Pincode"
+          ],
           filterByFormula: recordIdFormula(customerIds),
           maxRecords: customerIds.length
         })
@@ -436,11 +464,12 @@ export async function getOperationsQuotationsPage(input?: { includeTotal?: boole
   const customerNameById = new Map(
     linkedCustomers.map((record) => [record.id, record.fields["Customer Name"] || record.id])
   );
+  const customerDefaultsById = new Map(linkedCustomers.map((record) => [record.id, mapCustomerRecord(record)]));
   const quotationMetricsById = buildQuotationLineItemMetrics(quotationLineItems);
 
   return {
     quotations: page.records.map((record) =>
-      mapQuotationRecord(record, quotationMetricsById, new Map(), customerNameById)
+      mapQuotationRecord(record, quotationMetricsById, new Map(), customerNameById, customerDefaultsById)
     ),
     nextOffset: page.offset,
     pageSize: page.pageSize,
@@ -500,6 +529,7 @@ export async function getOperationsSnapshot() {
   const customerNameById = new Map(
     customers.map((record) => [record.id, record.fields["Customer Name"] || record.id])
   );
+  const customerDefaultsById = new Map(customers.map((record) => [record.id, mapCustomerRecord(record)]));
   const enquiryIdsWithoutDraft = enquiries.filter((record) => {
     const directQuotations = record.fields.Quotations || [];
     const fallbackQuotations = quotationIdsByEnquiryId.get(record.id) || [];
@@ -617,7 +647,7 @@ export async function getOperationsSnapshot() {
     }),
     customers: latestFirst(customers).map(mapCustomerRecord),
     quotations: quotations.map((record) =>
-      mapQuotationRecord(record, quotationMetricsById, pdfGeneratedAtByQuotationId, customerNameById)
+      mapQuotationRecord(record, quotationMetricsById, pdfGeneratedAtByQuotationId, customerNameById, customerDefaultsById)
     ),
     orders: latestFirst(orders).map((record) => ({
       id: record.id,
