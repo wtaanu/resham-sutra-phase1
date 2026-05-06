@@ -39,6 +39,7 @@ type ZohoBiginRequestContext = {
 export type BiginEnquiryPayload = {
   recordId?: string;
   dealRecordId?: string;
+  clientId?: string;
   enquiryId: string;
   loggedDateTime: string;
   leadName: string;
@@ -345,6 +346,10 @@ function sanitizeBiginPayload(record: Record<string, unknown>) {
   return Object.fromEntries(
     Object.entries(record).filter(([, value]) => value !== undefined && value !== null && value !== "")
   );
+}
+
+function isZohoHistoryId(value: unknown) {
+  return String(value || "").trim().toLowerCase().startsWith("zcrm_");
 }
 
 async function zohoBiginRequest(path: string, init: RequestInit, context: ZohoBiginRequestContext) {
@@ -661,6 +666,22 @@ async function syncZohoBiginDeal(input: BiginEnquiryPayload, ids: {
   accountId: string;
   productId: string;
 }) {
+  if ((isZohoHistoryId(input.enquiryId) || isZohoHistoryId(input.clientId)) && !input.dealRecordId) {
+    console.info("[zoho-bigin] skipped historical deal sync without mapped Bigin deal ID", {
+      enquiryId: input.enquiryId,
+      clientId: input.clientId || "",
+      contactId: ids.contactId
+    });
+    return {
+      dealId: "",
+      action: "skipped_history_missing_deal_id",
+      response: {
+        skipped: true,
+        reason: "Historical zcrm_ record has no mapped Bigin deal ID."
+      }
+    };
+  }
+
   const moduleName = env.ZOHO_BIGIN_DEAL_MODULE_API_NAME;
   const record = sanitizeBiginPayload(mapEnquiryToBiginDealRecord(input, ids));
   const duplicateCheckFields = buildDuplicateCheckFieldsFrom(env.ZOHO_BIGIN_DEAL_DUPLICATE_CHECK_FIELDS);
@@ -713,8 +734,28 @@ export async function syncEnquiryToZohoBigin(input: BiginEnquiryPayload): Promis
     return null;
   }
 
+  const isHistoricalRecord = isZohoHistoryId(input.enquiryId) || isZohoHistoryId(input.clientId);
+  if (isHistoricalRecord && !input.recordId && !input.dealRecordId) {
+    console.info("[zoho-bigin] skipped historical sync without mapped Bigin IDs", {
+      enquiryId: input.enquiryId,
+      clientId: input.clientId || ""
+    });
+    return {
+      recordId: "",
+      dealRecordId: "",
+      action: "skipped_history_missing_ids",
+      duplicateField: "",
+      response: {
+        skipped: true,
+        reason: "Historical zcrm_ record has no mapped Bigin contact/deal ID."
+      }
+    };
+  }
+
   const moduleName = env.ZOHO_BIGIN_MODULE_API_NAME;
-  const accountId = await ensureZohoBiginAccount(input.company, input.enquiryId);
+  const accountId = isHistoricalRecord && !input.recordId
+    ? ""
+    : await ensureZohoBiginAccount(input.company, input.enquiryId);
   const record = sanitizeBiginPayload(mapEnquiryToBiginRecord(input, accountId));
   const duplicateCheckFields = buildDuplicateCheckFields();
   const context: ZohoBiginRequestContext = {
@@ -742,7 +783,7 @@ export async function syncEnquiryToZohoBigin(input: BiginEnquiryPayload): Promis
         ]
       })
     }, context);
-  } else {
+  } else if (!isHistoricalRecord) {
     result = await zohoBiginRequest(`${moduleName}/upsert`, {
       method: "POST",
       body: JSON.stringify({
@@ -750,15 +791,25 @@ export async function syncEnquiryToZohoBigin(input: BiginEnquiryPayload): Promis
         duplicate_check_fields: duplicateCheckFields
       })
     }, context);
+  } else {
+    result = {
+      data: [
+        {
+          status: "success",
+          action: "skipped_history_missing_contact_id",
+          details: {}
+        }
+      ]
+    };
   }
 
   const first = result.data?.[0];
   const recordId = String(first?.details?.id || input.recordId || "");
-  if (!recordId) {
+  if (!recordId && !isHistoricalRecord) {
     throw new Error("Zoho Bigin contact sync did not return a record ID.");
   }
 
-  const productId = await findZohoBiginProduct(input);
+  const productId = recordId || input.dealRecordId ? await findZohoBiginProduct(input) : "";
   const deal = await syncZohoBiginDeal(input, {
     contactId: recordId,
     accountId,
@@ -768,7 +819,9 @@ export async function syncEnquiryToZohoBigin(input: BiginEnquiryPayload): Promis
   return {
     recordId,
     dealRecordId: deal.dealId,
-    action: String(first?.action || (input.recordId ? "update" : "upsert")),
+    action: deal.action.startsWith("skipped")
+      ? deal.action
+      : String(first?.action || (input.recordId ? "update" : "upsert")),
     duplicateField: String(first?.duplicate_field || ""),
     response: {
       contact: first || {},

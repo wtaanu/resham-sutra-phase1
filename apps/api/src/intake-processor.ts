@@ -268,9 +268,12 @@ async function resolveZohoBiginContext(enquiry: AirtableRecord<EnquiryFields>) {
 }
 async function syncEnquiryToZohoAndPersist(enquiry: AirtableRecord<EnquiryFields>) {
   const zohoContext = await resolveZohoBiginContext(enquiry);
+  const linkedCustomerId = enquiry.fields["Linked Customer"]?.[0] || "";
+  const linkedCustomer = linkedCustomerId ? await getCustomerById(linkedCustomerId).catch(() => null) : null;
   const syncPayload = {
     recordId: String(enquiry.fields["Zoho Bigin Record ID"] || "").trim(),
     dealRecordId: String(enquiry.fields["Zoho Bigin Deal ID"] || "").trim(),
+    clientId: String(linkedCustomer?.fields["Client ID"] || "").trim(),
     enquiryId: String(enquiry.fields["Enquiry ID"] || enquiry.id),
     loggedDateTime: String(enquiry.fields["Logged Date Time"] || ""),
     leadName: String(enquiry.fields["Lead Name"] || ""),
@@ -310,17 +313,23 @@ async function syncEnquiryToZohoAndPersist(enquiry: AirtableRecord<EnquiryFields
       return enquiry;
     }
 
+    const updateFields: Record<string, unknown> = {
+      "Zoho Bigin Sync Status": `Synced (${result.action})`,
+      "Zoho Bigin Synced At": new Date().toISOString(),
+      "Zoho Bigin Sync Error": ""
+    };
+    if (result.recordId) {
+      updateFields["Zoho Bigin Record ID"] = result.recordId;
+    }
+    if (result.dealRecordId) {
+      updateFields["Zoho Bigin Deal ID"] = result.dealRecordId;
+    }
+
     return updateRecordWithOptionalFieldFallback<EnquiryFields>(
       env.AIRTABLE_ENQUIRIES_TABLE,
       {
         id: enquiry.id,
-        fields: {
-          "Zoho Bigin Record ID": result.recordId,
-          "Zoho Bigin Deal ID": result.dealRecordId,
-          "Zoho Bigin Sync Status": `Synced (${result.action})`,
-          "Zoho Bigin Synced At": new Date().toISOString(),
-          "Zoho Bigin Sync Error": ""
-        }
+        fields: updateFields
       },
       optionalEnquiryFields
     );

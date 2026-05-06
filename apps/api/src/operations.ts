@@ -345,8 +345,10 @@ function mapQuotationRecord(
   };
 }
 
-export async function getOperationsCustomersPage(input?: { offset?: string; pageSize?: number }) {
-  const totalCountPromise = countRecords(env.AIRTABLE_CUSTOMERS_TABLE, "Client ID");
+export async function getOperationsCustomersPage(input?: { includeTotal?: boolean; offset?: string; pageSize?: number }) {
+  const totalCountPromise = input?.includeTotal === false
+    ? Promise.resolve(0)
+    : countRecords(env.AIRTABLE_CUSTOMERS_TABLE, "Client ID");
   const page = await listRecordsPage<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, {
     fields: [
       "Client ID",
@@ -374,11 +376,13 @@ export async function getOperationsCustomersPage(input?: { offset?: string; page
   };
 }
 
-export async function getOperationsEnquiriesPage(input?: { offset?: string; pageSize?: number; status?: string }) {
+export async function getOperationsEnquiriesPage(input?: { includeTotal?: boolean; offset?: string; pageSize?: number; status?: string }) {
   const filterByFormula = input?.status && input.status !== "All"
     ? exactFieldFormula("Parser Status", input.status)
     : undefined;
-  const totalCountPromise = countRecords(env.AIRTABLE_ENQUIRIES_TABLE, "Enquiry ID", filterByFormula);
+  const totalCountPromise = input?.includeTotal === false
+    ? Promise.resolve(0)
+    : countRecords(env.AIRTABLE_ENQUIRIES_TABLE, "Enquiry ID", filterByFormula);
   const page = await listRecordsPage<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
     fields: ENQUIRY_PAGE_FIELDS,
     filterByFormula,
@@ -395,9 +399,11 @@ export async function getOperationsEnquiriesPage(input?: { offset?: string; page
   };
 }
 
-export async function getOperationsQuotationsPage(input?: { offset?: string; pageSize?: number; statuses?: string[] }) {
+export async function getOperationsQuotationsPage(input?: { includeTotal?: boolean; offset?: string; pageSize?: number; statuses?: string[] }) {
   const filterByFormula = anyFieldFormula("Status", input?.statuses);
-  const totalCountPromise = countRecords(env.AIRTABLE_QUOTATIONS_TABLE, "Quotation Number", filterByFormula);
+  const totalCountPromise = input?.includeTotal === false
+    ? Promise.resolve(0)
+    : countRecords(env.AIRTABLE_QUOTATIONS_TABLE, "Quotation Number", filterByFormula);
   const page = await listRecordsPage<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
     fields: QUOTATION_PAGE_FIELDS,
     filterByFormula,

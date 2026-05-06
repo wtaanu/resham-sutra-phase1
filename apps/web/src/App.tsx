@@ -1241,12 +1241,6 @@ export default function App() {
   }, [activeView, currentUser, customerPage.initialized, customerPage.loading]);
 
   useEffect(() => {
-    if (activeView === "enquiries") {
-      setEnquiryPage(createPagedState<EnquiryRecord>());
-    }
-  }, [enquiryStatusFilter, activeView]);
-
-  useEffect(() => {
     if (activeView !== "enquiries" || !currentUser || enquiryPage.initialized || enquiryPage.loading) {
       return;
     }
@@ -1799,6 +1793,7 @@ export default function App() {
     try {
       setCustomerPage((current) => ({ ...current, loading: true, error: "" }));
       const params = new URLSearchParams({ pageSize: "25" });
+      params.set("includeTotal", direction === "reset" ? "1" : "0");
       if (offset) {
         params.set("offset", offset);
       }
@@ -1821,7 +1816,7 @@ export default function App() {
             page: current.page + 1,
             previousOffsets: [...current.previousOffsets, current.currentOffset],
             rows: data.customers,
-            totalCount: data.totalCount
+            totalCount: data.totalCount || current.totalCount
           };
         }
 
@@ -1836,7 +1831,7 @@ export default function App() {
             page: Math.max(1, current.page - 1),
             previousOffsets: current.previousOffsets.slice(0, -1),
             rows: data.customers,
-            totalCount: data.totalCount
+            totalCount: data.totalCount || current.totalCount
           };
         }
 
@@ -1850,7 +1845,7 @@ export default function App() {
           page: 1,
           previousOffsets: [],
           rows: data.customers,
-          totalCount: data.totalCount
+          totalCount: data.totalCount || current.totalCount
         };
       });
     } catch (loadError) {
@@ -1867,7 +1862,11 @@ export default function App() {
     }
   }
 
-  async function loadEnquiryPage(offset: string, direction: "next" | "previous" | "reset") {
+  async function loadEnquiryPage(
+    offset: string,
+    direction: "next" | "previous" | "reset",
+    statusOverride = enquiryStatusFilter
+  ) {
     if (!currentUser) {
       return;
     }
@@ -1876,11 +1875,12 @@ export default function App() {
     try {
       setEnquiryPage((current) => ({ ...current, loading: true, error: "" }));
       const params = new URLSearchParams({ pageSize: "25" });
+      params.set("includeTotal", direction === "reset" ? "1" : "0");
       if (offset) {
         params.set("offset", offset);
       }
-      if (enquiryStatusFilter !== "All") {
-        params.set("status", enquiryStatusFilter);
+      if (statusOverride !== "All") {
+        params.set("status", statusOverride);
       }
 
       const response = await apiFetch(`${apiUrl}/api/operations/enquiries?${params.toString()}`);
@@ -1901,7 +1901,7 @@ export default function App() {
             page: current.page + 1,
             previousOffsets: [...current.previousOffsets, current.currentOffset],
             rows: data.enquiries,
-            totalCount: data.totalCount
+            totalCount: data.totalCount || current.totalCount
           };
         }
 
@@ -1916,7 +1916,7 @@ export default function App() {
             page: Math.max(1, current.page - 1),
             previousOffsets: current.previousOffsets.slice(0, -1),
             rows: data.enquiries,
-            totalCount: data.totalCount
+            totalCount: data.totalCount || current.totalCount
           };
         }
 
@@ -1930,7 +1930,7 @@ export default function App() {
           page: 1,
           previousOffsets: [],
           rows: data.enquiries,
-          totalCount: data.totalCount
+          totalCount: data.totalCount || current.totalCount
         };
       });
     } catch (loadError) {
@@ -1961,6 +1961,7 @@ export default function App() {
       setQuotationPageKey(key);
       setQuotationPage((current) => ({ ...current, loading: true, error: "" }));
       const params = new URLSearchParams({ pageSize: "25" });
+      params.set("includeTotal", direction === "reset" ? "1" : "0");
       if (offset) {
         params.set("offset", offset);
       }
@@ -1986,7 +1987,7 @@ export default function App() {
             page: current.page + 1,
             previousOffsets: [...current.previousOffsets, current.currentOffset],
             rows: data.quotations,
-            totalCount: data.totalCount
+            totalCount: data.totalCount || current.totalCount
           };
         }
 
@@ -2001,7 +2002,7 @@ export default function App() {
             page: Math.max(1, current.page - 1),
             previousOffsets: current.previousOffsets.slice(0, -1),
             rows: data.quotations,
-            totalCount: data.totalCount
+            totalCount: data.totalCount || current.totalCount
           };
         }
 
@@ -2015,7 +2016,7 @@ export default function App() {
           page: 1,
           previousOffsets: [],
           rows: data.quotations,
-          totalCount: data.totalCount
+          totalCount: data.totalCount || current.totalCount
         };
       });
     } catch (loadError) {
@@ -3964,8 +3965,13 @@ function updateLineItemRow(
       return null;
     }
 
+    const totalEnquiries = operations.totals?.enquiries || operations.enquiries.length;
+    const dashboardMetrics = [
+      { label: "Enquiries", value: totalEnquiries },
+      ...operations.metrics.filter((metric) => metric.label !== "New Enquiries")
+    ];
     const growthPoints: ChartPoint[] = [
-      { label: "New", value: operations.metrics.find((item) => item.label === "New Enquiries")?.value ?? 0 },
+      { label: "Enq", value: totalEnquiries },
       {
         label: "Draft",
         value: operations.metrics.find((item) => item.label === "Draft Quote")?.value ?? 0
@@ -4024,7 +4030,7 @@ function updateLineItemRow(
         ) : null}
 
         <section className="metric-grid">
-          {operations.metrics.map((metric) => (
+          {dashboardMetrics.map((metric) => (
             <article className="metric-card" key={metric.label}>
               <span>{metric.label}</span>
               <strong>{metric.value}</strong>
@@ -4078,10 +4084,8 @@ function updateLineItemRow(
             title="Enquiry Pulse"
             rows={[
               {
-                label: "Fresh enquiries",
-                value: String(
-                  operations.metrics.find((item) => item.label === "New Enquiries")?.value ?? 0
-                )
+                label: "Total enquiries",
+                value: String(totalEnquiries)
               },
               {
                 label: "Parsed",
@@ -4166,7 +4170,15 @@ function updateLineItemRow(
               <span>Status</span>
               <select
                 value={enquiryStatusFilter}
-                onChange={(event) => setEnquiryStatusFilter(event.target.value)}
+                onChange={(event) => {
+                  const nextStatus = event.target.value;
+                  setEnquiryStatusFilter(nextStatus);
+                  setEnquiryPage({
+                    ...createPagedState<EnquiryRecord>(),
+                    loading: true
+                  });
+                  void loadEnquiryPage("", "reset", nextStatus);
+                }}
               >
                 {enquiryStatusOptions.map((statusOption) => (
                   <option key={statusOption} value={statusOption}>

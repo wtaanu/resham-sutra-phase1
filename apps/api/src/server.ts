@@ -200,7 +200,9 @@ app.get("/api/operations/customers", requireAuthenticatedUser, async (request, r
   try {
     const pageSize = Number(request.query.pageSize || 25);
     const offset = String(request.query.offset || "");
+    const includeTotal = String(request.query.includeTotal || "1") !== "0";
     const page = await getOperationsCustomersPage({
+      includeTotal,
       offset,
       pageSize: Number.isFinite(pageSize) ? pageSize : 25
     });
@@ -223,7 +225,9 @@ app.get("/api/operations/enquiries", requireAuthenticatedUser, async (request, r
     const pageSize = Number(request.query.pageSize || 25);
     const offset = String(request.query.offset || "");
     const status = String(request.query.status || "");
+    const includeTotal = String(request.query.includeTotal || "1") !== "0";
     const page = await getOperationsEnquiriesPage({
+      includeTotal,
       offset,
       pageSize: Number.isFinite(pageSize) ? pageSize : 25,
       status
@@ -246,11 +250,13 @@ app.get("/api/operations/quotations", requireAuthenticatedUser, async (request, 
   try {
     const pageSize = Number(request.query.pageSize || 25);
     const offset = String(request.query.offset || "");
+    const includeTotal = String(request.query.includeTotal || "1") !== "0";
     const statuses = String(request.query.statuses || "")
       .split(",")
       .map((status) => status.trim())
       .filter(Boolean);
     const page = await getOperationsQuotationsPage({
+      includeTotal,
       offset,
       pageSize: Number.isFinite(pageSize) ? pageSize : 25,
       statuses
