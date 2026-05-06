@@ -1,8 +1,5 @@
-import { stat } from "node:fs/promises";
 import { listRecords, listRecordsPage, type AirtableRecord } from "./airtable.js";
 import { env } from "./config.js";
-import { getStoredDocumentArtifact } from "./documents.js";
-import { ensureDefaultTemplateFolder, isDriveConfigured } from "./drive.js";
 import { listProductDocuments } from "./product-documents.js";
 
 type EnquiryFields = {
@@ -116,7 +113,6 @@ type ProductFields = {
 };
 
 const OPERATIONS_SNAPSHOT_LIMIT = 100;
-const OPERATIONS_LINE_ITEM_LIMIT = 1000;
 const ENQUIRY_PAGE_FIELDS = [
   "Enquiry ID",
   "Logged Date Time",
@@ -171,37 +167,6 @@ async function safeList<TFields extends Record<string, unknown>>(
     return await listRecords<TFields>(tableName, options);
   } catch {
     return [];
-  }
-}
-
-async function resolvePdfGeneratedAt(
-  quotation: { id: string; fields: QuotationFields },
-  customer: CustomerFields | undefined
-) {
-  const generatedAt = quotation.fields["Final PDF Generated At"];
-  if (generatedAt) {
-    return generatedAt;
-  }
-
-  const quotationNumber = quotation.fields["Quotation Number"];
-  const finalPdfUrl = quotation.fields["Final PDF URL"];
-  const clientId = customer?.["Client ID"];
-  const customerName = customer?.["Customer Name"];
-
-  if (!quotationNumber || !finalPdfUrl || !clientId || !customerName) {
-    return "";
-  }
-
-  try {
-    const artifact = getStoredDocumentArtifact(
-      `${clientId}-${customerName}`,
-      quotationNumber,
-      "pdf"
-    );
-    const fileStats = await stat(artifact.filePath);
-    return fileStats.mtime.toISOString();
-  } catch {
-    return "";
   }
 }
 
@@ -269,6 +234,26 @@ function quoteFormulaValue(value: string) {
   return value.replace(/'/g, "\\'");
 }
 
+function recordIdFormula(recordIds: string[]) {
+  const uniqueRecordIds = Array.from(new Set(recordIds.filter(Boolean)));
+  if (!uniqueRecordIds.length) {
+    return "";
+  }
+
+  const clauses = uniqueRecordIds.map((recordId) => `RECORD_ID()='${quoteFormulaValue(recordId)}'`);
+  return clauses.length === 1 ? clauses[0] : `OR(${clauses.join(",")})`;
+}
+
+function linkedRecordFormula(fieldName: string, recordIds: string[]) {
+  const uniqueRecordIds = Array.from(new Set(recordIds.filter(Boolean)));
+  if (!uniqueRecordIds.length) {
+    return "";
+  }
+
+  const clauses = uniqueRecordIds.map((recordId) => `ARRAYJOIN({${fieldName}})='${quoteFormulaValue(recordId)}'`);
+  return clauses.length === 1 ? clauses[0] : `OR(${clauses.join(",")})`;
+}
+
 function exactFieldFormula(fieldName: string, value: string) {
   return `{${fieldName}}='${quoteFormulaValue(value)}'`;
 }
@@ -326,14 +311,18 @@ function mapEnquiryRecord(record: AirtableRecord<EnquiryFields>) {
 function mapQuotationRecord(
   record: AirtableRecord<QuotationFields>,
   quotationMetricsById = new Map<string, { lineItemCount: number; quotationGrandTotal: number }>(),
-  pdfGeneratedAtByQuotationId = new Map<string, string>()
+  pdfGeneratedAtByQuotationId = new Map<string, string>(),
+  customerNameById = new Map<string, string>()
 ) {
+  const linkedCustomerId = record.fields["Linked Customer"]?.[0] || "";
+
   return {
     id: record.id,
     quotationNumber: record.fields["Quotation Number"] || record.id,
     referenceNumber: record.fields["Reference Number"] || "",
     loggedDateTime: record.fields["Logged Date Time"] || record.createdTime || "",
-    linkedCustomerId: record.fields["Linked Customer"]?.[0] || "",
+    linkedCustomerId,
+    customerName: customerNameById.get(linkedCustomerId) || "",
     linkedEnquiryId: record.fields["Linked Enquiry"]?.[0] || "",
     status: record.fields.Status || "",
     draftFileUrl: record.fields["Draft File URL"] || "",
@@ -420,9 +409,33 @@ export async function getOperationsQuotationsPage(input?: { includeTotal?: boole
     pageSize: input?.pageSize ?? 25,
     sort: [{ field: "Quotation Number", direction: "desc" }]
   });
+  const customerIds = page.records.flatMap((record) => record.fields["Linked Customer"] || []);
+  const quotationIds = page.records.map((record) => record.id);
+  const [linkedCustomers, quotationLineItems] = await Promise.all([
+    customerIds.length
+      ? listRecords<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, {
+          fields: ["Customer Name"],
+          filterByFormula: recordIdFormula(customerIds),
+          maxRecords: customerIds.length
+        })
+      : Promise.resolve([]),
+    quotationIds.length
+      ? listRecords<QuotationLineItemFields>(env.AIRTABLE_QUOTATION_LINE_ITEMS_TABLE, {
+          fields: ["Quotation", "Linked Product", "Total Amount"],
+          filterByFormula: linkedRecordFormula("Quotation", quotationIds),
+          maxRecords: 1000
+        })
+      : Promise.resolve([])
+  ]);
+  const customerNameById = new Map(
+    linkedCustomers.map((record) => [record.id, record.fields["Customer Name"] || record.id])
+  );
+  const quotationMetricsById = buildQuotationLineItemMetrics(quotationLineItems);
 
   return {
-    quotations: page.records.map((record) => mapQuotationRecord(record)),
+    quotations: page.records.map((record) =>
+      mapQuotationRecord(record, quotationMetricsById, new Map(), customerNameById)
+    ),
     nextOffset: page.offset,
     pageSize: page.pageSize,
     totalCount: await totalCountPromise
@@ -443,10 +456,7 @@ export async function getOperationsSnapshot() {
       maxRecords: OPERATIONS_SNAPSHOT_LIMIT,
       sort: [{ field: "Quotation Number", direction: "desc" }]
     }),
-    safeList<QuotationLineItemFields>(env.AIRTABLE_QUOTATION_LINE_ITEMS_TABLE, {
-      maxRecords: OPERATIONS_LINE_ITEM_LIMIT,
-      fields: ["Quotation", "Linked Product", "Total Amount"]
-    }),
+    Promise.resolve([] as Array<AirtableRecord<QuotationLineItemFields>>),
     safeList<OrderFields>(env.AIRTABLE_ORDERS_TABLE, {
       maxRecords: OPERATIONS_SNAPSHOT_LIMIT
     }),
@@ -479,19 +489,11 @@ export async function getOperationsSnapshot() {
   }
 
   const quotationById = new Map(quotations.map((record) => [record.id, record]));
-  const customersById = new Map(customers.map((record) => [record.id, record.fields]));
   const quotationMetricsById = buildQuotationLineItemMetrics(quotationLineItems);
-  const pdfGeneratedAtEntries = await Promise.all(
-    quotations.map(async (record) => {
-      const generatedAt = await resolvePdfGeneratedAt(
-        record,
-        customersById.get(record.fields["Linked Customer"]?.[0] || "")
-      );
-
-      return [record.id, generatedAt] as const;
-    })
+  const pdfGeneratedAtByQuotationId = new Map<string, string>();
+  const customerNameById = new Map(
+    customers.map((record) => [record.id, record.fields["Customer Name"] || record.id])
   );
-  const pdfGeneratedAtByQuotationId = new Map(pdfGeneratedAtEntries);
   const enquiryIdsWithoutDraft = enquiries.filter((record) => {
     const directQuotations = record.fields.Quotations || [];
     const fallbackQuotations = quotationIdsByEnquiryId.get(record.id) || [];
@@ -504,9 +506,6 @@ export async function getOperationsSnapshot() {
     return !mergedQuotations.some((quotationId) => Boolean(quotationById.get(quotationId)?.fields["Draft File URL"]));
   }).length;
 
-  const defaultTemplateFolder = isDriveConfigured()
-    ? await ensureDefaultTemplateFolder().catch(() => null)
-    : null;
   const [
     totalEnquiries,
     totalCustomers,
@@ -539,7 +538,7 @@ export async function getOperationsSnapshot() {
       enquiryFormUrl: env.AIRTABLE_ENQUIRY_FORM_URL,
       lineItemsFormUrl: env.AIRTABLE_LINE_ITEMS_FORM_URL,
       productsFormUrl: env.AIRTABLE_PRODUCTS_FORM_URL,
-      defaultTemplateFolderUrl: defaultTemplateFolder?.folderUrl || ""
+      defaultTemplateFolderUrl: ""
     },
     metrics: [
       {
@@ -612,7 +611,7 @@ export async function getOperationsSnapshot() {
     }),
     customers: latestFirst(customers).map(mapCustomerRecord),
     quotations: quotations.map((record) =>
-      mapQuotationRecord(record, quotationMetricsById, pdfGeneratedAtByQuotationId)
+      mapQuotationRecord(record, quotationMetricsById, pdfGeneratedAtByQuotationId, customerNameById)
     ),
     orders: latestFirst(orders).map((record) => ({
       id: record.id,

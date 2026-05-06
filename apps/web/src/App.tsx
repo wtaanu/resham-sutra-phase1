@@ -72,6 +72,7 @@ type QuotationRecord = {
   referenceNumber: string;
   loggedDateTime: string;
   linkedCustomerId: string;
+  customerName: string;
   linkedEnquiryId: string;
   status: string;
   draftFileUrl: string;
@@ -4191,6 +4192,12 @@ function updateLineItemRow(
             {renderBannerCloseButton(dismissActionState)}
           </section>
         ) : null}
+        {enquiryPage.loading ? (
+          <section className="action-banner loading">
+            <strong>Enquiries</strong>
+            <span>Loading selected enquiry records...</span>
+          </section>
+        ) : null}
         {enquiryPage.error ? (
           <section className="action-banner error">
             <strong>Enquiries</strong>
@@ -4207,6 +4214,7 @@ function updateLineItemRow(
               <span>Status</span>
               <select
                 value={enquiryStatusFilter}
+                disabled={enquiryPage.loading}
                 onChange={(event) => {
                   const nextStatus = event.target.value;
                   setEnquiryStatusFilter(nextStatus);
@@ -4726,6 +4734,12 @@ function updateLineItemRow(
             </button>
           </section>
         ) : null}
+        {quotationPage.loading && quotationPageKey === currentQuotationKey ? (
+          <section className="action-banner loading">
+            <strong>Quotations</strong>
+            <span>Loading selected quotation records...</span>
+          </section>
+        ) : null}
         {quotationPage.error && quotationPageKey === currentQuotationKey ? (
           <section className="action-banner error">
             <strong>Quotations</strong>
@@ -4792,7 +4806,7 @@ function updateLineItemRow(
                   <span className="table-submeta">Logged {formatDateTime(quotation.loggedDateTime)}</span>
                 ) : null}
               </td>
-              <td>{customerLookup.get(quotation.linkedCustomerId)?.customerName || "Not linked"}</td>
+              <td>{quotation.customerName || customerLookup.get(quotation.linkedCustomerId)?.customerName || "Not linked"}</td>
               <td>
                 <span className={`status-chip ${statusTone(quotation.status)}`}>
                   {quotation.status || "Draft"}
