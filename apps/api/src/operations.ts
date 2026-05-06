@@ -116,6 +116,50 @@ type ProductFields = {
 
 const OPERATIONS_SNAPSHOT_LIMIT = 100;
 const OPERATIONS_LINE_ITEM_LIMIT = 1000;
+const ENQUIRY_PAGE_FIELDS = [
+  "Enquiry ID",
+  "Logged Date Time",
+  "Lead Name",
+  "Company",
+  "Phone",
+  "Email",
+  "Address",
+  "State",
+  "City",
+  "Pincode",
+  "Destination Address",
+  "Destination State",
+  "Destination City",
+  "Destination Pincode",
+  "Parser Status",
+  "Linked Customer",
+  "Quotations",
+  "Requirement Summary",
+  "Potential Product",
+  "Receiver WhatsApp Number"
+];
+const QUOTATION_PAGE_FIELDS = [
+  "Quotation Number",
+  "Logged Date Time",
+  "Linked Customer",
+  "Linked Enquiry",
+  "Status",
+  "Draft File URL",
+  "Draft Created Time",
+  "Final PDF URL",
+  "Final PDF Generated At",
+  "Drive Folder URL",
+  "Sent Date",
+  "WhatsApp Sent Date Time",
+  "Email Sent Date Time",
+  "Send Quotation",
+  "Send Reminder",
+  "Mark Accepted",
+  "Mark Rejected",
+  "Reminder Count",
+  "Last Reminder Date",
+  "Next Reminder Date"
+];
 
 async function safeList<TFields extends Record<string, unknown>>(
   tableName: string,
@@ -211,7 +255,98 @@ function mapCustomerRecord(record: AirtableRecord<CustomerFields>) {
   };
 }
 
+function quoteFormulaValue(value: string) {
+  return value.replace(/'/g, "\\'");
+}
+
+function exactFieldFormula(fieldName: string, value: string) {
+  return `{${fieldName}}='${quoteFormulaValue(value)}'`;
+}
+
+function anyFieldFormula(fieldName: string, values?: string[]) {
+  const filteredValues = (values || []).map((value) => value.trim()).filter(Boolean);
+  if (!filteredValues.length) {
+    return undefined;
+  }
+
+  if (filteredValues.length === 1) {
+    return exactFieldFormula(fieldName, filteredValues[0]);
+  }
+
+  return `OR(${filteredValues.map((value) => exactFieldFormula(fieldName, value)).join(",")})`;
+}
+
+async function countRecords(tableName: string, fieldName: string, filterByFormula?: string) {
+  return (
+    await safeList<Record<string, unknown>>(tableName, {
+      fields: [fieldName],
+      filterByFormula
+    })
+  ).length;
+}
+
+function mapEnquiryRecord(record: AirtableRecord<EnquiryFields>) {
+  return {
+    id: record.id,
+    enquiryId: record.fields["Enquiry ID"] || record.id,
+    loggedDateTime: record.fields["Logged Date Time"] || record.createdTime || "",
+    leadName: record.fields["Lead Name"] || "",
+    company: record.fields.Company || "",
+    phone: record.fields.Phone || "",
+    email: record.fields.Email || "",
+    address: record.fields.Address || "",
+    state: record.fields.State || "",
+    city: record.fields.City || "",
+    pincode: record.fields.Pincode || "",
+    destinationAddress: record.fields["Destination Address"] || "",
+    destinationState: record.fields["Destination State"] || "",
+    destinationCity: record.fields["Destination City"] || "",
+    destinationPincode: record.fields["Destination Pincode"] || "",
+    parserStatus: statusValue(record.fields),
+    linkedCustomerId: record.fields["Linked Customer"]?.[0] || "",
+    quotations: record.fields.Quotations || [],
+    mappedProductDocuments: [],
+    driveFolderUrl: "",
+    requirementSummary: record.fields["Requirement Summary"] || "",
+    potentialProduct: record.fields["Potential Product"] || "",
+    receiverWhatsappNumber: record.fields["Receiver WhatsApp Number"] || ""
+  };
+}
+
+function mapQuotationRecord(
+  record: AirtableRecord<QuotationFields>,
+  quotationMetricsById = new Map<string, { lineItemCount: number; quotationGrandTotal: number }>(),
+  pdfGeneratedAtByQuotationId = new Map<string, string>()
+) {
+  return {
+    id: record.id,
+    quotationNumber: record.fields["Quotation Number"] || record.id,
+    loggedDateTime: record.fields["Logged Date Time"] || record.createdTime || "",
+    linkedCustomerId: record.fields["Linked Customer"]?.[0] || "",
+    linkedEnquiryId: record.fields["Linked Enquiry"]?.[0] || "",
+    status: record.fields.Status || "",
+    draftFileUrl: record.fields["Draft File URL"] || "",
+    draftCreatedTime: record.fields["Draft Created Time"] || "",
+    finalPdfUrl: record.fields["Final PDF URL"] || "",
+    driveFolderUrl: record.fields["Drive Folder URL"] || "",
+    sentDate: record.fields["Sent Date"] || "",
+    whatsappSentDateTime: record.fields["WhatsApp Sent Date Time"] || "",
+    emailSentDateTime: record.fields["Email Sent Date Time"] || "",
+    finalPdfGeneratedAt: pdfGeneratedAtByQuotationId.get(record.id) || record.fields["Final PDF Generated At"] || "",
+    lineItemCount: quotationMetricsById.get(record.id)?.lineItemCount || 0,
+    quotationGrandTotal: quotationMetricsById.get(record.id)?.quotationGrandTotal || 0,
+    sendQuotation: Boolean(record.fields["Send Quotation"]),
+    sendReminder: Boolean(record.fields["Send Reminder"]),
+    markAccepted: Boolean(record.fields["Mark Accepted"]),
+    markRejected: Boolean(record.fields["Mark Rejected"]),
+    reminderCount: Number(record.fields["Reminder Count"] || 0),
+    lastReminderDate: record.fields["Last Reminder Date"] || "",
+    nextReminderDate: record.fields["Next Reminder Date"] || ""
+  };
+}
+
 export async function getOperationsCustomersPage(input?: { offset?: string; pageSize?: number }) {
+  const totalCountPromise = countRecords(env.AIRTABLE_CUSTOMERS_TABLE, "Client ID");
   const page = await listRecordsPage<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, {
     fields: [
       "Client ID",
@@ -234,13 +369,55 @@ export async function getOperationsCustomersPage(input?: { offset?: string; page
   return {
     customers: page.records.map(mapCustomerRecord),
     nextOffset: page.offset,
-    pageSize: page.pageSize
+    pageSize: page.pageSize,
+    totalCount: await totalCountPromise
+  };
+}
+
+export async function getOperationsEnquiriesPage(input?: { offset?: string; pageSize?: number; status?: string }) {
+  const filterByFormula = input?.status && input.status !== "All"
+    ? exactFieldFormula("Parser Status", input.status)
+    : undefined;
+  const totalCountPromise = countRecords(env.AIRTABLE_ENQUIRIES_TABLE, "Enquiry ID", filterByFormula);
+  const page = await listRecordsPage<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
+    fields: ENQUIRY_PAGE_FIELDS,
+    filterByFormula,
+    offset: input?.offset,
+    pageSize: input?.pageSize ?? 25,
+    sort: [{ field: "Created At", direction: "desc" }]
+  });
+
+  return {
+    enquiries: page.records.map(mapEnquiryRecord),
+    nextOffset: page.offset,
+    pageSize: page.pageSize,
+    totalCount: await totalCountPromise
+  };
+}
+
+export async function getOperationsQuotationsPage(input?: { offset?: string; pageSize?: number; statuses?: string[] }) {
+  const filterByFormula = anyFieldFormula("Status", input?.statuses);
+  const totalCountPromise = countRecords(env.AIRTABLE_QUOTATIONS_TABLE, "Quotation Number", filterByFormula);
+  const page = await listRecordsPage<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
+    fields: QUOTATION_PAGE_FIELDS,
+    filterByFormula,
+    offset: input?.offset,
+    pageSize: input?.pageSize ?? 25,
+    sort: [{ field: "Quotation Number", direction: "desc" }]
+  });
+
+  return {
+    quotations: page.records.map((record) => mapQuotationRecord(record)),
+    nextOffset: page.offset,
+    pageSize: page.pageSize,
+    totalCount: await totalCountPromise
   };
 }
 
 export async function getOperationsSnapshot() {
   const [enquiries, customers, quotations, quotationLineItems, orders, products] = await Promise.all([
     safeList<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
+      fields: ENQUIRY_PAGE_FIELDS,
       maxRecords: OPERATIONS_SNAPSHOT_LIMIT,
       sort: [{ field: "Created At", direction: "desc" }]
     }),
@@ -249,6 +426,7 @@ export async function getOperationsSnapshot() {
       sort: [{ field: "Client ID", direction: "asc" }]
     }),
     safeList<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
+      fields: QUOTATION_PAGE_FIELDS,
       maxRecords: OPERATIONS_SNAPSHOT_LIMIT,
       sort: [{ field: "Quotation Number", direction: "desc" }]
     }),
@@ -338,6 +516,13 @@ export async function getOperationsSnapshot() {
       { label: "Sent Quote", value: stageCount(quotations, "Status", "Sent Quote") },
       { label: "Orders", value: orders.length }
     ],
+    totals: {
+      enquiries: await countRecords(env.AIRTABLE_ENQUIRIES_TABLE, "Enquiry ID"),
+      customers: await countRecords(env.AIRTABLE_CUSTOMERS_TABLE, "Client ID"),
+      quotations: await countRecords(env.AIRTABLE_QUOTATIONS_TABLE, "Quotation Number"),
+      orders: await countRecords(env.AIRTABLE_ORDERS_TABLE, "Order Number"),
+      products: await countRecords(env.AIRTABLE_PRODUCTS_TABLE, "Product Key")
+    },
     enquiries: enquiries.map((record) => {
       const directQuotations = record.fields.Quotations || [];
       const fallbackQuotations = quotationIdsByEnquiryId.get(record.id) || [];
@@ -388,31 +573,9 @@ export async function getOperationsSnapshot() {
       };
     }),
     customers: customers.map(mapCustomerRecord),
-    quotations: quotations.map((record) => ({
-      id: record.id,
-      quotationNumber: record.fields["Quotation Number"] || record.id,
-      loggedDateTime: record.fields["Logged Date Time"] || record.createdTime || "",
-      linkedCustomerId: record.fields["Linked Customer"]?.[0] || "",
-      linkedEnquiryId: record.fields["Linked Enquiry"]?.[0] || "",
-      status: record.fields.Status || "",
-      draftFileUrl: record.fields["Draft File URL"] || "",
-      draftCreatedTime: record.fields["Draft Created Time"] || "",
-      finalPdfUrl: record.fields["Final PDF URL"] || "",
-      driveFolderUrl: record.fields["Drive Folder URL"] || "",
-      sentDate: record.fields["Sent Date"] || "",
-      whatsappSentDateTime: record.fields["WhatsApp Sent Date Time"] || "",
-      emailSentDateTime: record.fields["Email Sent Date Time"] || "",
-      finalPdfGeneratedAt: pdfGeneratedAtByQuotationId.get(record.id) || "",
-      lineItemCount: quotationMetricsById.get(record.id)?.lineItemCount || 0,
-      quotationGrandTotal: quotationMetricsById.get(record.id)?.quotationGrandTotal || 0,
-      sendQuotation: Boolean(record.fields["Send Quotation"]),
-      sendReminder: Boolean(record.fields["Send Reminder"]),
-      markAccepted: Boolean(record.fields["Mark Accepted"]),
-      markRejected: Boolean(record.fields["Mark Rejected"]),
-      reminderCount: Number(record.fields["Reminder Count"] || 0),
-      lastReminderDate: record.fields["Last Reminder Date"] || "",
-      nextReminderDate: record.fields["Next Reminder Date"] || ""
-    })),
+    quotations: quotations.map((record) =>
+      mapQuotationRecord(record, quotationMetricsById, pdfGeneratedAtByQuotationId)
+    ),
     orders: orders.map((record) => ({
       id: record.id,
       orderNumber: record.fields["Order Number"] || record.id,

@@ -798,6 +798,21 @@ async function resolvePotentialProductSummary(productId: string) {
   };
 }
 
+function mergeRequirementSummary(existingSummary: string, selectedProductSummary: string) {
+  const existing = String(existingSummary || "").trim();
+  const selected = String(selectedProductSummary || "").trim();
+
+  if (!existing) {
+    return selected;
+  }
+
+  if (!selected || existing.toLowerCase().includes(selected.toLowerCase())) {
+    return existing;
+  }
+
+  return `${existing}\n${selected}`;
+}
+
 function parseOptionalAmount(value: unknown, fallback = 0) {
   if (value === "" || value === undefined || value === null) {
     return fallback;
@@ -1233,6 +1248,7 @@ export async function createPortalEnquiry(payload: unknown) {
 
   const createPromise = (async () => {
   const productSummary = await resolvePotentialProductSummary(input.potentialProduct);
+  const requirementSummary = mergeRequirementSummary(input.requirementSummary, productSummary.productName);
   const existingCustomer = input.linkedCustomerId
     ? await getRecord<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, input.linkedCustomerId)
     : await findExistingCustomerByContact(input);
@@ -1263,7 +1279,7 @@ export async function createPortalEnquiry(payload: unknown) {
         "Destination City": destinationCity,
         "Parser Status": parserStatus,
         "Linked Customer": linkedRecordIds(linkedCustomerId),
-        "Requirement Summary": productSummary.productName || input.requirementSummary,
+        "Requirement Summary": requirementSummary,
         "Potential Product": productSummary.productId,
         "Receiver WhatsApp Number": input.receiverWhatsappNumber
       },
@@ -1358,6 +1374,10 @@ export async function updatePortalEnquiry(enquiryId: string, payload: unknown) {
   const input = enquiryPayloadSchema.parse(payload);
   const productSummary = await resolvePotentialProductSummary(input.potentialProduct);
   const existingEnquiry = await getRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, enquiryId);
+  const requirementSummary = mergeRequirementSummary(
+    input.requirementSummary || existingEnquiry.fields["Requirement Summary"] || "",
+    productSummary.productName
+  );
   const existingCustomer = input.linkedCustomerId
     ? await getRecord<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, input.linkedCustomerId)
     : existingEnquiry.fields["Linked Customer"]?.[0]
@@ -1394,7 +1414,7 @@ export async function updatePortalEnquiry(enquiryId: string, payload: unknown) {
         "Destination City": destinationCity,
         "Parser Status": parserStatus,
         "Linked Customer": linkedRecordIds(linkedCustomerId),
-        "Requirement Summary": productSummary.productName || input.requirementSummary || existingEnquiry.fields["Requirement Summary"] || "",
+        "Requirement Summary": requirementSummary,
         "Potential Product": productSummary.productId || existingEnquiry.fields["Potential Product"] || "",
         "Receiver WhatsApp Number": input.receiverWhatsappNumber
       },

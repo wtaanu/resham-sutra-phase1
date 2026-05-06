@@ -134,6 +134,13 @@ type ProductRecord = {
 type OperationsResponse = {
   actions: OperationsActionLinks;
   metrics: Metric[];
+  totals?: {
+    enquiries: number;
+    customers: number;
+    quotations: number;
+    orders: number;
+    products: number;
+  };
   enquiries: EnquiryRecord[];
   customers: CustomerRecord[];
   quotations: QuotationRecord[];
@@ -146,6 +153,23 @@ type CustomersPageResponse = {
   customers: CustomerRecord[];
   nextOffset: string;
   pageSize: number;
+  totalCount: number;
+};
+
+type EnquiriesPageResponse = {
+  status: string;
+  enquiries: EnquiryRecord[];
+  nextOffset: string;
+  pageSize: number;
+  totalCount: number;
+};
+
+type QuotationsPageResponse = {
+  status: string;
+  quotations: QuotationRecord[];
+  nextOffset: string;
+  pageSize: number;
+  totalCount: number;
 };
 
 type ViewKey =
@@ -882,6 +906,18 @@ export default function App() {
   const [authActionState, setAuthActionState] = useState<ActionState | null>(null);
   const [profileOpen, setProfileOpen] = useState(false);
   const [operations, setOperations] = useState<OperationsResponse | null>(null);
+  const createPagedState = <T,>() => ({
+    currentOffset: "",
+    error: "",
+    initialized: false,
+    loading: false,
+    nextOffset: "",
+    page: 1,
+    previousOffsets: [] as string[],
+    rows: [] as T[],
+    totalCount: 0
+  });
+  const [enquiryPage, setEnquiryPage] = useState(createPagedState<EnquiryRecord>);
   const [customerPage, setCustomerPage] = useState<{
     currentOffset: string;
     error: string;
@@ -891,16 +927,10 @@ export default function App() {
     page: number;
     previousOffsets: string[];
     rows: CustomerRecord[];
-  }>({
-    currentOffset: "",
-    error: "",
-    initialized: false,
-    loading: false,
-    nextOffset: "",
-    page: 1,
-    previousOffsets: [],
-    rows: []
-  });
+    totalCount: number;
+  }>(createPagedState<CustomerRecord>);
+  const [quotationPage, setQuotationPage] = useState(createPagedState<QuotationRecord>);
+  const [quotationPageKey, setQuotationPageKey] = useState("");
   const [activeView, setActiveView] = useState<ViewKey>("dashboard");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -952,6 +982,19 @@ export default function App() {
     );
   }
 
+  function quotationStatusesForView(view: ViewKey) {
+    if (view === "sentQuotations") {
+      return ["Sent Quote"];
+    }
+    if (view === "approvedQuotations") {
+      return ["Approved Quote"];
+    }
+    if (view === "quotationDrafts") {
+      return ["Draft Quote", "Parsed", "New Enquiries"];
+    }
+    return [];
+  }
+
   async function apiFetch(input: string, init?: RequestInit) {
     const response = await fetch(input, {
       ...init,
@@ -964,7 +1007,9 @@ export default function App() {
     if (response.status === 401) {
       setCurrentUser(null);
       setOperations(null);
+      setEnquiryPage(createPagedState<EnquiryRecord>());
       setCustomerPage((current) => ({ ...current, initialized: false, rows: [] }));
+      setQuotationPage(createPagedState<QuotationRecord>());
       setProfileOpen(false);
       setActionState(null);
       setEntryMode(null);
@@ -1058,7 +1103,9 @@ export default function App() {
     } finally {
       setCurrentUser(null);
       setOperations(null);
+      setEnquiryPage(createPagedState<EnquiryRecord>());
       setCustomerPage((current) => ({ ...current, initialized: false, rows: [] }));
+      setQuotationPage(createPagedState<QuotationRecord>());
       setProfileOpen(false);
       setActionState(null);
       setEntryMode(null);
@@ -1192,6 +1239,38 @@ export default function App() {
 
     void loadCustomerPage("", "reset");
   }, [activeView, currentUser, customerPage.initialized, customerPage.loading]);
+
+  useEffect(() => {
+    if (activeView === "enquiries") {
+      setEnquiryPage(createPagedState<EnquiryRecord>());
+    }
+  }, [enquiryStatusFilter, activeView]);
+
+  useEffect(() => {
+    if (activeView !== "enquiries" || !currentUser || enquiryPage.initialized || enquiryPage.loading) {
+      return;
+    }
+
+    void loadEnquiryPage("", "reset");
+  }, [activeView, currentUser, enquiryPage.initialized, enquiryPage.loading, enquiryStatusFilter]);
+
+  useEffect(() => {
+    const statuses = quotationStatusesForView(activeView);
+    const key = statuses.join("|") || "all";
+    if (!statuses.length || !currentUser) {
+      return;
+    }
+
+    if (quotationPageKey && quotationPageKey !== key) {
+      setQuotationPage(createPagedState<QuotationRecord>());
+      setQuotationPageKey("");
+      return;
+    }
+
+    if (!quotationPage.initialized && !quotationPage.loading) {
+      void loadQuotationPage("", "reset", statuses);
+    }
+  }, [activeView, currentUser, quotationPage.initialized, quotationPage.loading, quotationPageKey]);
 
   useEffect(() => {
     if (!destinationSameAsMain) {
@@ -1741,7 +1820,8 @@ export default function App() {
             nextOffset: data.nextOffset,
             page: current.page + 1,
             previousOffsets: [...current.previousOffsets, current.currentOffset],
-            rows: data.customers
+            rows: data.customers,
+            totalCount: data.totalCount
           };
         }
 
@@ -1755,7 +1835,8 @@ export default function App() {
             nextOffset: data.nextOffset,
             page: Math.max(1, current.page - 1),
             previousOffsets: current.previousOffsets.slice(0, -1),
-            rows: data.customers
+            rows: data.customers,
+            totalCount: data.totalCount
           };
         }
 
@@ -1768,7 +1849,8 @@ export default function App() {
           nextOffset: data.nextOffset,
           page: 1,
           previousOffsets: [],
-          rows: data.customers
+          rows: data.customers,
+          totalCount: data.totalCount
         };
       });
     } catch (loadError) {
@@ -1777,6 +1859,170 @@ export default function App() {
         ...previousState,
         error: message,
         initialized: previousState.initialized,
+        loading: false
+      });
+      if (message.includes("sign in again")) {
+        setAuthError(message);
+      }
+    }
+  }
+
+  async function loadEnquiryPage(offset: string, direction: "next" | "previous" | "reset") {
+    if (!currentUser) {
+      return;
+    }
+
+    const previousState = enquiryPage;
+    try {
+      setEnquiryPage((current) => ({ ...current, loading: true, error: "" }));
+      const params = new URLSearchParams({ pageSize: "25" });
+      if (offset) {
+        params.set("offset", offset);
+      }
+      if (enquiryStatusFilter !== "All") {
+        params.set("status", enquiryStatusFilter);
+      }
+
+      const response = await apiFetch(`${apiUrl}/api/operations/enquiries?${params.toString()}`);
+      if (!response.ok) {
+        throw new Error(`Enquiries API returned ${response.status}`);
+      }
+
+      const data = (await response.json()) as EnquiriesPageResponse;
+      setEnquiryPage((current) => {
+        if (direction === "next") {
+          return {
+            ...current,
+            currentOffset: offset,
+            error: "",
+            initialized: true,
+            loading: false,
+            nextOffset: data.nextOffset,
+            page: current.page + 1,
+            previousOffsets: [...current.previousOffsets, current.currentOffset],
+            rows: data.enquiries,
+            totalCount: data.totalCount
+          };
+        }
+
+        if (direction === "previous") {
+          return {
+            ...current,
+            currentOffset: offset,
+            error: "",
+            initialized: true,
+            loading: false,
+            nextOffset: data.nextOffset,
+            page: Math.max(1, current.page - 1),
+            previousOffsets: current.previousOffsets.slice(0, -1),
+            rows: data.enquiries,
+            totalCount: data.totalCount
+          };
+        }
+
+        return {
+          ...current,
+          currentOffset: "",
+          error: "",
+          initialized: true,
+          loading: false,
+          nextOffset: data.nextOffset,
+          page: 1,
+          previousOffsets: [],
+          rows: data.enquiries,
+          totalCount: data.totalCount
+        };
+      });
+    } catch (loadError) {
+      const message = loadError instanceof Error ? loadError.message : "Failed to load enquiries";
+      setEnquiryPage({
+        ...previousState,
+        error: message,
+        loading: false
+      });
+      if (message.includes("sign in again")) {
+        setAuthError(message);
+      }
+    }
+  }
+
+  async function loadQuotationPage(
+    offset: string,
+    direction: "next" | "previous" | "reset",
+    statuses: string[]
+  ) {
+    if (!currentUser) {
+      return;
+    }
+
+    const key = statuses.join("|") || "all";
+    const previousState = quotationPage;
+    try {
+      setQuotationPageKey(key);
+      setQuotationPage((current) => ({ ...current, loading: true, error: "" }));
+      const params = new URLSearchParams({ pageSize: "25" });
+      if (offset) {
+        params.set("offset", offset);
+      }
+      if (statuses.length) {
+        params.set("statuses", statuses.join(","));
+      }
+
+      const response = await apiFetch(`${apiUrl}/api/operations/quotations?${params.toString()}`);
+      if (!response.ok) {
+        throw new Error(`Quotations API returned ${response.status}`);
+      }
+
+      const data = (await response.json()) as QuotationsPageResponse;
+      setQuotationPage((current) => {
+        if (direction === "next") {
+          return {
+            ...current,
+            currentOffset: offset,
+            error: "",
+            initialized: true,
+            loading: false,
+            nextOffset: data.nextOffset,
+            page: current.page + 1,
+            previousOffsets: [...current.previousOffsets, current.currentOffset],
+            rows: data.quotations,
+            totalCount: data.totalCount
+          };
+        }
+
+        if (direction === "previous") {
+          return {
+            ...current,
+            currentOffset: offset,
+            error: "",
+            initialized: true,
+            loading: false,
+            nextOffset: data.nextOffset,
+            page: Math.max(1, current.page - 1),
+            previousOffsets: current.previousOffsets.slice(0, -1),
+            rows: data.quotations,
+            totalCount: data.totalCount
+          };
+        }
+
+        return {
+          ...current,
+          currentOffset: "",
+          error: "",
+          initialized: true,
+          loading: false,
+          nextOffset: data.nextOffset,
+          page: 1,
+          previousOffsets: [],
+          rows: data.quotations,
+          totalCount: data.totalCount
+        };
+      });
+    } catch (loadError) {
+      const message = loadError instanceof Error ? loadError.message : "Failed to load quotations";
+      setQuotationPage({
+        ...previousState,
+        error: message,
         loading: false
       });
       if (message.includes("sign in again")) {
@@ -1983,16 +2229,8 @@ function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
   }, [operations?.enquiries]);
 
   const filteredEnquiries = useMemo(() => {
-    if (!operations?.enquiries) {
-      return [];
-    }
-
-    if (enquiryStatusFilter === "All") {
-      return operations.enquiries;
-    }
-
-    return operations.enquiries.filter((enquiry) => (enquiry.parserStatus || "") === enquiryStatusFilter);
-  }, [enquiryStatusFilter, operations?.enquiries]);
+    return enquiryPage.initialized ? enquiryPage.rows : operations?.enquiries || [];
+  }, [enquiryPage.initialized, enquiryPage.rows, operations?.enquiries]);
 
   function clearEnquiryFieldError(field: keyof EnquiryFormState) {
     setEnquiryFieldErrors((current) => {
@@ -3744,7 +3982,7 @@ function updateLineItemRow(
       { label: "Orders", value: operations.metrics.find((item) => item.label === "Orders")?.value ?? 0 }
     ];
 
-    const totalQuotations = operations.quotations.length;
+    const totalQuotations = operations.totals?.quotations || operations.quotations.length;
     const sentQuotations = operations.quotations.filter((item) => item.status === "Sent Quote").length;
 
     return (
@@ -3860,7 +4098,7 @@ function updateLineItemRow(
           <DetailCard
             title="Quotation Pulse"
             rows={[
-              { label: "Draft records", value: String(operations.quotations.length) },
+              { label: "Draft records", value: String(operations.totals?.quotations || operations.quotations.length) },
               {
                 label: "Approved quote",
                 value: String(
@@ -3878,9 +4116,9 @@ function updateLineItemRow(
           <DetailCard
             title="Business Pulse"
             rows={[
-              { label: "Customers", value: String(operations.customers.length) },
-              { label: "Products", value: String(operations.products.length) },
-              { label: "Orders", value: String(operations.orders.length) }
+              { label: "Customers", value: String(operations.totals?.customers || operations.customers.length) },
+              { label: "Products", value: String(operations.totals?.products || operations.products.length) },
+              { label: "Orders", value: String(operations.totals?.orders || operations.orders.length) }
             ]}
           />
         </section>
@@ -3910,6 +4148,13 @@ function updateLineItemRow(
             <strong>{enquiryActionState.label}</strong>
             <span>{enquiryActionState.message}</span>
             {renderBannerCloseButton(dismissActionState)}
+          </section>
+        ) : null}
+        {enquiryPage.error ? (
+          <section className="action-banner error">
+            <strong>Enquiries</strong>
+            <span>{enquiryPage.error}</span>
+            {renderBannerCloseButton(() => setEnquiryPage((current) => ({ ...current, error: "" })))}
           </section>
         ) : null}
       <PaginatedTable
@@ -3948,8 +4193,22 @@ function updateLineItemRow(
             <th>Action</th>
           </>
         }
-        emptyTitle="No enquiries yet"
-        emptyBody="New Airtable form submissions will appear here."
+        emptyTitle={enquiryPage.loading ? "Loading enquiries..." : "No enquiries yet"}
+        emptyBody={enquiryPage.loading ? "Fetching the current enquiry page." : "New Airtable form submissions will appear here."}
+        pagination={{
+          canNext: Boolean(enquiryPage.nextOffset),
+          canPrevious: enquiryPage.previousOffsets.length > 0,
+          isLoading: enquiryPage.loading,
+          label: `Page ${enquiryPage.page}`,
+          metaLabel: `${filteredEnquiries.length} on this page${enquiryPage.totalCount ? ` of ${enquiryPage.totalCount}` : ""}`,
+          onNext: () => {
+            if (enquiryPage.nextOffset) {
+              void loadEnquiryPage(enquiryPage.nextOffset, "next");
+            }
+          },
+          onPrevious: () =>
+            void loadEnquiryPage(enquiryPage.previousOffsets[enquiryPage.previousOffsets.length - 1] || "", "previous")
+        }}
         renderRow={(enquiry) => {
           const customer = customerLookup.get(enquiry.linkedCustomerId);
           const quotation = enquiry.quotations.length
@@ -4120,7 +4379,7 @@ function updateLineItemRow(
           canPrevious: customerPage.previousOffsets.length > 0,
           isLoading: customerPage.loading,
           label: `Page ${customerPage.page}`,
-          metaLabel: `${customerRows.length} records on this page`,
+          metaLabel: `${customerRows.length} on this page${customerPage.totalCount ? ` of ${customerPage.totalCount}` : ""}`,
           onNext: () => {
             if (customerPage.nextOffset) {
               void loadCustomerPage(customerPage.nextOffset, "next");
@@ -4392,9 +4651,13 @@ function updateLineItemRow(
       return null;
     }
 
-    const filteredQuotations = operations.quotations.filter((quotation) =>
-      statuses.length ? statuses.includes(quotation.status) : true
-    );
+    const currentQuotationKey = statuses.join("|") || "all";
+    const filteredQuotations =
+      quotationPage.initialized && quotationPageKey === currentQuotationKey
+        ? quotationPage.rows
+        : operations.quotations.filter((quotation) =>
+            statuses.length ? statuses.includes(quotation.status) : true
+          );
     const quotationActionState =
       actionState &&
       (actionState.key.startsWith("quotation-send-") ||
@@ -4412,6 +4675,13 @@ function updateLineItemRow(
             <button type="button" className="banner-close" onClick={dismissActionState}>
               ×
             </button>
+          </section>
+        ) : null}
+        {quotationPage.error && quotationPageKey === currentQuotationKey ? (
+          <section className="action-banner error">
+            <strong>Quotations</strong>
+            <span>{quotationPage.error}</span>
+            {renderBannerCloseButton(() => setQuotationPage((current) => ({ ...current, error: "" })))}
           </section>
         ) : null}
         <PaginatedTable
@@ -4441,6 +4711,24 @@ function updateLineItemRow(
           }
           emptyTitle="No quotations in this section"
           emptyBody="As the workflow progresses, matching quotation records will appear here."
+          pagination={{
+            canNext: Boolean(quotationPage.nextOffset),
+            canPrevious: quotationPage.previousOffsets.length > 0,
+            isLoading: quotationPage.loading,
+            label: `Page ${quotationPage.page}`,
+            metaLabel: `${filteredQuotations.length} on this page${quotationPage.totalCount ? ` of ${quotationPage.totalCount}` : ""}`,
+            onNext: () => {
+              if (quotationPage.nextOffset) {
+                void loadQuotationPage(quotationPage.nextOffset, "next", statuses);
+              }
+            },
+            onPrevious: () =>
+              void loadQuotationPage(
+                quotationPage.previousOffsets[quotationPage.previousOffsets.length - 1] || "",
+                "previous",
+                statuses
+              )
+          }}
           renderRow={(quotation) => (
             <tr key={quotation.id}>
               <td>

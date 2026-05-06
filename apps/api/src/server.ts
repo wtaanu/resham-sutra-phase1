@@ -21,7 +21,12 @@ import {
   processPendingEnquiries,
   syncQuotationWhatsAppDeliveryStatus
 } from "./intake-processor.js";
-import { getOperationsCustomersPage, getOperationsSnapshot } from "./operations.js";
+import {
+  getOperationsCustomersPage,
+  getOperationsEnquiriesPage,
+  getOperationsQuotationsPage,
+  getOperationsSnapshot
+} from "./operations.js";
 import {
   createOrderFromQuotation,
   createPortalCustomer,
@@ -209,6 +214,57 @@ app.get("/api/operations/customers", requireAuthenticatedUser, async (request, r
     response.status(500).json({
       status: "error",
       message: error instanceof Error ? error.message : "Failed to load customers"
+    });
+  }
+});
+
+app.get("/api/operations/enquiries", requireAuthenticatedUser, async (request, response) => {
+  try {
+    const pageSize = Number(request.query.pageSize || 25);
+    const offset = String(request.query.offset || "");
+    const status = String(request.query.status || "");
+    const page = await getOperationsEnquiriesPage({
+      offset,
+      pageSize: Number.isFinite(pageSize) ? pageSize : 25,
+      status
+    });
+
+    response.json({
+      status: "ok",
+      ...page
+    });
+  } catch (error) {
+    logRouteError("GET /api/operations/enquiries", error);
+    response.status(500).json({
+      status: "error",
+      message: error instanceof Error ? error.message : "Failed to load enquiries"
+    });
+  }
+});
+
+app.get("/api/operations/quotations", requireAuthenticatedUser, async (request, response) => {
+  try {
+    const pageSize = Number(request.query.pageSize || 25);
+    const offset = String(request.query.offset || "");
+    const statuses = String(request.query.statuses || "")
+      .split(",")
+      .map((status) => status.trim())
+      .filter(Boolean);
+    const page = await getOperationsQuotationsPage({
+      offset,
+      pageSize: Number.isFinite(pageSize) ? pageSize : 25,
+      statuses
+    });
+
+    response.json({
+      status: "ok",
+      ...page
+    });
+  } catch (error) {
+    logRouteError("GET /api/operations/quotations", error);
+    response.status(500).json({
+      status: "error",
+      message: error instanceof Error ? error.message : "Failed to load quotations"
     });
   }
 });
