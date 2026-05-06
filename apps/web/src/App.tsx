@@ -69,6 +69,7 @@ type CustomerRecord = {
 type QuotationRecord = {
   id: string;
   quotationNumber: string;
+  referenceNumber: string;
   loggedDateTime: string;
   linkedCustomerId: string;
   linkedEnquiryId: string;
@@ -4781,7 +4782,12 @@ function updateLineItemRow(
             <tr key={quotation.id}>
               <td>
                 <strong>{quotation.quotationNumber}</strong>
-                <span>{enquiryLookup.get(quotation.linkedEnquiryId)?.enquiryId || "No enquiry link"}</span>
+                <span>
+                  {enquiryLookup.get(quotation.linkedEnquiryId)?.enquiryId ||
+                    quotation.referenceNumber ||
+                    quotation.linkedEnquiryId ||
+                    "No enquiry link"}
+                </span>
                 {quotation.loggedDateTime ? (
                   <span className="table-submeta">Logged {formatDateTime(quotation.loggedDateTime)}</span>
                 ) : null}

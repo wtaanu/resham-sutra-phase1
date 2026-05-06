@@ -44,6 +44,7 @@ type CustomerFields = {
 
 type QuotationFields = {
   "Quotation Number"?: string;
+  "Reference Number"?: string;
   "Logged Date Time"?: string;
   "Linked Customer"?: string[];
   "Linked Enquiry"?: string[];
@@ -140,6 +141,7 @@ const ENQUIRY_PAGE_FIELDS = [
 ];
 const QUOTATION_PAGE_FIELDS = [
   "Quotation Number",
+  "Reference Number",
   "Logged Date Time",
   "Linked Customer",
   "Linked Enquiry",
@@ -329,6 +331,7 @@ function mapQuotationRecord(
   return {
     id: record.id,
     quotationNumber: record.fields["Quotation Number"] || record.id,
+    referenceNumber: record.fields["Reference Number"] || "",
     loggedDateTime: record.fields["Logged Date Time"] || record.createdTime || "",
     linkedCustomerId: record.fields["Linked Customer"]?.[0] || "",
     linkedEnquiryId: record.fields["Linked Enquiry"]?.[0] || "",
