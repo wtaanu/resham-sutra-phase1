@@ -1122,35 +1122,7 @@ async function replaceOrderLineItemsForOrder(input: {
   const created: AirtableRecord<OrderLineItemFields>[] = [];
   try {
     for (const fields of lineItemFields) {
-      try {
-        created.push(await createRecord<OrderLineItemFields>(env.AIRTABLE_ORDER_LINE_ITEMS_TABLE, fields));
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "";
-        const productId = String(fields["Linked Product"] || "");
-        if (!message.includes("Value is not an array of record IDs") || !productId) {
-          console.error("[portal-order] order line item create failed", {
-            orderId: input.orderId,
-            quotationId: input.quotationId,
-            fieldNames: Object.keys(fields),
-            fields,
-            error: serializeError(error)
-          });
-          throw error;
-        }
-
-        console.warn("[portal-order] retrying order line item with linked product array", {
-          orderId: input.orderId,
-          quotationId: input.quotationId,
-          productId,
-          error: serializeError(error)
-        });
-        created.push(
-          await createRecord<OrderLineItemFields>(env.AIRTABLE_ORDER_LINE_ITEMS_TABLE, {
-            ...fields,
-            "Linked Product": linkedRecordIds(productId)
-          })
-        );
-      }
+      created.push(await createOrderLineItemWithSchemaFallback(input, fields));
     }
   } catch (error) {
     await bestEffortDeleteRecords(env.AIRTABLE_ORDER_LINE_ITEMS_TABLE, created.map((item) => item.id));
@@ -1158,6 +1130,69 @@ async function replaceOrderLineItemsForOrder(input: {
   }
 
   return created;
+}
+
+async function createOrderLineItemWithSchemaFallback(
+  input: { orderId: string; quotationId: string; customerId: string; enquiryId: string },
+  fields: Record<string, unknown>
+) {
+  const relationFieldNames = ["Linked Product", "Order", "Quotation", "Enquiries", "Customer"] as const;
+  const variants: Array<{ label: string; fields: Record<string, unknown> }> = [{ label: "text_relations", fields }];
+  let linkedFields: Array<(typeof relationFieldNames)[number]> = [];
+
+  for (const fieldName of relationFieldNames) {
+    linkedFields = [...linkedFields, fieldName];
+    variants.push({
+      label: `linked_${linkedFields.join("_")}`,
+      fields: {
+        ...fields,
+        ...Object.fromEntries(
+          linkedFields.map((linkedFieldName) => {
+            const value = String(fields[linkedFieldName] || "");
+            return [linkedFieldName, value ? linkedRecordIds(value) : []];
+          })
+        )
+      }
+    });
+  }
+
+  let lastError: unknown = null;
+  for (const variant of variants) {
+    try {
+      if (variant.label !== "text_relations") {
+        console.warn("[portal-order] retrying order line item with relation array fields", {
+          orderId: input.orderId,
+          quotationId: input.quotationId,
+          variant: variant.label,
+          relationFields: relationFieldNames.filter((fieldName) => Array.isArray(variant.fields[fieldName]))
+        });
+      }
+      return await createRecord<OrderLineItemFields>(env.AIRTABLE_ORDER_LINE_ITEMS_TABLE, variant.fields);
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : "";
+      if (!message.includes("Value is not an array of record IDs")) {
+        console.error("[portal-order] order line item create failed", {
+          orderId: input.orderId,
+          quotationId: input.quotationId,
+          variant: variant.label,
+          fieldNames: Object.keys(variant.fields),
+          fields: variant.fields,
+          error: serializeError(error)
+        });
+        throw error;
+      }
+    }
+  }
+
+  console.error("[portal-order] order line item create failed after relation fallbacks", {
+    orderId: input.orderId,
+    quotationId: input.quotationId,
+    fieldNames: Object.keys(fields),
+    fields,
+    error: serializeError(lastError)
+  });
+  throw lastError;
 }
 
 export async function getPortalOrderLineItems(orderId: string) {
