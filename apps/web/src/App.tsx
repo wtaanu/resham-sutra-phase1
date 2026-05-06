@@ -1011,6 +1011,7 @@ export default function App() {
   const [quotationForm, setQuotationForm] = useState<QuotationFormState>(createBlankQuotationForm);
   const [orderForm, setOrderForm] = useState<OrderFormState>(createBlankOrderForm);
   const [orderLineItems, setOrderLineItems] = useState<OrderLineItemRow[]>([createOrderLineItemRow()]);
+  const [orderLineItemsLoading, setOrderLineItemsLoading] = useState(false);
   const [destinationSameAsMain, setDestinationSameAsMain] = useState(false);
   const [customerSearchTerm, setCustomerSearchTerm] = useState("");
   const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false);
@@ -1398,6 +1399,7 @@ export default function App() {
     let cancelled = false;
 
     async function loadOrderItems() {
+      setOrderLineItemsLoading(true);
       try {
         if (editingOrderId) {
           const response = await apiFetch(`${apiUrl}/api/portal/orders/${editingOrderId}/line-items`);
@@ -1463,6 +1465,10 @@ export default function App() {
       } catch {
         if (!cancelled) {
           setOrderLineItems([createOrderLineItemRow()]);
+        }
+      } finally {
+        if (!cancelled) {
+          setOrderLineItemsLoading(false);
         }
       }
     }
@@ -2157,6 +2163,7 @@ function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
       linkedEnquiry?.destinationPincode ||
       linkedEnquiry?.pincode ||
       "";
+    setOrderLineItemsLoading(true);
     setEntryMode("order");
     setEditingOrderId(order?.id || "");
     setOrderForm(
@@ -2270,6 +2277,7 @@ function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
     setProductDropdownOpen(false);
     setOrderForm(createBlankOrderForm());
     setOrderLineItems([createOrderLineItemRow()]);
+    setOrderLineItemsLoading(false);
   }
 
   const customerLookup = useMemo(() => {
@@ -3717,6 +3725,7 @@ function updateLineItemRow(
         actionState?.key === `order-create-${orderForm.quotationId}`
           ? actionState.status === "loading"
           : false;
+      const isPreparingOrder = orderLineItemsLoading;
 
       return (
         <section className="entry-overlay">
@@ -3826,6 +3835,12 @@ function updateLineItemRow(
                 <textarea rows={3} value={orderForm.orderNotes} onChange={(event) => setOrderForm((current) => ({ ...current, orderNotes: event.target.value }))} />
               </label>
             </div>
+            {isPreparingOrder ? (
+              <section className="action-banner entry-action-banner loading">
+                <strong>Order Details</strong>
+                <span>Loading customer defaults and quotation line items...</span>
+              </section>
+            ) : null}
             <div className="line-item-builder order-line-item-builder">
               {orderLineItems.map((row, index) => (
                 <div className="line-item-row" key={row.id}>
@@ -3864,11 +3879,11 @@ function updateLineItemRow(
               ))}
             </div>
             <div className="entry-actions">
-              <button className="action-inline-button neutral" type="button" onClick={addOrderLineItemRow}>
+              <button className="action-inline-button neutral" type="button" onClick={addOrderLineItemRow} disabled={isPreparingOrder}>
                 Add Order Line Item
               </button>
-              <button className="action-inline-button" type="button" onClick={() => void handleSubmitOrder()} disabled={isSavingOrder}>
-                {isSavingOrder ? "Saving..." : editingOrderId ? "Update order" : "Create order"}
+              <button className="action-inline-button" type="button" onClick={() => void handleSubmitOrder()} disabled={isSavingOrder || isPreparingOrder}>
+                {isPreparingOrder ? "Preparing..." : isSavingOrder ? "Saving..." : editingOrderId ? "Update order" : "Create order"}
               </button>
             </div>
           </section>

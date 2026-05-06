@@ -1122,7 +1122,35 @@ async function replaceOrderLineItemsForOrder(input: {
   const created: AirtableRecord<OrderLineItemFields>[] = [];
   try {
     for (const fields of lineItemFields) {
-      created.push(await createRecord<OrderLineItemFields>(env.AIRTABLE_ORDER_LINE_ITEMS_TABLE, fields));
+      try {
+        created.push(await createRecord<OrderLineItemFields>(env.AIRTABLE_ORDER_LINE_ITEMS_TABLE, fields));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "";
+        const productId = String(fields["Linked Product"] || "");
+        if (!message.includes("Value is not an array of record IDs") || !productId) {
+          console.error("[portal-order] order line item create failed", {
+            orderId: input.orderId,
+            quotationId: input.quotationId,
+            fieldNames: Object.keys(fields),
+            fields,
+            error: serializeError(error)
+          });
+          throw error;
+        }
+
+        console.warn("[portal-order] retrying order line item with linked product array", {
+          orderId: input.orderId,
+          quotationId: input.quotationId,
+          productId,
+          error: serializeError(error)
+        });
+        created.push(
+          await createRecord<OrderLineItemFields>(env.AIRTABLE_ORDER_LINE_ITEMS_TABLE, {
+            ...fields,
+            "Linked Product": linkedRecordIds(productId)
+          })
+        );
+      }
     }
   } catch (error) {
     await bestEffortDeleteRecords(env.AIRTABLE_ORDER_LINE_ITEMS_TABLE, created.map((item) => item.id));
