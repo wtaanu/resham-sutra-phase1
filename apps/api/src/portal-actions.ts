@@ -255,6 +255,11 @@ const QUOTATION_STATUS_APPROVED = "Approved Quote";
 const QUOTATION_STATUS_SENT = "Sent Quote";
 const QUOTATION_STATUS_ORDERED = "Ordered";
 const ORDER_FULFILLMENT_PROGRESS_NOT_STARTED = "Not Started";
+const QUOTATION_FLOW_BLOCKED_ENQUIRY_STATUSES = new Set(
+  ["Ordered", "Rejected", "Inactive", "Followup", "Closed Lost", "Negotiation"].map((status) =>
+    status.toLowerCase()
+  )
+);
 const manualEnquiryCreateInflight = new Map<string, Promise<{
   enquiryRecordId: string;
   enquiryId: string;
@@ -461,6 +466,21 @@ function normalizeStatusForEnquiry(linkedCustomerId: string, source: z.infer<typ
   }
 
   return linkedCustomerId ? ENQUIRY_STATUS_PARSED : ENQUIRY_STATUS_MANUAL;
+}
+
+function isQuotationFlowBlockedForEnquiryStatus(status: unknown) {
+  return QUOTATION_FLOW_BLOCKED_ENQUIRY_STATUSES.has(String(status || "").trim().toLowerCase());
+}
+
+function assertQuotationFlowAllowedForEnquiry(enquiry: AirtableRecord<EnquiryFields>) {
+  const status = enquiry.fields["Parser Status"] || "";
+  if (!isQuotationFlowBlockedForEnquiryStatus(status)) {
+    return;
+  }
+
+  throw new Error(
+    `Quotation flow is blocked for enquiry ${enquiry.fields["Enquiry ID"] || enquiry.id} because status is ${status}.`
+  );
 }
 
 function normalizePhone(value: unknown) {
@@ -948,6 +968,7 @@ async function createQuotationShellForEnquiry(
   enquiry: AirtableRecord<EnquiryFields>,
   customerId: string
 ) {
+  assertQuotationFlowAllowedForEnquiry(enquiry);
   const existingQuotationId = enquiry.fields.Quotations?.[0];
   if (existingQuotationId) {
     return getRecord<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, existingQuotationId);
@@ -995,7 +1016,7 @@ async function createQuotationShellForEnquiry(
         "Logged Date Time": new Date().toISOString(),
         "Linked Enquiry": safeLinkedValue(enquiry.id),
         "Linked Customer": safeLinkedValue(customerId),
-        Status: enquiry.fields["Parser Status"] || ENQUIRY_STATUS_PARSED,
+        Status: ENQUIRY_STATUS_PARSED,
         "Draft Format": "XLSX",
         "Reference Number": quotationReference,
         "Buyer Block": buildBuyerBlock({
@@ -1598,6 +1619,26 @@ export async function updatePortalEnquiry(enquiryId: string, payload: unknown) {
     });
   }
 
+  const editableIntakeStatuses = new Set(["", "new", "new enquiries", "parsed"]);
+  const shouldProvisionAfterUpdate = editableIntakeStatuses.has(
+    String(parserStatus || "").trim().toLowerCase()
+  );
+  const existingQuotationId = updatedEnquiry.fields.Quotations?.[0] || existingEnquiry.fields.Quotations?.[0] || "";
+
+  if (!shouldProvisionAfterUpdate) {
+    const syncedEnquiry = await syncEnquiryToZohoAndPersist(updatedEnquiry);
+
+    return {
+      enquiryRecordId: syncedEnquiry.id,
+      enquiryId: syncedEnquiry.fields["Enquiry ID"] || updatedEnquiry.fields["Enquiry ID"] || "",
+      parserStatus: syncedEnquiry.fields["Parser Status"] || updatedEnquiry.fields["Parser Status"] || parserStatus,
+      linkedCustomerId,
+      quotationRecordId: existingQuotationId,
+      quotationNumber: "",
+      driveFolderUrl: existingCustomer?.fields["Drive Folder URL"] || ""
+    };
+  }
+
   const provisioned = await createCustomerForEnquiry(updatedEnquiry.id);
   const syncedEnquiry = await syncEnquiryToZohoAndPersist(provisioned.enquiry);
 
@@ -1616,6 +1657,11 @@ export async function createPortalQuotationLineItems(payload: unknown) {
   const input = lineItemPayloadSchema.parse(payload);
 
   const quotation = await getRecord<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, input.quotationId);
+  const enquiryId = quotation.fields["Linked Enquiry"]?.[0] || "";
+  if (enquiryId) {
+    const enquiry = await getRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, enquiryId);
+    assertQuotationFlowAllowedForEnquiry(enquiry);
+  }
   const products = await listRecords<ProductFields>(env.AIRTABLE_PRODUCTS_TABLE, {
     maxRecords: 500
   });
@@ -1652,12 +1698,6 @@ export async function createPortalQuotationLineItems(payload: unknown) {
     );
   }
   const draft = await refreshDraftForQuotation(quotation.id);
-  console.log("[portal-line-items] draft refresh result", {
-    quotationId: quotation.id,
-    quotationStatus: draft.quotation.fields.Status || "",
-    draftFileUrl: draft.quotation.fields["Draft File URL"] || "",
-    driveFolderUrl: draft.folder.folderUrl || draft.quotation.fields["Drive Folder URL"] || ""
-  });
 
   return {
     quotationId: quotation.id,
@@ -1755,6 +1795,8 @@ export async function replacePortalQuotationLineItems(payload: unknown) {
 }
 
 export async function generateDraftForEnquiry(enquiryId: string) {
+  const enquiry = await getRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, enquiryId);
+  assertQuotationFlowAllowedForEnquiry(enquiry);
   const provisioned = await createCustomerForEnquiry(enquiryId);
   try {
     const draft = await refreshDraftForQuotation(provisioned.quotation.id);
@@ -1886,6 +1928,7 @@ export async function updatePortalCustomer(customerId: string, payload: unknown,
 export async function createPortalQuotation(payload: unknown, actor?: AuthenticatedUser | null) {
   const input = quotationPayloadSchema.parse(payload);
   const enquiry = await getRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, input.enquiryId);
+  assertQuotationFlowAllowedForEnquiry(enquiry);
   const provisioned = await createCustomerForEnquiry(enquiry.id);
   const quotation = await createQuotationShellForEnquiry(provisioned.enquiry, provisioned.customer.id);
 

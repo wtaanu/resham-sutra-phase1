@@ -301,11 +301,6 @@ async function syncEnquiryToZohoAndPersist(enquiry: AirtableRecord<EnquiryFields
     productCategory: zohoContext.productCategory
   };
 
-  console.info("[zoho-bigin] enquiry sync requested from intake processor", {
-    airtableRecordId: enquiry.id,
-    payload: syncPayload
-  });
-
   try {
     const result = await syncEnquiryToZohoBigin(syncPayload);
 
@@ -499,6 +494,27 @@ function enquiryStatusFields(status: string) {
   };
 }
 
+const QUOTATION_FLOW_BLOCKED_ENQUIRY_STATUSES = new Set(
+  ["Ordered", "Rejected", "Inactive", "Followup", "Closed Lost", "Negotiation"].map((status) =>
+    status.toLowerCase()
+  )
+);
+
+function isQuotationFlowBlockedForEnquiryStatus(status: unknown) {
+  return QUOTATION_FLOW_BLOCKED_ENQUIRY_STATUSES.has(String(status || "").trim().toLowerCase());
+}
+
+function assertQuotationFlowAllowedForEnquiry(enquiry: AirtableRecord<EnquiryFields>) {
+  const status = enquiry.fields["Parser Status"] || "";
+  if (!isQuotationFlowBlockedForEnquiryStatus(status)) {
+    return;
+  }
+
+  throw new Error(
+    `Quotation flow is blocked for enquiry ${enquiry.fields["Enquiry ID"] || enquiry.id} because status is ${status}.`
+  );
+}
+
 function isLockedQuotationStatus(status: unknown) {
   const normalized = String(status || "").trim().toLowerCase();
   return normalized === "approved quote" || normalized === "sent quote" || normalized === "ordered";
@@ -600,19 +616,6 @@ async function ensureCustomer(enquiry: AirtableRecord<EnquiryFields>) {
           toPincodeNumber(linkedCustomer.fields.Pincode)
       );
 
-      console.log("[ensure-customer:update] preparing Airtable write", {
-        customerId: linkedCustomer.id,
-        enquiryId: enquiry.id,
-        contactMatches,
-        canApplyEnquiryIdentity,
-        pincodeNumber:
-          (canApplyEnquiryIdentity ? toPincodeNumber(enquiry.fields.Pincode) : undefined) ??
-          toPincodeNumber(linkedCustomer.fields.Pincode),
-        pincodeText:
-          (canApplyEnquiryIdentity ? toPincodeString(enquiry.fields.Pincode) : undefined) ??
-          toPincodeString(linkedCustomer.fields.Pincode)
-      });
-
       try {
         return await updateRecord<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, {
           id: linkedCustomer.id,
@@ -620,12 +623,6 @@ async function ensureCustomer(enquiry: AirtableRecord<EnquiryFields>) {
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : "";
-        console.log("[ensure-customer:update] Airtable update failed", {
-          customerId: linkedCustomer.id,
-          enquiryId: enquiry.id,
-          message,
-          pincode: updatedCustomerFields.Pincode
-        });
         if (!message.toLowerCase().includes("pincode")) {
           throw error;
         }
@@ -636,11 +633,6 @@ async function ensureCustomer(enquiry: AirtableRecord<EnquiryFields>) {
           (canApplyEnquiryIdentity ? toPincodeString(enquiry.fields.Pincode) : undefined) ??
             toPincodeString(linkedCustomer.fields.Pincode)
         );
-        console.log("[ensure-customer:update] retrying with string pincode", {
-          customerId: linkedCustomer.id,
-          enquiryId: enquiry.id,
-          pincode: retryFields.Pincode
-        });
         return updateRecord<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, {
           id: linkedCustomer.id,
           fields: retryFields
@@ -673,21 +665,10 @@ async function ensureCustomer(enquiry: AirtableRecord<EnquiryFields>) {
       toPincodeNumber(enquiry.fields.Pincode)
     );
 
-    console.log("[ensure-customer:create] preparing Airtable write", {
-      enquiryId: enquiry.id,
-      pincodeNumber: toPincodeNumber(enquiry.fields.Pincode),
-      pincodeText: toPincodeString(enquiry.fields.Pincode)
-    });
-
     try {
       return await createRecord<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, customerFields);
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
-      console.log("[ensure-customer:create] Airtable create failed", {
-        enquiryId: enquiry.id,
-        message,
-        pincode: customerFields.Pincode
-      });
       if (!message.toLowerCase().includes("pincode")) {
         throw error;
       }
@@ -697,10 +678,6 @@ async function ensureCustomer(enquiry: AirtableRecord<EnquiryFields>) {
         "Pincode",
         toPincodeString(enquiry.fields.Pincode)
       );
-      console.log("[ensure-customer:create] retrying with string pincode", {
-        enquiryId: enquiry.id,
-        pincode: retryFields.Pincode
-      });
       return createRecord<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, retryFields);
     }
   });
@@ -827,13 +804,6 @@ async function syncEnquiryAddressFromCustomer(
     toPincodeNumber(customer.fields.Pincode) ?? toPincodeNumber(enquiry.fields.Pincode)
   );
 
-  console.log("[sync-enquiry-address] preparing Airtable write", {
-    enquiryId: enquiry.id,
-    customerId: customer.id,
-    pincodeNumber: toPincodeNumber(customer.fields.Pincode) ?? toPincodeNumber(enquiry.fields.Pincode),
-    pincodeText: toPincodeString(customer.fields.Pincode) ?? toPincodeString(enquiry.fields.Pincode)
-  });
-
   try {
     return await updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
       id: enquiry.id,
@@ -841,12 +811,6 @@ async function syncEnquiryAddressFromCustomer(
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
-    console.log("[sync-enquiry-address] Airtable update failed", {
-      enquiryId: enquiry.id,
-      customerId: customer.id,
-      message,
-      pincode: fields.Pincode
-    });
     if (!message.toLowerCase().includes("pincode")) {
       throw error;
     }
@@ -856,11 +820,6 @@ async function syncEnquiryAddressFromCustomer(
       "Pincode",
       toPincodeString(customer.fields.Pincode) ?? toPincodeString(enquiry.fields.Pincode)
     );
-    console.log("[sync-enquiry-address] retrying with string pincode", {
-      enquiryId: enquiry.id,
-      customerId: customer.id,
-      pincode: retryFields.Pincode
-    });
     return updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
       id: enquiry.id,
       fields: retryFields
@@ -966,7 +925,7 @@ async function ensureQuotationShell(
         "Logged Date Time": new Date().toISOString(),
         "Linked Enquiry": linkedRecordIds(enquiry.id),
         "Linked Customer": linkedRecordIds(customer.id),
-        Status: enquiry.fields["Parser Status"] || "Parsed",
+        Status: "Parsed",
         "Draft Format": "XLSX",
         "Reference Number": enquiryReference,
         "Buyer Block": buildBuyerBlock(enquiry),
@@ -983,7 +942,7 @@ async function ensureQuotationShell(
             "Logged Date Time": new Date().toISOString(),
             "Linked Enquiry": linkedRecordIds(enquiry.id),
             "Linked Customer": linkedRecordIds(customer.id),
-            Status: enquiry.fields["Parser Status"] || "Parsed",
+            Status: "Parsed",
             "Draft Format": "XLSX",
             "Reference Number": enquiryReference,
             "Buyer Block": buildBuyerBlock(enquiry),
@@ -1262,17 +1221,6 @@ export async function syncQuotationWhatsAppDeliveryStatus(event: WhatsAppStatusE
     }
   }
 
-  console.info("[whatsapp-status] quotation delivery status updated", {
-    quotationId: quotation.id,
-    quotationNumber: updated.fields["Quotation Number"] || quotation.id,
-    messageId,
-    status: event.status,
-    recipientPhone: event.recipientPhone,
-    errorMessage: event.errorMessage,
-    shouldMarkSent,
-    shouldMarkFailed
-  });
-
   return updated;
 }
 
@@ -1282,6 +1230,7 @@ async function createDraftForReadyEnquiry(
   quotation: AirtableRecord<QuotationFields>,
   lineItems: AirtableRecord<QuotationLineItemFields>[]
 ) {
+  assertQuotationFlowAllowedForEnquiry(enquiry);
   const folder = await ensureFolder(customer);
   const draftLineItems = mapDraftLineItems(lineItems);
   const buyerBlock = quotation.fields["Buyer Block"] || buildBuyerBlock(enquiry);
@@ -1379,6 +1328,7 @@ export async function refreshDraftForQuotation(quotationId: string) {
 
   const customer = await getCustomerById(customerId);
   const enquiry = await getRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, enquiryId);
+  assertQuotationFlowAllowedForEnquiry(enquiry);
   const lineItems = getLineItemsForQuotation(quotation.id, await listAllLineItems());
 
   if (!lineItems.length) {
@@ -1399,6 +1349,7 @@ export async function generateFinalPdfForQuotation(quotationId: string) {
 
   const customer = await getCustomerById(customerId);
   const enquiry = await getRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, enquiryId);
+  assertQuotationFlowAllowedForEnquiry(enquiry);
   const lineItems = getLineItemsForQuotation(quotation.id, await listAllLineItems());
 
   if (!lineItems.length) {
@@ -1562,6 +1513,7 @@ export async function sendQuotationEmail(quotationId: string) {
   }
 
   const { quotation, customer, enquiry } = await loadQuotationDeliveryContext(quotationId);
+  assertQuotationFlowAllowedForEnquiry(enquiry);
   const recipientEmail = String(customer.fields.Email || enquiry.fields.Email || "").trim();
 
   if (!recipientEmail) {
@@ -1612,6 +1564,7 @@ export async function sendQuotationWhatsApp(quotationId: string) {
   }
 
   const { quotation, customer, enquiry } = await loadQuotationDeliveryContext(quotationId);
+  assertQuotationFlowAllowedForEnquiry(enquiry);
   const recipientPhone = String(
     customer.fields.WhatsApp || customer.fields.Phone || enquiry.fields.Phone || ""
   ).trim();
@@ -1619,14 +1572,6 @@ export async function sendQuotationWhatsApp(quotationId: string) {
   if (!recipientPhone) {
     throw new Error("A valid customer WhatsApp number is required.");
   }
-
-  console.info("[quotation-send-whatsapp] resolved delivery context", {
-    quotationId,
-    quotationNumber: quotation.fields["Quotation Number"] || quotation.id,
-    customerId: customer.id,
-    enquiryId: enquiry.id,
-    rawRecipientPhone: recipientPhone
-  });
 
   if (!customer.fields.WhatsApp || !customer.fields.Phone) {
     const syncedCustomerFields: Record<string, unknown> = {};
@@ -1677,14 +1622,6 @@ export async function sendQuotationWhatsApp(quotationId: string) {
     contentType: document.attachment?.contentType || "application/pdf"
   });
 
-  console.info("[quotation-send-whatsapp] outbound document send completed", {
-    quotationId,
-    quotationNumber,
-    recipientPhone,
-    documentUrl: document.publicUrl,
-    sendResult
-  });
-
   const outboundMessageId = String(sendResult?.messages?.[0]?.id || "").trim();
   const updatedQuotation = await updateRecordWithOptionalFieldFallback<QuotationFields>(
     env.AIRTABLE_QUOTATIONS_TABLE,
@@ -1700,12 +1637,6 @@ export async function sendQuotationWhatsApp(quotationId: string) {
     },
     optionalQuotationFields
   );
-  console.info("[quotation-send-whatsapp] quotation marked as accepted by Meta pending delivery callback", {
-    quotationId,
-    quotationNumber,
-    recipientPhone,
-    outboundMessageId
-  });
   return {
     quotation: updatedQuotation,
     recipient: recipientPhone,
@@ -1760,12 +1691,6 @@ async function syncParsedEnquiriesWithLineItems() {
     const quotationId = enquiry.fields.Quotations?.[0] || "";
 
     if (!customerId || !quotationId) {
-      console.log("[intake-processor] skipped parsed enquiry without explicit customer and quotation links", {
-        enquiryRecordId: enquiry.id,
-        enquiryId: enquiry.fields["Enquiry ID"] || "",
-        hasLinkedCustomer: Boolean(customerId),
-        hasQuotation: Boolean(quotationId)
-      });
       continue;
     }
 
@@ -1826,12 +1751,6 @@ async function syncNewEnquiriesWithCustomers() {
     const quotationId = enquiry.fields.Quotations?.[0] || "";
 
     if (!customerId || !quotationId) {
-      console.log("[intake-processor] skipped new enquiry without explicit customer and quotation links", {
-        enquiryRecordId: enquiry.id,
-        enquiryId: enquiry.fields["Enquiry ID"] || "",
-        hasLinkedCustomer: Boolean(customerId),
-        hasQuotation: Boolean(quotationId)
-      });
       continue;
     }
 
@@ -1846,6 +1765,7 @@ async function syncNewEnquiriesWithCustomers() {
 
 export async function createCustomerForEnquiry(enquiryId: string) {
   const enquiry = await getRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, enquiryId);
+  assertQuotationFlowAllowedForEnquiry(enquiry);
   const customer = await ensureCustomer(enquiry);
   const folder = await ensureFolder(customer);
   let syncedEnquiry = await syncEnquiryAddressFromCustomer(enquiry, customer);
@@ -1860,6 +1780,9 @@ export async function createCustomerForEnquiry(enquiryId: string) {
       Quotations: linkedRecordIds(quotation.id)
     }
   });
+  const nextQuotationStatus = ["Parsed", "Draft Quote"].includes(String(updatedEnquiry.fields["Parser Status"] || ""))
+    ? String(updatedEnquiry.fields["Parser Status"] || "")
+    : String(quotation.fields.Status || "Parsed");
 
   const updatedQuotation = await updateRecord<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
     id: quotation.id,
@@ -1868,7 +1791,7 @@ export async function createCustomerForEnquiry(enquiryId: string) {
       "Linked Customer": linkedRecordIds(customer.id),
       Status: isLockedQuotationStatus(quotation.fields.Status)
         ? String(quotation.fields.Status || "")
-        : String(updatedEnquiry.fields["Parser Status"] || quotation.fields.Status || "Parsed")
+        : nextQuotationStatus
     }
   });
 
@@ -1941,6 +1864,17 @@ export async function processPendingEnquiries() {
 
       const customer = await getCustomerById(customerId);
       const quotation = await getQuotationById(quotationId);
+      if (isQuotationFlowBlockedForEnquiryStatus(enquiry.fields["Parser Status"])) {
+        results.push({
+          enquiryRecordId: enquiry.id,
+          enquiryId: enquiry.fields["Enquiry ID"] || enquiry.id,
+          customerRecordId: customer.id,
+          quotationRecordId: quotation.id,
+          status: "skipped",
+          message: `Quotation flow is blocked for status ${enquiry.fields["Parser Status"] || "unknown"}`
+        });
+        continue;
+      }
       if (isLockedQuotationStatus(quotation.fields.Status)) {
         results.push({
           enquiryRecordId: enquiry.id,
