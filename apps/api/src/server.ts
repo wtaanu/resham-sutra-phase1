@@ -201,10 +201,12 @@ app.get("/api/operations/customers", requireAuthenticatedUser, async (request, r
     const pageSize = Number(request.query.pageSize || 25);
     const offset = String(request.query.offset || "");
     const includeTotal = String(request.query.includeTotal || "1") !== "0";
+    const search = String(request.query.search || "");
     const page = await getOperationsCustomersPage({
       includeTotal,
       offset,
-      pageSize: Number.isFinite(pageSize) ? pageSize : 25
+      pageSize: Number.isFinite(pageSize) ? pageSize : 25,
+      search
     });
 
     response.json({

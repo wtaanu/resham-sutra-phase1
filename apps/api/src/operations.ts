@@ -30,6 +30,7 @@ type CustomerFields = {
   "Customer Name"?: string;
   Company?: string;
   Phone?: string;
+  WhatsApp?: string;
   Email?: string;
   Address?: string;
   State?: string;
@@ -285,6 +286,17 @@ function anyFieldFormula(fieldName: string, values?: string[]) {
   return `OR(${filteredValues.map((value) => exactFieldFormula(fieldName, value)).join(",")})`;
 }
 
+function textSearchFormula(search: string, fields: string[]) {
+  const normalizedSearch = search.trim().toLowerCase();
+  if (!normalizedSearch || !fields.length) {
+    return undefined;
+  }
+
+  const escapedSearch = quoteFormulaValue(normalizedSearch);
+  const clauses = fields.map((fieldName) => `SEARCH('${escapedSearch}', LOWER({${fieldName}}&''))`);
+  return clauses.length === 1 ? clauses[0] : `OR(${clauses.join(",")})`;
+}
+
 async function countRecords(tableName: string, fieldName: string, filterByFormula?: string) {
   return (
     await safeList<Record<string, unknown>>(tableName, {
@@ -369,16 +381,30 @@ function mapQuotationRecord(
   };
 }
 
-export async function getOperationsCustomersPage(input?: { includeTotal?: boolean; offset?: string; pageSize?: number }) {
+export async function getOperationsCustomersPage(input?: {
+  includeTotal?: boolean;
+  offset?: string;
+  pageSize?: number;
+  search?: string;
+}) {
+  const filterByFormula = textSearchFormula(input?.search || "", [
+    "Client ID",
+    "Customer Name",
+    "Company",
+    "Phone",
+    "WhatsApp",
+    "Email"
+  ]);
   const totalCountPromise = input?.includeTotal === false
     ? Promise.resolve(0)
-    : countRecords(env.AIRTABLE_CUSTOMERS_TABLE, "Client ID");
+    : countRecords(env.AIRTABLE_CUSTOMERS_TABLE, "Client ID", filterByFormula);
   const page = await listRecordsPage<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, {
     fields: [
       "Client ID",
       "Customer Name",
       "Company",
       "Phone",
+      "WhatsApp",
       "Email",
       "Address",
       "State",
@@ -387,6 +413,7 @@ export async function getOperationsCustomersPage(input?: { includeTotal?: boolea
       "Customer Type",
       "Drive Folder URL"
     ],
+    filterByFormula,
     offset: input?.offset,
     pageSize: input?.pageSize ?? 25
   });

@@ -1017,6 +1017,7 @@ export default function App() {
   const [destinationSameAsMain, setDestinationSameAsMain] = useState(false);
   const [customerSearchTerm, setCustomerSearchTerm] = useState("");
   const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false);
+  const [customerPageSearchTerm, setCustomerPageSearchTerm] = useState("");
   const [productSearchTerm, setProductSearchTerm] = useState("");
   const [productDropdownOpen, setProductDropdownOpen] = useState(false);
   const [enquiryStatusFilter, setEnquiryStatusFilter] = useState("All");
@@ -1326,6 +1327,21 @@ export default function App() {
 
     void loadCustomerPage("", "reset");
   }, [activeView, currentUser, customerPage.initialized, customerPage.loading]);
+
+  useEffect(() => {
+    if (activeView !== "customers" || !currentUser) {
+      return;
+    }
+    if (!customerPage.initialized && !customerPageSearchTerm.trim()) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      void loadCustomerPage("", "reset", customerPageSearchTerm);
+    }, 300);
+
+    return () => window.clearTimeout(timeout);
+  }, [activeView, currentUser, customerPage.initialized, customerPageSearchTerm]);
 
   useEffect(() => {
     if (activeView !== "enquiries" || !currentUser || enquiryPage.initialized || enquiryPage.loading) {
@@ -1879,7 +1895,11 @@ export default function App() {
     setProductDropdownOpen(false);
   }
 
-  async function loadCustomerPage(offset: string, direction: "next" | "previous" | "reset") {
+  async function loadCustomerPage(
+    offset: string,
+    direction: "next" | "previous" | "reset",
+    searchOverride = customerPageSearchTerm
+  ) {
     if (!currentUser) {
       return;
     }
@@ -1889,6 +1909,10 @@ export default function App() {
       setCustomerPage((current) => ({ ...current, loading: true, error: "" }));
       const params = new URLSearchParams({ pageSize: "25" });
       params.set("includeTotal", direction === "reset" ? "1" : "0");
+      const search = searchOverride.trim();
+      if (search) {
+        params.set("search", search);
+      }
       if (offset) {
         params.set("offset", offset);
       }
@@ -4584,9 +4608,29 @@ function updateLineItemRow(
         eyebrow="Customers"
         title="Master account records generated from enquiry intake"
         headerAction={
-          <button className="action-inline-button" type="button" onClick={() => openCustomerEntry()}>
-            New Customer
-          </button>
+          <>
+            <label className="table-search-inline">
+              <span>Search</span>
+              <input
+                value={customerPageSearchTerm}
+                placeholder="Client ID, phone, name"
+                onChange={(event) => setCustomerPageSearchTerm(event.target.value)}
+              />
+            </label>
+            {customerPageSearchTerm ? (
+              <button
+                className="action-ghost-button"
+                type="button"
+                onClick={() => setCustomerPageSearchTerm("")}
+                disabled={customerPage.loading}
+              >
+                Clear
+              </button>
+            ) : null}
+            <button className="action-inline-button" type="button" onClick={() => openCustomerEntry()}>
+              New Customer
+            </button>
+          </>
         }
         rows={customerRows}
         columns={
@@ -4604,7 +4648,9 @@ function updateLineItemRow(
         emptyBody={
           customerPage.loading
             ? "Fetching the current customer page."
-            : "Customer records created from enquiries will appear here."
+            : customerPageSearchTerm.trim()
+              ? "No customer matched that Client ID, phone, or name."
+              : "Customer records created from enquiries will appear here."
         }
         pagination={{
           canNext: Boolean(customerPage.nextOffset),
@@ -4645,6 +4691,17 @@ function updateLineItemRow(
               <button className="icon-action-button neutral" type="button" title="Edit customer" onClick={() => openCustomerEntry(customer)}>
                 ✎
               </button>
+              {customer.driveFolderUrl ? (
+                <a
+                  className="icon-action-button neutral"
+                  href={customer.driveFolderUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  title="Open customer folder"
+                >
+                  ↗
+                </a>
+              ) : null}
             </td>
           </tr>
         )}
