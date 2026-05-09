@@ -553,12 +553,18 @@ export async function getOperationsSnapshot() {
   const quotationById = new Map(quotations.map((record) => [record.id, record]));
   const quotationMetricsById = buildQuotationLineItemMetrics(quotationLineItems);
   const pdfGeneratedAtByQuotationId = new Map<string, string>();
-  const customerNameById = new Map(
-    customers.map((record) => [record.id, record.fields["Customer Name"] || record.id])
-  );
-  const customerClientIdById = new Map(
-    customers.map((record) => [record.id, record.fields["Client ID"] || record.id])
-  );
+  const customerNameById = new Map<string, string>();
+  const customerClientIdById = new Map<string, string>();
+  for (const record of customers) {
+    const clientId = String(record.fields["Client ID"] || "").trim();
+    const customerName = String(record.fields["Customer Name"] || "").trim();
+    customerNameById.set(record.id, customerName || record.id);
+    customerClientIdById.set(record.id, clientId || record.id);
+    if (clientId) {
+      customerNameById.set(clientId, customerName || clientId);
+      customerClientIdById.set(clientId, clientId);
+    }
+  }
   const customerDefaultsById = new Map(customers.map((record) => [record.id, mapCustomerRecord(record)]));
   const enquiryIdsWithoutDraft = enquiries.filter((record) => {
     const directQuotations = record.fields.Quotations || [];

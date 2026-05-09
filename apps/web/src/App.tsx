@@ -2354,10 +2354,11 @@ function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
 
   function resolveOrderCustomerLabel(order: OrderRecord) {
     return (
-      customerLookup.get(order.linkedCustomerId)?.clientId ||
-      order.customerClientId ||
       order.customerName ||
+      customerLookup.get(order.linkedCustomerId)?.customerName ||
       quotationLookup.get(order.linkedQuotationId)?.customerName ||
+      order.customerClientId ||
+      customerLookup.get(order.linkedCustomerId)?.clientId ||
       order.linkedCustomerId ||
       "Not linked"
     );
