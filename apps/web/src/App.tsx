@@ -1063,6 +1063,25 @@ export default function App() {
     return [];
   }
 
+  function invalidateQuotationPage() {
+    setQuotationPage(createPagedState<QuotationRecord>());
+    setQuotationPageKey("");
+  }
+
+  function invalidateEnquiryPage() {
+    setEnquiryPage(createPagedState<EnquiryRecord>());
+  }
+
+  function invalidateCustomerPage() {
+    setCustomerPage(createPagedState<CustomerRecord>());
+  }
+
+  function invalidatePagedTables() {
+    invalidateEnquiryPage();
+    invalidateCustomerPage();
+    invalidateQuotationPage();
+  }
+
   async function apiFetch(input: string, init?: RequestInit) {
     const response = await fetch(input, {
       ...init,
@@ -1508,6 +1527,7 @@ export default function App() {
       }
       const data = (await response.json()) as OperationsResponse;
       setOperations(data);
+      invalidatePagedTables();
       setError("");
     } catch (loadError) {
       const message =
@@ -1624,6 +1644,7 @@ export default function App() {
       } catch {
         // Keep success state when the follow-up refresh briefly fails.
       }
+      invalidateQuotationPage();
       setActiveView("quotationDrafts");
       setActionState({
         key: `enquiry-draft-${enquiryId}`,
@@ -1804,6 +1825,7 @@ export default function App() {
       } catch {
         // Keep success state when the follow-up refresh briefly fails.
       }
+      invalidateQuotationPage();
       setActiveView("quotationDrafts");
       setActionState({
         key: actionKey,
@@ -3022,6 +3044,7 @@ function updateLineItemRow(
       });
       setLineItemRows([createLineItemRow()]);
       closeEntryPanel();
+      invalidateQuotationPage();
       setActiveView("quotationDrafts");
       try {
         await refreshOperations(false);
