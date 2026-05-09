@@ -1,11 +1,10 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
-import { createPortalEnquiry, createPortalQuotationLineItems } from "./portal-actions.js";
-import { listRecords, getRecord, type AirtableRecord } from "./airtable.js";
+import { createPortalEnquiry } from "./portal-actions.js";
+import { listRecords, getRecord, updateRecord, type AirtableRecord } from "./airtable.js";
 import { parseIncomingEnquiry } from "./enquiry-parser.js";
 import { env } from "./config.js";
-import { createCustomerForEnquiry } from "./intake-processor.js";
 import { isSmtpConfigured, sendMail } from "./mailer.js";
 import { productReferences } from "./phase1-data.js";
 
@@ -51,11 +50,6 @@ type CustomerFields = {
   Phone?: string;
   WhatsApp?: string;
   Email?: string;
-};
-
-type QuotationLineItemFields = {
-  Quotation?: string[];
-  "Linked Product"?: string[];
 };
 
 const whatsappPayloadSchema = z.object({
@@ -752,13 +746,54 @@ async function findExistingWhatsAppEnquiry(fingerprint: string) {
   return enquiries.find((enquiry) => String(enquiry.fields.Notes || "").includes(fingerprint)) || null;
 }
 
-async function quotationHasLineItems(quotationId: string) {
-  const lineItems = await listRecords<QuotationLineItemFields>(env.AIRTABLE_QUOTATION_LINE_ITEMS_TABLE, {
-    fields: ["Quotation"],
-    maxRecords: 500
+async function findExistingCustomerForWhatsApp(input: { phone: string }) {
+  const phone = normalizePhone(input.phone);
+
+  if (!phone) {
+    return null;
+  }
+
+  const customers = await listRecords<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, {
+    fields: ["Customer Name", "Company", "Phone", "WhatsApp", "Email"]
   });
 
-  return lineItems.some((item) => item.fields.Quotation?.includes(quotationId));
+  return (
+    customers.find((customer) => {
+      const customerPhone = normalizePhone(String(customer.fields.Phone || ""));
+      const customerWhatsapp = normalizePhone(String(customer.fields.WhatsApp || ""));
+      return customerPhone === phone || customerWhatsapp === phone;
+    }) || null
+  );
+}
+
+async function ensureExistingCustomerLinkedForWhatsApp(
+  enquiry: AirtableRecord<EnquiryFields>,
+  input: { phone: string }
+) {
+  const currentLinkedCustomerId = enquiry.fields["Linked Customer"]?.[0] || "";
+  const status = enquiry.fields["Parser Status"] || "";
+  const shouldNormalizeStatus = status !== "Parsed" && status !== "New Enquiries";
+
+  if (currentLinkedCustomerId && !shouldNormalizeStatus) {
+    return enquiry;
+  }
+
+  const existingCustomer = currentLinkedCustomerId
+    ? null
+    : await findExistingCustomerForWhatsApp(input);
+  const nextLinkedCustomerId = currentLinkedCustomerId || existingCustomer?.id || "";
+
+  if (!nextLinkedCustomerId && !shouldNormalizeStatus) {
+    return enquiry;
+  }
+
+  return updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
+    id: enquiry.id,
+    fields: {
+      ...(nextLinkedCustomerId ? { "Linked Customer": [nextLinkedCustomerId] } : {}),
+      ...(shouldNormalizeStatus ? { "Parser Status": "Parsed" } : {})
+    }
+  });
 }
 
 async function createSalesNotificationArtifact(input: {
@@ -772,7 +807,7 @@ async function createSalesNotificationArtifact(input: {
 
   const fileName = `${input.enquiry.id}-whatsapp-enquiry.json`;
   const filePath = path.join(notificationsDir, fileName);
-  const quotationIds = input.enquiry.fields.Quotations || [];
+  const quotationIds: string[] = [];
 
   await writeFile(
     filePath,
@@ -832,7 +867,7 @@ async function sendSalesTeamNotificationEmail(input: {
     `Enquiry Record: ${input.enquiry.id}`,
     `Customer: ${input.linkedCustomer?.fields["Customer Name"] || "Not linked yet"}`,
     `Customer Record: ${input.enquiry.fields["Linked Customer"]?.[0] || ""}`,
-    `Quotation Record: ${input.enquiry.fields.Quotations?.[0] || ""}`,
+    "Quotation Record: Not created by WhatsApp intake",
     `Inbound Business Number: ${input.inboundWhatsappNumber || "Unknown"}`,
     "",
     "Matched products:",
@@ -866,23 +901,8 @@ async function processWhatsAppEnquiryInternal(payload: unknown): Promise<WhatsAp
 
   const existingEnquiry = await findExistingWhatsAppEnquiry(fingerprint);
   if (existingEnquiry) {
-    const provisioned = await createCustomerForEnquiry(existingEnquiry.id);
-    const quotationId = provisioned.enquiry.fields.Quotations?.[0] || provisioned.quotation.id;
-
-    if (quotationId && matchedProducts.length && !(await quotationHasLineItems(quotationId))) {
-      await createPortalQuotationLineItems({
-        quotationId,
-        items: matchedProducts.map((product) => ({
-          productId: product.id,
-          qty: 1,
-          rate: Number(product.fields["Bulk Sale Price"] || product.fields.MRP || 0),
-              transport: Number(product.fields["Freight Amount"] || product.fields.Freight || product.fields["Pkg & Transport"] || 0),
-              gstPercent: Number(product.fields["GST Amount"] || product.fields["GST %"] || 0)
-        }))
-      });
-    }
-
-    const enquiry = await getRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, existingEnquiry.id);
+    const existing = await getRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, existingEnquiry.id);
+    const enquiry = await ensureExistingCustomerLinkedForWhatsApp(existing, { phone: contactPhone });
     const linkedCustomerId = enquiry.fields["Linked Customer"]?.[0] || "";
     const linkedCustomer = linkedCustomerId
       ? await getRecord<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, linkedCustomerId)
@@ -900,7 +920,7 @@ async function processWhatsAppEnquiryInternal(payload: unknown): Promise<WhatsAp
       parserStatus: enquiry.fields["Parser Status"] || "",
       linkedCustomerId,
       customerName: linkedCustomer?.fields["Customer Name"] || "",
-      quotationId: enquiry.fields.Quotations?.[0] || "",
+      quotationId: "",
       matchedProducts: matchedProducts.map((product) => ({
         id: product.id,
         name: product.fields["Product Name"] || product.fields["Product Key"] || product.id
@@ -935,21 +955,7 @@ async function processWhatsAppEnquiryInternal(payload: unknown): Promise<WhatsAp
   });
 
   let enquiry = await getRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, created.enquiryRecordId);
-  const quotationId = enquiry.fields.Quotations?.[0] || "";
-
-  if (quotationId && matchedProducts.length && !(await quotationHasLineItems(quotationId))) {
-    await createPortalQuotationLineItems({
-      quotationId,
-      items: matchedProducts.map((product) => ({
-        productId: product.id,
-        qty: 1,
-        rate: Number(product.fields["Bulk Sale Price"] || product.fields.MRP || 0),
-              transport: Number(product.fields["Freight Amount"] || product.fields.Freight || product.fields["Pkg & Transport"] || 0),
-              gstPercent: Number(product.fields["GST Amount"] || product.fields["GST %"] || 0)
-      }))
-    });
-    enquiry = await getRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, created.enquiryRecordId);
-  }
+  enquiry = await ensureExistingCustomerLinkedForWhatsApp(enquiry, { phone: contactPhone });
 
   const notification = await createSalesNotificationArtifact({
     enquiry,
@@ -977,7 +983,7 @@ async function processWhatsAppEnquiryInternal(payload: unknown): Promise<WhatsAp
     parserStatus: enquiry.fields["Parser Status"] || "",
     linkedCustomerId,
     customerName: linkedCustomer?.fields["Customer Name"] || "",
-    quotationId: enquiry.fields.Quotations?.[0] || "",
+    quotationId: "",
     matchedProducts: matchedProducts.map((product) => ({
       id: product.id,
       name: product.fields["Product Name"] || product.fields["Product Key"] || product.id

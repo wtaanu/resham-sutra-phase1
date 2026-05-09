@@ -1454,6 +1454,18 @@ export async function createPortalEnquiry(payload: unknown) {
     }
   });
 
+  if (input.source === "whatsapp") {
+    return {
+      enquiryRecordId: created.id,
+      enquiryId: created.fields["Enquiry ID"] || "",
+      parserStatus: created.fields["Parser Status"] || parserStatus,
+      linkedCustomerId,
+      quotationRecordId: "",
+      quotationNumber: "",
+      driveFolderUrl: ""
+    };
+  }
+
   const provisioned = await createCustomerForEnquiry(created.id);
   const syncedEnquiry = await syncEnquiryToZohoAndPersist(provisioned.enquiry);
 
