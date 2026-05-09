@@ -237,6 +237,30 @@ function mapCustomerRecord(record: AirtableRecord<CustomerFields>) {
   };
 }
 
+function orderCustomerKey(record: AirtableRecord<OrderFields>) {
+  return (
+    record.fields["Linked Customer"]?.[0] ||
+    (Array.isArray(record.fields.Customer)
+      ? record.fields.Customer[0] || ""
+      : String(record.fields.Customer || ""))
+  );
+}
+
+function addCustomerLookupRecord(
+  record: AirtableRecord<CustomerFields>,
+  customerNameById: Map<string, string>,
+  customerClientIdById: Map<string, string>
+) {
+  const clientId = String(record.fields["Client ID"] || "").trim();
+  const customerName = String(record.fields["Customer Name"] || "").trim();
+  customerNameById.set(record.id, customerName || record.id);
+  customerClientIdById.set(record.id, clientId || record.id);
+  if (clientId) {
+    customerNameById.set(clientId, customerName || clientId);
+    customerClientIdById.set(clientId, clientId);
+  }
+}
+
 function latestFirst<TFields extends Record<string, unknown>>(records: Array<AirtableRecord<TFields>>) {
   return [...records].sort((left, right) => {
     const leftTime = Date.parse(left.createdTime || "");
@@ -284,6 +308,15 @@ function anyFieldFormula(fieldName: string, values?: string[]) {
   }
 
   return `OR(${filteredValues.map((value) => exactFieldFormula(fieldName, value)).join(",")})`;
+}
+
+function combineOrFormula(formulas: Array<string | undefined>) {
+  const filteredFormulas = formulas.filter((formula): formula is string => Boolean(formula));
+  if (!filteredFormulas.length) {
+    return undefined;
+  }
+
+  return filteredFormulas.length === 1 ? filteredFormulas[0] : `OR(${filteredFormulas.join(",")})`;
 }
 
 function textSearchFormula(search: string, fields: string[]) {
@@ -556,16 +589,49 @@ export async function getOperationsSnapshot() {
   const customerNameById = new Map<string, string>();
   const customerClientIdById = new Map<string, string>();
   for (const record of customers) {
-    const clientId = String(record.fields["Client ID"] || "").trim();
-    const customerName = String(record.fields["Customer Name"] || "").trim();
-    customerNameById.set(record.id, customerName || record.id);
-    customerClientIdById.set(record.id, clientId || record.id);
-    if (clientId) {
-      customerNameById.set(clientId, customerName || clientId);
-      customerClientIdById.set(clientId, clientId);
-    }
+    addCustomerLookupRecord(record, customerNameById, customerClientIdById);
+  }
+  const orderCustomerKeys = Array.from(new Set(orders.map(orderCustomerKey).filter(Boolean)));
+  const missingOrderCustomerRecordIds = orderCustomerKeys.filter(
+    (value) => value.startsWith("rec") && !customerNameById.has(value)
+  );
+  const missingOrderCustomerClientIds = orderCustomerKeys.filter(
+    (value) => !value.startsWith("rec") && !customerNameById.has(value)
+  );
+  const extraOrderCustomersFilter = combineOrFormula([
+    recordIdFormula(missingOrderCustomerRecordIds),
+    anyFieldFormula("Client ID", missingOrderCustomerClientIds)
+  ]);
+  const extraOrderCustomers = extraOrderCustomersFilter
+    ? await safeList<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, {
+        fields: [
+          "Client ID",
+          "Customer Name",
+          "Company",
+          "Phone",
+          "Email",
+          "Address",
+          "State",
+          "City",
+          "Pincode",
+          "Destination Address",
+          "Destination State",
+          "Destination City",
+          "Destination Pincode",
+          "Customer Type",
+          "Drive Folder URL"
+        ],
+        filterByFormula: extraOrderCustomersFilter,
+        maxRecords: orderCustomerKeys.length
+      })
+    : [];
+  for (const record of extraOrderCustomers) {
+    addCustomerLookupRecord(record, customerNameById, customerClientIdById);
   }
   const customerDefaultsById = new Map(customers.map((record) => [record.id, mapCustomerRecord(record)]));
+  for (const record of extraOrderCustomers) {
+    customerDefaultsById.set(record.id, mapCustomerRecord(record));
+  }
   const enquiryIdsWithoutDraft = enquiries.filter((record) => {
     const directQuotations = record.fields.Quotations || [];
     const fallbackQuotations = quotationIdsByEnquiryId.get(record.id) || [];
@@ -688,17 +754,9 @@ export async function getOperationsSnapshot() {
     orders: latestFirst(orders).map((record) => ({
       id: record.id,
       orderNumber: record.fields["Order Number"] || record.id,
-      linkedCustomerId:
-        record.fields["Linked Customer"]?.[0] ||
-        (Array.isArray(record.fields.Customer) ? record.fields.Customer[0] || "" : String(record.fields.Customer || "")),
-      customerName: customerNameById.get(
-        record.fields["Linked Customer"]?.[0] ||
-          (Array.isArray(record.fields.Customer) ? record.fields.Customer[0] || "" : String(record.fields.Customer || ""))
-      ) || "",
-      customerClientId: customerClientIdById.get(
-        record.fields["Linked Customer"]?.[0] ||
-          (Array.isArray(record.fields.Customer) ? record.fields.Customer[0] || "" : String(record.fields.Customer || ""))
-      ) || "",
+      linkedCustomerId: orderCustomerKey(record),
+      customerName: customerNameById.get(orderCustomerKey(record)) || "",
+      customerClientId: customerClientIdById.get(orderCustomerKey(record)) || "",
       linkedQuotationId:
         record.fields["Linked Quotation"]?.[0] ||
         (Array.isArray(record.fields.Quotation) ? record.fields.Quotation[0] || "" : String(record.fields.Quotation || "")),
