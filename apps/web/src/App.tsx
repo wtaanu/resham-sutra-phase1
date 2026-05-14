@@ -367,6 +367,11 @@ type PaginatedTableProps<T> = {
   headerAction?: ReactNode;
   rows: T[];
   columns: ReactNode;
+  sortableColumns?: Array<{
+    key: string;
+    label: string;
+    getValue: (row: T) => string | number | undefined | null;
+  }>;
   renderRow: (row: T) => ReactNode;
   emptyTitle: string;
   emptyBody: string;
@@ -827,6 +832,7 @@ function PaginatedTable<T>({
   subtitle,
   rows,
   columns,
+  sortableColumns,
   renderRow,
   emptyTitle,
   emptyBody,
@@ -835,14 +841,70 @@ function PaginatedTable<T>({
   pagination
 }: PaginatedTableProps<T>) {
   const [page, setPage] = useState(1);
+  const [sortState, setSortState] = useState<{ key: string; direction: "asc" | "desc" } | null>(null);
   const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
 
   useEffect(() => {
     setPage(1);
   }, [rows.length, title]);
 
+  const sortedRows = useMemo(() => {
+    if (!sortState || !sortableColumns?.length) {
+      return rows;
+    }
+
+    const column = sortableColumns.find((item) => item.key === sortState.key);
+    if (!column) {
+      return rows;
+    }
+
+    return [...rows].sort((left, right) => {
+      const leftValue = column.getValue(left);
+      const rightValue = column.getValue(right);
+      const leftNumber = typeof leftValue === "number" ? leftValue : Number.NaN;
+      const rightNumber = typeof rightValue === "number" ? rightValue : Number.NaN;
+      const direction = sortState.direction === "asc" ? 1 : -1;
+
+      if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber)) {
+        return (leftNumber - rightNumber) * direction;
+      }
+
+      return String(leftValue || "").localeCompare(String(rightValue || ""), undefined, {
+        numeric: true,
+        sensitivity: "base"
+      }) * direction;
+    });
+  }, [rows, sortState, sortableColumns]);
+
   const start = (page - 1) * pageSize;
-  const pageRows = pagination ? rows : rows.slice(start, start + pageSize);
+  const pageRows = pagination ? sortedRows : sortedRows.slice(start, start + pageSize);
+  const renderedColumns = sortableColumns?.length ? (
+    <>
+      {sortableColumns.map((column) => {
+        const active = sortState?.key === column.key;
+        return (
+          <th key={column.key}>
+            <button
+              className="column-sort-button"
+              type="button"
+              onClick={() =>
+                setSortState((current) =>
+                  current?.key === column.key
+                    ? { key: column.key, direction: current.direction === "asc" ? "desc" : "asc" }
+                    : { key: column.key, direction: "asc" }
+                )
+              }
+            >
+              {column.label}
+              <span>{active ? (sortState.direction === "asc" ? "↑" : "↓") : "↕"}</span>
+            </button>
+          </th>
+        );
+      })}
+    </>
+  ) : (
+    columns
+  );
 
   return (
     <section className="panel">
@@ -863,7 +925,7 @@ function PaginatedTable<T>({
           <div className="table-shell">
             <table>
               <thead>
-                <tr>{columns}</tr>
+                <tr>{renderedColumns}</tr>
               </thead>
               <tbody>{pageRows.map(renderRow)}</tbody>
             </table>
@@ -4228,6 +4290,21 @@ function updateLineItemRow(
 
     const totalQuotations = operations.totals?.quotations || operations.quotations.length;
     const sentQuotations = operations.quotations.filter((item) => item.status === "Sent Quote").length;
+    const dashboardMetricTarget = (label: string): ViewKey => {
+      if (label === "Draft Quote") {
+        return "quotationDrafts";
+      }
+      if (label === "Approved Quote") {
+        return "approvedQuotations";
+      }
+      if (label === "Sent Quote") {
+        return "sentQuotations";
+      }
+      if (label === "Orders") {
+        return "orders";
+      }
+      return "enquiries";
+    };
 
     return (
       <>
@@ -4243,7 +4320,7 @@ function updateLineItemRow(
                 Create Enquiry
               </button>
               <button type="button" onClick={() => openLineItemEntry()}>
-                Create Line Items
+                Create Quotations
               </button>
               <a href={operations.actions.productsFormUrl || "#"} target="_blank" rel="noreferrer">
                 Create Products
@@ -4269,10 +4346,15 @@ function updateLineItemRow(
 
         <section className="metric-grid">
           {dashboardMetrics.map((metric) => (
-            <article className="metric-card" key={metric.label}>
+            <button
+              className="metric-card metric-card-clickable"
+              type="button"
+              key={metric.label}
+              onClick={() => setActiveView(dashboardMetricTarget(metric.label))}
+            >
               <span>{metric.label}</span>
               <strong>{metric.value}</strong>
-            </article>
+            </button>
           ))}
         </section>
 
@@ -4438,8 +4520,20 @@ function updateLineItemRow(
           </div>
         }
         rows={filteredEnquiries}
+        sortableColumns={[
+          { key: "date", label: "Enquiry Date", getValue: (enquiry) => Date.parse(enquiry.loggedDateTime || "") || 0 },
+          { key: "enquiry", label: "Enquiry", getValue: (enquiry) => enquiry.enquiryId },
+          { key: "lead", label: "Lead", getValue: (enquiry) => enquiry.leadName },
+          { key: "status", label: "Status", getValue: (enquiry) => enquiry.parserStatus },
+          { key: "customer", label: "Customer", getValue: (enquiry) => customerLookup.get(enquiry.linkedCustomerId)?.customerName || "" },
+          { key: "quotation", label: "Quotation", getValue: (enquiry) => enquiry.quotations[0] || "" },
+          { key: "requirement", label: "Requirement", getValue: (enquiry) => enquiry.requirementSummary },
+          { key: "folder", label: "Folder", getValue: (enquiry) => enquiry.driveFolderUrl },
+          { key: "action", label: "Action", getValue: (enquiry) => enquiry.parserStatus }
+        ]}
         columns={
           <>
+            <th>Enquiry Date</th>
             <th>Enquiry</th>
             <th>Lead</th>
             <th>Status</th>
@@ -4474,11 +4568,9 @@ function updateLineItemRow(
 
           return (
             <tr key={enquiry.id}>
+              <td>{enquiry.loggedDateTime ? formatDateTime(enquiry.loggedDateTime) : "-"}</td>
               <td>
                 <strong>{enquiry.enquiryId}</strong>
-                {enquiry.loggedDateTime ? (
-                  <span className="table-submeta">Logged {formatDateTime(enquiry.loggedDateTime)}</span>
-                ) : null}
               </td>
               <td>
                 <strong>{enquiry.leadName || "Unnamed lead"}</strong>
@@ -4634,6 +4726,15 @@ function updateLineItemRow(
           </>
         }
         rows={customerRows}
+        sortableColumns={[
+          { key: "clientId", label: "Client ID", getValue: (customer) => customer.clientId },
+          { key: "customer", label: "Customer", getValue: (customer) => customer.customerName },
+          { key: "company", label: "Company", getValue: (customer) => customer.company },
+          { key: "contact", label: "Contact", getValue: (customer) => customer.phone },
+          { key: "type", label: "Type", getValue: (customer) => customer.customerType },
+          { key: "drive", label: "Drive", getValue: (customer) => customer.driveFolderUrl },
+          { key: "action", label: "Action", getValue: (customer) => customer.customerName }
+        ]}
         columns={
           <>
             <th>Client ID</th>
@@ -4994,6 +5095,17 @@ function updateLineItemRow(
               : undefined
           }
           rows={filteredQuotations}
+          sortableColumns={[
+            { key: "quotation", label: "Quotation", getValue: (quotation) => quotation.quotationNumber },
+            { key: "customer", label: "Customer", getValue: (quotation) => quotation.customerName || customerLookup.get(quotation.linkedCustomerId)?.customerName || "" },
+            { key: "status", label: "Status", getValue: (quotation) => quotation.status },
+            { key: "items", label: "Items", getValue: (quotation) => quotation.lineItemCount || 0 },
+            ...(statuses.length === 1 && statuses[0] === "Approved Quote"
+              ? []
+              : [{ key: "draft", label: "Draft", getValue: (quotation: QuotationRecord) => quotation.draftCreatedTime || quotation.draftFileUrl || "" }]),
+            { key: "finalPdf", label: "Final PDF", getValue: (quotation) => quotation.finalPdfGeneratedAt || quotation.finalPdfUrl || "" },
+            { key: "actions", label: "Actions", getValue: (quotation) => quotation.status }
+          ]}
           columns={
             <>
               <th>Quotation</th>
@@ -5128,6 +5240,16 @@ function updateLineItemRow(
         eyebrow="Orders"
         title="Converted business once quotations are accepted"
         rows={operations.orders}
+        sortableColumns={[
+          { key: "order", label: "Order", getValue: (order) => order.orderNumber },
+          { key: "customer", label: "Customer", getValue: (order) => resolveOrderCustomerLabel(order) },
+          { key: "quotation", label: "Quotation", getValue: (order) => quotationLookup.get(order.linkedQuotationId)?.quotationNumber || "" },
+          { key: "status", label: "Status", getValue: (order) => order.orderStatus || "" },
+          { key: "date", label: "Date", getValue: (order) => Date.parse(order.orderDate || "") || 0 },
+          { key: "total", label: "Total", getValue: (order) => order.totalAmount || order.orderValue || 0 },
+          { key: "payment", label: "Payment", getValue: (order) => order.paymentStatus || "" },
+          { key: "action", label: "Action", getValue: (order) => order.orderNumber }
+        ]}
         columns={
           <>
             <th>Order</th>
@@ -5172,6 +5294,16 @@ function updateLineItemRow(
         eyebrow="Products"
         title="Catalog and pricing references feeding quotation line item selection"
         rows={operations.products}
+        sortableColumns={[
+          { key: "productKey", label: "Product Key", getValue: (product) => product.productKey },
+          { key: "model", label: "Model", getValue: (product) => product.model },
+          { key: "name", label: "Name", getValue: (product) => product.name },
+          { key: "narration", label: "Narration", getValue: (product) => product.narration },
+          { key: "bulkSale", label: "Bulk Sale", getValue: (product) => product.bulkSalePrice || 0 },
+          { key: "mrp", label: "MRP", getValue: (product) => product.mrp || 0 },
+          { key: "source", label: "Source", getValue: (product) => product.sourceSheet },
+          { key: "documents", label: "Documents", getValue: (product) => product.documents.length }
+        ]}
         columns={
           <>
             <th>Product Key</th>

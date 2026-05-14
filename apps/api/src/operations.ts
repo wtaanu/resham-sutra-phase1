@@ -448,7 +448,8 @@ export async function getOperationsCustomersPage(input?: {
     ],
     filterByFormula,
     offset: input?.offset,
-    pageSize: input?.pageSize ?? 25
+    pageSize: input?.pageSize ?? 25,
+    sort: [{ field: "Client ID", direction: "desc" }]
   });
 
   return {
@@ -470,7 +471,8 @@ export async function getOperationsEnquiriesPage(input?: { includeTotal?: boolea
     fields: ENQUIRY_PAGE_FIELDS,
     filterByFormula,
     offset: input?.offset,
-    pageSize: input?.pageSize ?? 25
+    pageSize: input?.pageSize ?? 25,
+    sort: [{ field: "Logged Date Time", direction: "desc" }]
   });
 
   return {
@@ -541,10 +543,12 @@ export async function getOperationsSnapshot() {
   const [enquiries, customers, quotations, quotationLineItems, orders, products] = await Promise.all([
     safeList<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
       fields: ENQUIRY_PAGE_FIELDS,
-      maxRecords: OPERATIONS_SNAPSHOT_LIMIT
+      maxRecords: OPERATIONS_SNAPSHOT_LIMIT,
+      sort: [{ field: "Logged Date Time", direction: "desc" }]
     }),
     safeList<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, {
-      maxRecords: OPERATIONS_SNAPSHOT_LIMIT
+      maxRecords: OPERATIONS_SNAPSHOT_LIMIT,
+      sort: [{ field: "Client ID", direction: "desc" }]
     }),
     safeList<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
       fields: QUOTATION_PAGE_FIELDS,
@@ -553,7 +557,8 @@ export async function getOperationsSnapshot() {
     }),
     Promise.resolve([] as Array<AirtableRecord<QuotationLineItemFields>>),
     safeList<OrderFields>(env.AIRTABLE_ORDERS_TABLE, {
-      maxRecords: OPERATIONS_SNAPSHOT_LIMIT
+      maxRecords: OPERATIONS_SNAPSHOT_LIMIT,
+      sort: [{ field: "Order Number", direction: "desc" }]
     }),
     safeList<ProductFields>(env.AIRTABLE_PRODUCTS_TABLE, {
       maxRecords: OPERATIONS_SNAPSHOT_LIMIT

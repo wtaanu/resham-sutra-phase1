@@ -781,6 +781,17 @@ a:hover {
   padding: 12px;
   background: var(--panel-soft);
   border-color: #bfd0ea;
+  text-align: left;
+}
+
+.metric-card-clickable {
+  width: 100%;
+  font: inherit;
+  cursor: pointer;
+}
+
+.metric-card-clickable:hover {
+  border-color: var(--accent);
 }
 
 .metric-card span {
@@ -1091,6 +1102,25 @@ th {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   font-size: 0.64rem;
+}
+
+.column-sort-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+
+.column-sort-button span {
+  font-size: 0.68rem;
+  color: var(--accent);
 }
 
 td strong,
