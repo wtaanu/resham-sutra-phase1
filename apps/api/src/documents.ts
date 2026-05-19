@@ -3,7 +3,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ExcelJS from "exceljs";
 import {
+  downloadDriveFile,
   ensureDefaultTemplateFolder,
+  exportDriveFile,
   findDriveFileInFolder,
   isDriveConfigured,
   uploadFileToFolder
@@ -237,7 +239,7 @@ async function writeXlsxDraft(payload: DocumentPayload, outputDir: string) {
   const worksheet =
     payload.templateCode === "myanmar-proforma"
       ? workbook.getWorksheet("MYANMAR")
-      : workbook.getWorksheet("jha (2)");
+      : workbook.getWorksheet("jha (2)") || workbook.worksheets[0];
 
   if (!worksheet) {
     throw new Error(`Template sheet not found for template code: ${payload.templateCode}`);
@@ -255,15 +257,38 @@ async function writeXlsxDraft(payload: DocumentPayload, outputDir: string) {
 }
 
 async function resolveTemplateBuffer(localTemplatePath: string) {
-  return readFile(localTemplatePath);
-}
-
-export async function ensureDefaultTemplateReady() {
   if (!isDriveConfigured()) {
-    throw new Error("Google Drive is not configured");
+    return readFile(localTemplatePath);
   }
 
-  const localTemplatePath = path.resolve(env.QUOTATION_TEMPLATE_DIR);
+  try {
+    const templateFile = await ensureDriveDefaultTemplateFile(localTemplatePath);
+    if (!templateFile) {
+      throw new Error("Drive default quotation template was not found.");
+    }
+
+    if (templateFile.mimeType === "application/vnd.google-apps.spreadsheet") {
+      return await exportDriveFile(
+        templateFile.id,
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      );
+    }
+
+    return await downloadDriveFile(templateFile.id);
+  } catch (error) {
+    console.error("[documents] failed to load Drive default quotation template", {
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : ""
+    });
+    throw error;
+  }
+}
+
+async function ensureDriveDefaultTemplateFile(localTemplatePath: string) {
+  if (!isDriveConfigured()) {
+    return null;
+  }
+
   const templateFolder = await ensureDefaultTemplateFolder();
   const templateFileName =
     env.GOOGLE_DRIVE_DEFAULT_TEMPLATE_FILE_NAME?.trim() || path.basename(localTemplatePath);
@@ -275,11 +300,26 @@ export async function ensureDefaultTemplateReady() {
     (templateBaseName !== templateFileName
       ? await findDriveFileInFolder(templateBaseName, templateFolder.folderId)
       : null);
-  await uploadFileToFolder(localTemplatePath, templateFileName, templateFolder.folderId, {
-    convertToGoogleSheet: true,
-    replaceExisting: true
-  });
-  const templateFile = await findTemplateFile();
+  let templateFile = await findTemplateFile();
+
+  if (!templateFile) {
+    await uploadFileToFolder(localTemplatePath, templateFileName, templateFolder.folderId, {
+      convertToGoogleSheet: true
+    });
+    templateFile = await findTemplateFile();
+  }
+
+  return templateFile;
+}
+
+export async function ensureDefaultTemplateReady() {
+  if (!isDriveConfigured()) {
+    throw new Error("Google Drive is not configured");
+  }
+
+  const localTemplatePath = path.resolve(env.QUOTATION_TEMPLATE_DIR);
+  const templateFolder = await ensureDefaultTemplateFolder();
+  const templateFile = await ensureDriveDefaultTemplateFile(localTemplatePath);
 
   return {
     ...templateFolder,
