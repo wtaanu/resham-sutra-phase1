@@ -2580,6 +2580,34 @@ function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
     );
   }, [productSearchTerm, sortedProductsForSelection]);
 
+  function productOptionLabel(product: ProductRecord | undefined, fallback = "Selected product") {
+    return product?.displayName || product?.model || product?.productKey || fallback;
+  }
+
+  function renderProductOptions(selectedProductId = "") {
+    const hasSelectedProduct = selectedProductId
+      ? sortedProductsForSelection.some((product) => product.id === selectedProductId)
+      : true;
+    const selectedProduct = selectedProductId
+      ? operations?.products.find((product) => product.id === selectedProductId)
+      : undefined;
+
+    return (
+      <>
+        {selectedProductId && !hasSelectedProduct ? (
+          <option value={selectedProductId}>
+            {productOptionLabel(selectedProduct, "Selected product")}
+          </option>
+        ) : null}
+        {sortedProductsForSelection.map((productOption) => (
+          <option key={productOption.id} value={productOption.id}>
+            {productOptionLabel(productOption)}
+          </option>
+        ))}
+      </>
+    );
+  }
+
   const enquiryStatusOptions = useMemo(() => {
     const uniqueStatuses = Array.from(
       new Set([
@@ -3176,7 +3204,11 @@ function updateLineItemRow(
           field === "rate" || field === "transport" || field === "gstPercent"
             ? normalizeDecimalInput(value)
             : value;
-        const nextRow = { ...row, [field]: nextValue };
+        const nextRow = {
+          ...row,
+          [field]: nextValue,
+          productId: field === "productId" ? nextValue : row.productId
+        };
 
         const product = operations?.products.find((item) => item.id === nextRow.productId);
         if (field === "productId" && product) {
@@ -3894,11 +3926,7 @@ function updateLineItemRow(
                 <span>Product</span>
                 <select value={selectedProductId} onChange={(event) => setSelectedProductId(event.target.value)}>
                   <option value="">Select product</option>
-                  {sortedProductsForSelection.map((product) => (
-                    <option key={product.id} value={product.id}>
-                      {product.displayName || product.model || product.productKey}
-                    </option>
-                  ))}
+                  {renderProductOptions(selectedProductId)}
                 </select>
               </label>
               <label className="form-span-2">
@@ -4468,11 +4496,7 @@ function updateLineItemRow(
                         onChange={(event) => updateLineItemRow(row.id, "productId", event.target.value)}
                       >
                         <option value="">Select product</option>
-                        {sortedProductsForSelection.map((productOption) => (
-                          <option key={productOption.id} value={productOption.id}>
-                            {productOption.displayName || productOption.model || productOption.productKey}
-                          </option>
-                        ))}
+                        {renderProductOptions(row.productId)}
                       </select>
                     )}
                   </label>
@@ -5458,16 +5482,6 @@ function updateLineItemRow(
               </td>
               <td>
                 <strong>{resolveQuotationCustomer(quotation)?.customerName || quotation.customerName || "Not linked"}</strong>
-                {(resolveQuotationCustomer(quotation)?.driveFolderUrl || quotation.driveFolderUrl) ? (
-                  <a
-                    className="table-submeta"
-                    href={resolveQuotationCustomer(quotation)?.driveFolderUrl || quotation.driveFolderUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Open client folder
-                  </a>
-                ) : null}
               </td>
               <td>
                 <span className={`status-chip ${statusTone(quotation.status)}`}>
