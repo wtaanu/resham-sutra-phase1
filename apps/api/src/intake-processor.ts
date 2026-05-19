@@ -565,6 +565,37 @@ function findMatchingCustomer(
   return null;
 }
 
+function firstLinkedValue(value: unknown) {
+  if (Array.isArray(value)) {
+    return String(value[0] || "").trim();
+  }
+
+  return String(value || "").trim();
+}
+
+function isAirtableRecordId(value: string) {
+  return /^rec[a-zA-Z0-9]{14,}$/.test(value);
+}
+
+function normalizeLookupValue(value: unknown) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function findCustomerByReference(reference: string, customers: AirtableRecord<CustomerFields>[]) {
+  const normalizedReference = normalizeLookupValue(reference);
+  if (!normalizedReference) {
+    return null;
+  }
+
+  return (
+    customers.find((customer) => normalizeLookupValue(customer.id) === normalizedReference) ||
+    customers.find((customer) => normalizeLookupValue(customer.fields["Client ID"]) === normalizedReference) ||
+    customers.find((customer) => normalizeLookupValue(customer.fields["Customer Name"]) === normalizedReference) ||
+    customers.find((customer) => normalizeLookupValue(customer.fields.Company) === normalizedReference) ||
+    null
+  );
+}
+
 async function listCustomerMatchRecords() {
   return listRecords<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, {
     fields: [
@@ -584,9 +615,16 @@ async function listCustomerMatchRecords() {
 
 async function ensureCustomer(enquiry: AirtableRecord<EnquiryFields>) {
   return withCustomerLocks(customerLockKeys(enquiry), async () => {
-    const linkedCustomerId = enquiry.fields["Linked Customer"]?.[0] || "";
-    if (linkedCustomerId) {
-      const linkedCustomer = await getCustomerById(linkedCustomerId);
+    const linkedCustomerReference = firstLinkedValue(enquiry.fields["Linked Customer"]);
+    const customers = await listCustomerMatchRecords();
+    const linkedCustomer =
+      linkedCustomerReference && isAirtableRecordId(linkedCustomerReference)
+        ? await getCustomerById(linkedCustomerReference).catch(() =>
+            findCustomerByReference(linkedCustomerReference, customers)
+          )
+        : findCustomerByReference(linkedCustomerReference, customers);
+
+    if (linkedCustomer) {
       const enquiryPhone = normalizePhone(enquiry.fields.Phone);
       const enquiryEmail = normalizeEmail(enquiry.fields.Email);
       const linkedPhone = normalizePhone(linkedCustomer.fields.Phone || linkedCustomer.fields.WhatsApp);
@@ -641,8 +679,6 @@ async function ensureCustomer(enquiry: AirtableRecord<EnquiryFields>) {
         });
       }
     }
-
-    const customers = await listCustomerMatchRecords();
 
     const matchedCustomer = findMatchingCustomer(enquiry, customers);
     if (matchedCustomer) {
@@ -857,6 +893,59 @@ async function findExistingQuotation(enquiryId: string) {
   });
 
   return quotations[0] ?? null;
+}
+
+async function findEnquiryForQuotation(quotation: AirtableRecord<QuotationFields>) {
+  const linkedEnquiryId = firstLinkedValue(quotation.fields["Linked Enquiry"]);
+  if (linkedEnquiryId && isAirtableRecordId(linkedEnquiryId)) {
+    return getRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, linkedEnquiryId);
+  }
+
+  const values = [
+    quotation.id,
+    quotation.fields["Quotation Number"] || "",
+    quotation.fields["Reference Number"] || ""
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+
+  if (!values.length) {
+    return null;
+  }
+
+  const clauses = values.flatMap((value) => {
+    const escaped = value.replace(/'/g, "\\'");
+    return [
+      `FIND('${escaped}', ARRAYJOIN({Quotations}))`,
+      `{Enquiry ID}='${escaped}'`
+    ];
+  });
+  const enquiries = await listRecords<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
+    fields: [
+      "Enquiry ID",
+      "Logged Date Time",
+      "Lead Name",
+      "Company",
+      "Phone",
+      "Email",
+      "Address",
+      "Destination Address",
+      "State",
+      "City",
+      "Destination State",
+      "Destination City",
+      "Pincode",
+      "Destination Pincode",
+      "Parser Status",
+      "Linked Customer",
+      "Quotations",
+      "Receiver WhatsApp Number"
+    ],
+    filterByFormula: clauses.length === 1 ? clauses[0] : `OR(${clauses.join(",")})`,
+    maxRecords: 1
+  });
+
+  return enquiries[0] ?? null;
 }
 
 async function syncEnquiryQuotationLinks(
@@ -1085,17 +1174,7 @@ async function resolveQuotationSendDocument(
 
 async function loadQuotationDeliveryContext(quotationId: string) {
   const quotation = await getQuotationById(quotationId);
-  const customerId = quotation.fields["Linked Customer"]?.[0];
-  const enquiryId = quotation.fields["Linked Enquiry"]?.[0];
-
-  if (!customerId || !enquiryId) {
-    throw new Error("Quotation is missing linked customer or enquiry.");
-  }
-
-  const [customer, enquiry] = await Promise.all([
-    getCustomerById(customerId),
-    getRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, enquiryId)
-  ]);
+  const { customer, enquiry } = await resolveQuotationCustomerAndEnquiry(quotation);
 
   return {
     quotation,
@@ -1309,29 +1388,25 @@ async function createDraftForReadyEnquiry(
 }
 
 async function resolveQuotationCustomerAndEnquiry(quotation: AirtableRecord<QuotationFields>) {
-  const enquiryId = quotation.fields["Linked Enquiry"]?.[0] || "";
-  if (!enquiryId) {
-    throw new Error("Quotation is missing linked enquiry.");
+  const enquiry = await findEnquiryForQuotation(quotation);
+  if (!enquiry) {
+    throw new Error("Quotation is missing linked enquiry and no matching enquiry could be found.");
   }
 
-  const enquiry = await getRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, enquiryId);
-  const customerId = quotation.fields["Linked Customer"]?.[0] || enquiry.fields["Linked Customer"]?.[0] || "";
-  if (!customerId) {
-    throw new Error("Quotation/enquiry is missing linked customer.");
-  }
-
-  const customer = await getCustomerById(customerId);
-  const quotationCustomerId = quotation.fields["Linked Customer"]?.[0] || "";
-  if (quotationCustomerId !== customer.id) {
+  const customer = await ensureCustomer(enquiry);
+  const quotationCustomerId = firstLinkedValue(quotation.fields["Linked Customer"]);
+  const quotationEnquiryId = firstLinkedValue(quotation.fields["Linked Enquiry"]);
+  if (quotationCustomerId !== customer.id || quotationEnquiryId !== enquiry.id) {
     await updateRecord<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
       id: quotation.id,
       fields: {
+        "Linked Enquiry": linkedRecordIds(enquiry.id),
         "Linked Customer": linkedRecordIds(customer.id)
       }
     }).catch((error) => {
       console.warn("[quotation-link] failed to backfill linked customer", {
         quotationId: quotation.id,
-        enquiryId,
+        enquiryId: enquiry.id,
         customerId: customer.id,
         message: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined
