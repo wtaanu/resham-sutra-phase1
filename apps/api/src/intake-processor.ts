@@ -1308,17 +1308,43 @@ async function createDraftForReadyEnquiry(
   };
 }
 
-export async function refreshDraftForQuotation(quotationId: string) {
-  const quotation = await getQuotationById(quotationId);
-  const customerId = quotation.fields["Linked Customer"]?.[0];
-  const enquiryId = quotation.fields["Linked Enquiry"]?.[0];
+async function resolveQuotationCustomerAndEnquiry(quotation: AirtableRecord<QuotationFields>) {
+  const enquiryId = quotation.fields["Linked Enquiry"]?.[0] || "";
+  if (!enquiryId) {
+    throw new Error("Quotation is missing linked enquiry.");
+  }
 
-  if (!customerId || !enquiryId) {
-    throw new Error("Quotation is missing linked customer or enquiry.");
+  const enquiry = await getRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, enquiryId);
+  const customerId = quotation.fields["Linked Customer"]?.[0] || enquiry.fields["Linked Customer"]?.[0] || "";
+  if (!customerId) {
+    throw new Error("Quotation/enquiry is missing linked customer.");
   }
 
   const customer = await getCustomerById(customerId);
-  const enquiry = await getRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, enquiryId);
+  const quotationCustomerId = quotation.fields["Linked Customer"]?.[0] || "";
+  if (quotationCustomerId !== customer.id) {
+    await updateRecord<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
+      id: quotation.id,
+      fields: {
+        "Linked Customer": linkedRecordIds(customer.id)
+      }
+    }).catch((error) => {
+      console.warn("[quotation-link] failed to backfill linked customer", {
+        quotationId: quotation.id,
+        enquiryId,
+        customerId: customer.id,
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined
+      });
+    });
+  }
+
+  return { customer, enquiry };
+}
+
+export async function refreshDraftForQuotation(quotationId: string) {
+  const quotation = await getQuotationById(quotationId);
+  const { customer, enquiry } = await resolveQuotationCustomerAndEnquiry(quotation);
   assertQuotationFlowAllowedForEnquiry(enquiry);
   const lineItems = getLineItemsForQuotation(quotation.id, await listAllLineItems());
 
@@ -1331,15 +1357,7 @@ export async function refreshDraftForQuotation(quotationId: string) {
 
 export async function generateFinalPdfForQuotation(quotationId: string) {
   const quotation = await getQuotationById(quotationId);
-  const customerId = quotation.fields["Linked Customer"]?.[0];
-  const enquiryId = quotation.fields["Linked Enquiry"]?.[0];
-
-  if (!customerId || !enquiryId) {
-    throw new Error("Quotation is missing linked customer or enquiry.");
-  }
-
-  const customer = await getCustomerById(customerId);
-  const enquiry = await getRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, enquiryId);
+  const { customer, enquiry } = await resolveQuotationCustomerAndEnquiry(quotation);
   assertQuotationFlowAllowedForEnquiry(enquiry);
   const lineItems = getLineItemsForQuotation(quotation.id, await listAllLineItems());
 
