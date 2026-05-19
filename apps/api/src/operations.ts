@@ -347,7 +347,14 @@ async function countRecords(tableName: string, fieldName: string, filterByFormul
   ).length;
 }
 
-function mapEnquiryRecord(record: AirtableRecord<EnquiryFields>) {
+function mapEnquiryRecord(
+  record: AirtableRecord<EnquiryFields>,
+  customerNameById = new Map<string, string>(),
+  customerDefaultsById = new Map<string, ReturnType<typeof mapCustomerRecord>>()
+) {
+  const linkedCustomerId = record.fields["Linked Customer"]?.[0] || "";
+  const customerDefaults = customerDefaultsById.get(linkedCustomerId);
+
   return {
     id: record.id,
     enquiryId: record.fields["Enquiry ID"] || record.id,
@@ -365,10 +372,11 @@ function mapEnquiryRecord(record: AirtableRecord<EnquiryFields>) {
     destinationCity: record.fields["Destination City"] || "",
     destinationPincode: record.fields["Destination Pincode"] || "",
     parserStatus: statusValue(record.fields),
-    linkedCustomerId: record.fields["Linked Customer"]?.[0] || "",
+    linkedCustomerId,
+    customerName: customerNameById.get(linkedCustomerId) || "",
     quotations: record.fields.Quotations || [],
     mappedProductDocuments: [],
-    driveFolderUrl: "",
+    driveFolderUrl: customerDefaults?.driveFolderUrl || "",
     requirementSummary: record.fields["Requirement Summary"] || "",
     potentialProduct: record.fields["Potential Product"] || "",
     receiverWhatsappNumber: record.fields["Receiver WhatsApp Number"] || ""
@@ -484,9 +492,41 @@ export async function getOperationsEnquiriesPage(input?: { includeTotal?: boolea
     pageSize: input?.pageSize ?? 25,
     sort: [{ field: "Logged Date Time", direction: "desc" }]
   });
+  const customerIds = Array.from(new Set(page.records.flatMap((record) => record.fields["Linked Customer"] || [])));
+  const linkedCustomers = customerIds.length
+    ? await listRecords<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, {
+        fields: [
+          "Client ID",
+          "Customer Name",
+          "Company",
+          "Phone",
+          "Email",
+          "Address",
+          "State",
+          "City",
+          "Pincode",
+          "Destination Address",
+          "Destination State",
+          "Destination City",
+          "Destination Pincode",
+          "Customer Type",
+          "Drive Folder URL"
+        ],
+        filterByFormula: recordIdFormula(customerIds),
+        maxRecords: customerIds.length
+      })
+    : [];
+  const customerNameById = new Map<string, string>();
+  const customerClientIdById = new Map<string, string>();
+  for (const record of linkedCustomers) {
+    addCustomerLookupRecord(record, customerNameById, customerClientIdById);
+  }
+  const customerDefaultsById = new Map(linkedCustomers.map((record) => [record.id, mapCustomerRecord(record)]));
 
   return {
-    enquiries: latestFirst(page.records).map(mapEnquiryRecord),
+    enquiries: latestFirst(page.records).map((record) =>
+      mapEnquiryRecord(record, customerNameById, customerDefaultsById)
+    ),
     nextOffset: page.offset,
     pageSize: page.pageSize,
     totalCount: await totalCountPromise
@@ -838,9 +878,10 @@ export async function getOperationsSnapshot() {
         destinationPincode: record.fields["Destination Pincode"] || "",
         parserStatus: statusValue(record.fields),
         linkedCustomerId: record.fields["Linked Customer"]?.[0] || "",
+        customerName: customerNameById.get(record.fields["Linked Customer"]?.[0] || "") || "",
         quotations: mergedQuotations,
         mappedProductDocuments,
-        driveFolderUrl: "",
+        driveFolderUrl: customerDefaultsById.get(record.fields["Linked Customer"]?.[0] || "")?.driveFolderUrl || "",
         requirementSummary: record.fields["Requirement Summary"] || "",
         potentialProduct: record.fields["Potential Product"] || "",
         receiverWhatsappNumber: record.fields["Receiver WhatsApp Number"] || ""

@@ -478,10 +478,23 @@ function buildDuplicateCheckFieldsFrom(value: string) {
     .filter(Boolean);
 }
 
+function normalizeBiginDealStageValue(value: string) {
+  const trimmed = String(value || "").trim();
+  const normalized = trimmed.toLowerCase();
+  const stageAliases: Record<string, string> = {
+    qualification: "Enquiry",
+    "needs analysis": "Quoted",
+    "proposal/price quote": "Negotiation",
+    "negotiation/review": "Finalized/Await PO"
+  };
+
+  return stageAliases[normalized] || trimmed;
+}
+
 function deriveBiginDealStage(parserStatus: string) {
   const normalized = String(parserStatus || "").trim().toLowerCase();
   if (normalized === "approved quote" || normalized === "sent quote" || normalized === "ordered") {
-    return env.ZOHO_BIGIN_DEAL_STAGE_QUOTED_VALUE;
+    return normalizeBiginDealStageValue(env.ZOHO_BIGIN_DEAL_STAGE_QUOTED_VALUE);
   }
   if (
     normalized === "draft quote" ||
@@ -489,13 +502,13 @@ function deriveBiginDealStage(parserStatus: string) {
     normalized === "xlsx created" ||
     normalized === "draft created"
   ) {
-    return env.ZOHO_BIGIN_DEAL_STAGE_TO_QUOTE_VALUE;
+    return normalizeBiginDealStageValue(env.ZOHO_BIGIN_DEAL_STAGE_TO_QUOTE_VALUE);
   }
-  return env.ZOHO_BIGIN_DEAL_STAGE_ENQUIRY_VALUE;
+  return normalizeBiginDealStageValue(env.ZOHO_BIGIN_DEAL_STAGE_ENQUIRY_VALUE);
 }
 
 function shouldAttachQuotationRef(parserStatus: string) {
-  return deriveBiginDealStage(parserStatus) === env.ZOHO_BIGIN_DEAL_STAGE_QUOTED_VALUE;
+  return deriveBiginDealStage(parserStatus) === normalizeBiginDealStageValue(env.ZOHO_BIGIN_DEAL_STAGE_QUOTED_VALUE);
 }
 
 function buildBiginDealName(input: BiginEnquiryPayload) {

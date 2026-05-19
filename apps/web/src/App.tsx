@@ -43,6 +43,7 @@ type EnquiryRecord = {
   destinationPincode: string;
   parserStatus: string;
   linkedCustomerId: string;
+  customerName?: string;
   quotations: string[];
   mappedProductDocuments: ProductDocument[];
   driveFolderUrl: string;
@@ -4861,7 +4862,7 @@ function updateLineItemRow(
           { key: "enquiry", label: "Enquiry", getValue: (enquiry) => enquiry.enquiryId },
           { key: "lead", label: "Lead", getValue: (enquiry) => enquiry.leadName },
           { key: "status", label: "Status", getValue: (enquiry) => enquiry.parserStatus },
-          { key: "customer", label: "Customer", getValue: (enquiry) => customerLookup.get(enquiry.linkedCustomerId)?.customerName || "" },
+          { key: "customer", label: "Customer", getValue: (enquiry) => customerLookup.get(enquiry.linkedCustomerId)?.customerName || enquiry.customerName || "" },
           { key: "quotation", label: "Quotation", getValue: (enquiry) => enquiry.quotations[0] || "" },
           { key: "requirement", label: "Requirement", getValue: (enquiry) => enquiry.requirementSummary },
           { key: "folder", label: "Folder", getValue: (enquiry) => enquiry.driveFolderUrl },
@@ -4898,6 +4899,7 @@ function updateLineItemRow(
         }}
         renderRow={(enquiry) => {
           const customer = customerLookup.get(enquiry.linkedCustomerId);
+          const customerName = customer?.customerName || enquiry.customerName || "";
           const quotation = enquiry.quotations.length
             ? quotationLookup.get(enquiry.quotations[0])
             : undefined;
@@ -4918,7 +4920,7 @@ function updateLineItemRow(
                   {enquiry.parserStatus || "New"}
                 </span>
               </td>
-              <td>{customer?.customerName || "Not linked yet"}</td>
+              <td>{customerName || "Not linked yet"}</td>
               <td>{quotation?.quotationNumber || "Not created"}</td>
               <td>
                 <strong>{enquiry.requirementSummary || "Product not selected"}</strong>
