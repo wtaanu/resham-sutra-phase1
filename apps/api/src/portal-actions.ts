@@ -1142,6 +1142,31 @@ function safeLinkedValue(recordId: string) {
   return linkedRecordIds(recordId);
 }
 
+function requireAirtableRecordId(value: string, label: string) {
+  if (!isAirtableRecordId(value)) {
+    throw new Error(`${label} must be resolved to an Airtable record ID before saving.`);
+  }
+
+  return value;
+}
+
+async function ensureEnquiryCustomerLink(
+  enquiry: AirtableRecord<EnquiryFields>,
+  customerId: string
+) {
+  const safeCustomerId = requireAirtableRecordId(customerId, "Linked Customer");
+  if (firstLinkedValue(enquiry.fields["Linked Customer"]) === safeCustomerId) {
+    return enquiry;
+  }
+
+  return updateRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
+    id: enquiry.id,
+    fields: {
+      "Linked Customer": linkedRecordIds(safeCustomerId)
+    }
+  });
+}
+
 function airtablePaymentStatus(value: string) {
   if (value === "Pending") {
     return "Pending";
@@ -1663,6 +1688,9 @@ export async function createPortalEnquiry(payload: unknown) {
     createIfMissing: input.source !== "whatsapp"
   });
   const linkedCustomerId = existingCustomer?.id || "";
+  if (input.source !== "whatsapp") {
+    requireAirtableRecordId(linkedCustomerId, "Linked Customer");
+  }
   const parserStatus = normalizeStatusForEnquiry(linkedCustomerId, input.source);
   const destinationAddress = input.destinationAddress || input.address || "";
   const destinationState = input.destinationState || input.state || "";
@@ -1708,7 +1736,7 @@ export async function createPortalEnquiry(payload: unknown) {
     destinationPincodeText
   });
 
-  const created = await createRecordWithUniqueNumber<EnquiryFields, AirtableRecord<EnquiryFields>>({
+  let created = await createRecordWithUniqueNumber<EnquiryFields, AirtableRecord<EnquiryFields>>({
     tableName: env.AIRTABLE_ENQUIRIES_TABLE,
     fieldName: "Enquiry ID",
     prefix: "ENQ",
@@ -1753,6 +1781,9 @@ export async function createPortalEnquiry(payload: unknown) {
       }
     }
   });
+  if (linkedCustomerId) {
+    created = await ensureEnquiryCustomerLink(created, linkedCustomerId);
+  }
 
   if (input.source === "whatsapp") {
     return {
@@ -1804,7 +1835,7 @@ export async function updatePortalEnquiry(enquiryId: string, payload: unknown) {
   if (!existingCustomer) {
     throw new Error("Unable to resolve or create linked customer for enquiry update.");
   }
-  const linkedCustomerId = existingCustomer.id;
+  const linkedCustomerId = requireAirtableRecordId(existingCustomer.id, "Linked Customer");
   const parserStatus =
     existingEnquiry.fields["Parser Status"] || normalizeStatusForEnquiry(linkedCustomerId, input.source);
   const destinationAddress = input.destinationAddress || input.address || "";
@@ -1898,6 +1929,8 @@ export async function updatePortalEnquiry(enquiryId: string, payload: unknown) {
     String(parserStatus || "").trim().toLowerCase()
   );
   const existingQuotationId = updatedEnquiry.fields.Quotations?.[0] || existingEnquiry.fields.Quotations?.[0] || "";
+
+  updatedEnquiry = await ensureEnquiryCustomerLink(updatedEnquiry, linkedCustomerId);
 
   if (!shouldProvisionAfterUpdate) {
     const syncedEnquiry = await syncEnquiryToZohoAndPersist(updatedEnquiry);

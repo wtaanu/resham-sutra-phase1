@@ -3,9 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ExcelJS from "exceljs";
 import {
-  downloadDriveFile,
   ensureDefaultTemplateFolder,
-  exportDriveFile,
   findDriveFileInFolder,
   isDriveConfigured,
   uploadFileToFolder
@@ -257,48 +255,7 @@ async function writeXlsxDraft(payload: DocumentPayload, outputDir: string) {
 }
 
 async function resolveTemplateBuffer(localTemplatePath: string) {
-  const localBuffer = await readFile(localTemplatePath);
-
-  if (!isDriveConfigured()) {
-    return localBuffer;
-  }
-
-  try {
-    const templateFolder = await ensureDefaultTemplateFolder();
-    const templateFileName =
-      env.GOOGLE_DRIVE_DEFAULT_TEMPLATE_FILE_NAME?.trim() || path.basename(localTemplatePath);
-    const templateBaseName = path.extname(templateFileName)
-      ? templateFileName.slice(0, -path.extname(templateFileName).length)
-      : templateFileName;
-    const findTemplateFile = async () =>
-      (await findDriveFileInFolder(templateFileName, templateFolder.folderId)) ||
-      (templateBaseName !== templateFileName
-        ? await findDriveFileInFolder(templateBaseName, templateFolder.folderId)
-        : null);
-    let templateFile = await findTemplateFile();
-
-    if (!templateFile) {
-      await uploadFileToFolder(localTemplatePath, templateFileName, templateFolder.folderId, {
-        convertToGoogleSheet: true
-      });
-      templateFile = await findTemplateFile();
-    }
-
-    if (!templateFile) {
-      return localBuffer;
-    }
-
-    if (templateFile.mimeType === "application/vnd.google-apps.spreadsheet") {
-      return await exportDriveFile(
-        templateFile.id,
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-      );
-    }
-
-    return await downloadDriveFile(templateFile.id);
-  } catch {
-    return localBuffer;
-  }
+  return readFile(localTemplatePath);
 }
 
 export async function ensureDefaultTemplateReady() {
@@ -318,14 +275,11 @@ export async function ensureDefaultTemplateReady() {
     (templateBaseName !== templateFileName
       ? await findDriveFileInFolder(templateBaseName, templateFolder.folderId)
       : null);
-  let templateFile = await findTemplateFile();
-
-  if (!templateFile) {
-    await uploadFileToFolder(localTemplatePath, templateFileName, templateFolder.folderId, {
-      convertToGoogleSheet: true
-    });
-    templateFile = await findTemplateFile();
-  }
+  await uploadFileToFolder(localTemplatePath, templateFileName, templateFolder.folderId, {
+    convertToGoogleSheet: true,
+    replaceExisting: true
+  });
+  const templateFile = await findTemplateFile();
 
   return {
     ...templateFolder,
