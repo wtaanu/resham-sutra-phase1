@@ -1011,7 +1011,8 @@ async function createCustomerFromEnquiryInput(
 
 async function ensureCustomerForEnquiryInput(
   input: z.infer<typeof enquiryPayloadSchema>,
-  existingEnquiry?: AirtableRecord<EnquiryFields>
+  existingEnquiry?: AirtableRecord<EnquiryFields>,
+  options?: { createIfMissing?: boolean }
 ) {
   const reference = input.linkedCustomerId || firstLinkedValue(existingEnquiry?.fields["Linked Customer"]);
   const customers = await listCustomerLookupRecords();
@@ -1031,7 +1032,7 @@ async function ensureCustomerForEnquiryInput(
       },
       customers
     ) ||
-    (await createCustomerFromEnquiryInput(input, existingEnquiry))
+    (options?.createIfMissing === false ? null : await createCustomerFromEnquiryInput(input, existingEnquiry))
   );
 }
 
@@ -1658,10 +1659,10 @@ export async function createPortalEnquiry(payload: unknown) {
   const createPromise = (async () => {
   const productSummary = await resolvePotentialProductSummary(input.potentialProduct);
   const requirementSummary = mergeRequirementSummary(input.requirementSummary, productSummary.productName);
-  const existingCustomer = input.linkedCustomerId
-    ? await getRecord<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, input.linkedCustomerId)
-    : await findExistingCustomerByContact(input);
-  const linkedCustomerId = input.linkedCustomerId || existingCustomer?.id || "";
+  const existingCustomer = await ensureCustomerForEnquiryInput(input, undefined, {
+    createIfMissing: input.source !== "whatsapp"
+  });
+  const linkedCustomerId = existingCustomer?.id || "";
   const parserStatus = normalizeStatusForEnquiry(linkedCustomerId, input.source);
   const destinationAddress = input.destinationAddress || input.address || "";
   const destinationState = input.destinationState || input.state || "";
@@ -1800,6 +1801,9 @@ export async function updatePortalEnquiry(enquiryId: string, payload: unknown) {
     productSummary.productName
   );
   const existingCustomer = await ensureCustomerForEnquiryInput(input, existingEnquiry);
+  if (!existingCustomer) {
+    throw new Error("Unable to resolve or create linked customer for enquiry update.");
+  }
   const linkedCustomerId = existingCustomer.id;
   const parserStatus =
     existingEnquiry.fields["Parser Status"] || normalizeStatusForEnquiry(linkedCustomerId, input.source);
