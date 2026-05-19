@@ -30,13 +30,13 @@ type EnquiryFields = {
 };
 
 type ProductFields = {
-  "Product Name"?: string;
   "Product Key"?: string;
   Model?: string;
   Narration?: string;
   "Source Sheet"?: string;
   "Bulk Sale Price"?: number;
   MRP?: number;
+  "GST%"?: string;
   "GST %"?: number;
   "GST Amount"?: number;
   "Pkg & Transport"?: number;
@@ -585,7 +585,6 @@ function scoreProductMatch(
   parsedInterest: string | null
 ) {
   const searchable = [
-    product.fields["Product Name"],
     product.fields["Product Key"],
     product.fields.Model,
     product.fields.Narration,
@@ -596,7 +595,7 @@ function scoreProductMatch(
 
   let score = 0;
   const interest = (parsedInterest || "").toLowerCase();
-  const productName = String(product.fields["Product Name"] || "").toLowerCase();
+  const productName = [product.fields.Model, product.fields.Narration].filter(Boolean).join(" ").toLowerCase();
   const productModel = String(product.fields.Model || "").toLowerCase();
   const sourceSheet = String(product.fields["Source Sheet"] || "").toLowerCase();
 
@@ -690,14 +689,11 @@ function buildRequirementSummaryFromProduct(product: AirtableRecord<ProductField
 
   const model = String(product.fields.Model || "").trim();
   const narration = String(product.fields.Narration || "").trim();
-  const productName = String(product.fields["Product Name"] || "").trim();
   const productKey = String(product.fields["Product Key"] || "").trim();
 
   return (
     [model, narration].filter(Boolean).join(" - ") ||
-    [productName, narration].filter(Boolean).join(" - ") ||
     model ||
-    productName ||
     productKey
   );
 }
@@ -822,7 +818,10 @@ async function createSalesNotificationArtifact(input: {
         quotationIds,
         matchedProducts: input.matchedProducts.map((product) => ({
           id: product.id,
-          name: product.fields["Product Name"] || product.fields["Product Key"] || product.id
+          name:
+            [product.fields.Model, product.fields.Narration].filter(Boolean).join(" - ") ||
+            product.fields["Product Key"] ||
+            product.id
         })),
         rawMessage: input.rawMessage
       },
@@ -855,7 +854,11 @@ async function sendSalesTeamNotificationEmail(input: {
     ? input.matchedProducts
         .map(
           (product) =>
-            `- ${product.fields["Product Name"] || product.fields["Product Key"] || product.id}`
+            `- ${
+              [product.fields.Model, product.fields.Narration].filter(Boolean).join(" - ") ||
+              product.fields["Product Key"] ||
+              product.id
+            }`
         )
         .join("\n")
     : "No products auto-matched yet";
@@ -923,7 +926,10 @@ async function processWhatsAppEnquiryInternal(payload: unknown): Promise<WhatsAp
       quotationId: "",
       matchedProducts: matchedProducts.map((product) => ({
         id: product.id,
-        name: product.fields["Product Name"] || product.fields["Product Key"] || product.id
+        name:
+          [product.fields.Model, product.fields.Narration].filter(Boolean).join(" - ") ||
+          product.fields["Product Key"] ||
+          product.id
       })),
       salesNotification: notification,
       salesEmail: null
@@ -986,7 +992,10 @@ async function processWhatsAppEnquiryInternal(payload: unknown): Promise<WhatsAp
     quotationId: "",
     matchedProducts: matchedProducts.map((product) => ({
       id: product.id,
-      name: product.fields["Product Name"] || product.fields["Product Key"] || product.id
+      name:
+        [product.fields.Model, product.fields.Narration].filter(Boolean).join(" - ") ||
+        product.fields["Product Key"] ||
+        product.id
     })),
     salesNotification: notification,
     salesEmail

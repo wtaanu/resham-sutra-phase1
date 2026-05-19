@@ -144,11 +144,19 @@ type ProductRecord = {
   id: string;
   productKey: string;
   model: string;
-  name: string;
+  displayName: string;
   narration: string;
+  category: string;
+  variant: string;
+  supplier: string;
+  purchaseCost: number;
+  exFactory: number;
+  freight: number;
   bulkSalePrice: number;
   mrp: number;
-  gstPercent: number;
+  dealerPrice: number;
+  gstAmount: number;
+  gstPercent: number | string;
   transportCharge: number;
   sourceSheet: string;
   documents: ProductDocument[];
@@ -237,6 +245,7 @@ type EntryMode =
   | "quotation"
   | "order"
   | "lineItems"
+  | "product"
   | "productDocuments"
   | "enquiryDocuments"
   | null;
@@ -271,6 +280,22 @@ type CustomerFormState = {
   city: string;
   pincode: string;
   customerType: string;
+};
+
+type ProductFormState = {
+  category: string;
+  model: string;
+  narration: string;
+  variant: string;
+  supplier: string;
+  purchaseCost: string;
+  exFactory: string;
+  freight: string;
+  gstAmount: string;
+  bulkSalePrice: string;
+  mrp: string;
+  dealerPrice: string;
+  gstPercent: string;
 };
 
 type QuotationFormState = {
@@ -464,6 +489,19 @@ const stateOptions = [
   "West Bengal"
 ];
 
+const productCategoryOptions = [
+  "Electronics",
+  "Furniture",
+  "Home Appliances",
+  "Kitchenware",
+  "Reeled for weft",
+  "Reeling Mulberry",
+  "Reeling Tassar",
+  "Sewing",
+  "Spinning",
+  "Weaving"
+].sort((left, right) => left.localeCompare(right));
+
 function formatCurrency(value: number) {
   return new Intl.NumberFormat("en-IN", {
     style: "currency",
@@ -519,6 +557,15 @@ function isValidPositiveAmount(value: string) {
   return Number.isFinite(parsed) && parsed > 0;
 }
 
+function parseNumericValue(value: unknown, fallback = 0) {
+  if (value === undefined || value === null || String(value).trim() === "") {
+    return fallback;
+  }
+
+  const parsed = Number(String(value).replace(/[^\d.-]/g, ""));
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 function firstEnquiryFieldError(errors: EnquiryFieldErrors) {
   return Object.values(errors).find(Boolean) || "Please fix the highlighted fields.";
 }
@@ -533,22 +580,22 @@ function calculateLineItemAmounts(
   const qty = Math.max(1, Number(qtyInput || 0));
   const resolvedRate =
     rateInput !== undefined && String(rateInput).trim() !== ""
-      ? Number(rateInput)
-      : Number(product?.bulkSalePrice || product?.mrp || 0);
+      ? parseNumericValue(rateInput)
+      : parseNumericValue(product?.bulkSalePrice || product?.mrp || 0);
   const resolvedTransport =
     transportInput !== undefined && String(transportInput).trim() !== ""
-      ? Number(transportInput)
-      : Number(product?.transportCharge || 0);
+      ? parseNumericValue(transportInput)
+      : parseNumericValue(product?.freight || 0);
   const resolvedGstPercent =
     gstPercentInput !== undefined && String(gstPercentInput).trim() !== ""
-      ? Number(gstPercentInput)
-      : Number(product?.gstPercent || 0);
+      ? parseNumericValue(gstPercentInput)
+      : parseNumericValue(product?.gstPercent || 0);
   const rate = Number.isFinite(resolvedRate) ? resolvedRate : 0;
   const transport = Number.isFinite(resolvedTransport) ? resolvedTransport : 0;
   const gstPercent = Number.isFinite(resolvedGstPercent) ? resolvedGstPercent : 0;
   const unitValue = Number((rate * qty).toFixed(2));
   const freightAmount = Number((transport * qty).toFixed(2));
-  const computedGstAmount = Number((gstPercent * qty).toFixed(2));
+  const computedGstAmount = Number((((unitValue + freightAmount) * gstPercent) / 100).toFixed(2));
   const computedTotalAmount = Number((unitValue + freightAmount + computedGstAmount).toFixed(2));
 
   return {
@@ -734,6 +781,24 @@ function createBlankCustomerForm(): CustomerFormState {
     city: "",
     pincode: "",
     customerType: "Domestic"
+  };
+}
+
+function createBlankProductForm(): ProductFormState {
+  return {
+    category: productCategoryOptions[0] || "Electronics",
+    model: "",
+    narration: "",
+    variant: "",
+    supplier: "",
+    purchaseCost: "",
+    exFactory: "",
+    freight: "",
+    gstAmount: "",
+    bulkSalePrice: "",
+    mrp: "",
+    dealerPrice: "",
+    gstPercent: ""
   };
 }
 
@@ -1069,9 +1134,11 @@ export default function App() {
   const [editingEnquiryId, setEditingEnquiryId] = useState("");
   const [editingCustomerId, setEditingCustomerId] = useState("");
   const [editingOrderId, setEditingOrderId] = useState("");
+  const [editingProductId, setEditingProductId] = useState("");
   const [enquiryForm, setEnquiryForm] = useState<EnquiryFormState>(createBlankEnquiryForm);
   const [enquiryFieldErrors, setEnquiryFieldErrors] = useState<EnquiryFieldErrors>({});
   const [customerForm, setCustomerForm] = useState<CustomerFormState>(createBlankCustomerForm);
+  const [productForm, setProductForm] = useState<ProductFormState>(createBlankProductForm);
   const [quotationForm, setQuotationForm] = useState<QuotationFormState>(createBlankQuotationForm);
   const [orderForm, setOrderForm] = useState<OrderFormState>(createBlankOrderForm);
   const [orderLineItems, setOrderLineItems] = useState<OrderLineItemRow[]>([createOrderLineItemRow()]);
@@ -1543,9 +1610,8 @@ export default function App() {
                   id: item.id || `${Date.now()}-${Math.random().toString(16).slice(2)}`,
                   productId: item.productId,
                   description:
+                    product?.displayName ||
                     [product?.model, product?.narration].filter(Boolean).join(" - ") ||
-                    [product?.name, product?.narration].filter(Boolean).join(" - ") ||
-                    product?.name ||
                     product?.productKey ||
                     "Order item",
                   qty: String(item.qty || 1),
@@ -2351,7 +2417,7 @@ function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
     const matchedProduct = (operations?.products || []).find((product) => product.id === enquiry.potentialProduct);
     setProductSearchTerm(
       matchedProduct
-        ? matchedProduct.name || matchedProduct.model || matchedProduct.productKey
+        ? matchedProduct.displayName || matchedProduct.model || matchedProduct.productKey
         : ""
     );
     setProductDropdownOpen(false);
@@ -2369,6 +2435,30 @@ function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
     setProductDocFiles([]);
   }
 
+  function openProductEntry(product?: ProductRecord) {
+    setEntryMode("product");
+    setEditingProductId(product?.id || "");
+    setProductForm(
+      product
+        ? {
+            category: product.category || productCategoryOptions[0] || "Electronics",
+            model: product.model || "",
+            narration: product.narration || "",
+            variant: product.variant || "",
+            supplier: product.supplier || "",
+            purchaseCost: formatAmountInput(product.purchaseCost || 0),
+            exFactory: formatAmountInput(product.exFactory || 0),
+            freight: formatAmountInput(product.freight || 0),
+            gstAmount: formatAmountInput(Number(product.gstAmount || 0)),
+            bulkSalePrice: formatAmountInput(product.bulkSalePrice || 0),
+            mrp: formatAmountInput(product.mrp || 0),
+            dealerPrice: formatAmountInput(product.dealerPrice || 0),
+            gstPercent: String(product.gstPercent || "")
+          }
+        : createBlankProductForm()
+    );
+  }
+
   function openEnquiryDocuments(enquiryId: string) {
     setEntryMode("enquiryDocuments");
     setSelectedEnquiryId(enquiryId);
@@ -2379,6 +2469,7 @@ function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
     setEntryMode(null);
     setEditingEnquiryId("");
     setEditingOrderId("");
+    setEditingProductId("");
     setEnquiryFieldErrors({});
     setDestinationSameAsMain(false);
     setCustomerSearchTerm("");
@@ -2386,6 +2477,7 @@ function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
     setProductSearchTerm("");
     setProductDropdownOpen(false);
     setOrderForm(createBlankOrderForm());
+    setProductForm(createBlankProductForm());
     setOrderLineItems([createOrderLineItemRow()]);
     setOrderLineItemsLoading(false);
   }
@@ -2456,7 +2548,7 @@ function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
     }
 
     return products.filter((product) =>
-      `${product.productKey} ${product.model} ${product.name} ${product.narration}`
+      `${product.productKey} ${product.model} ${product.displayName} ${product.narration}`
         .toLowerCase()
         .includes(search)
     );
@@ -2510,19 +2602,23 @@ function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
 
   function handleProductAutofill(productId: string) {
     const product = (operations?.products || []).find((item) => item.id === productId);
-    setProductSearchTerm(product ? product.name || product.model || product.productKey : "");
+    const productSummary = product
+      ? [product.model, product.narration].filter(Boolean).join(" - ") ||
+        product.model ||
+        product.productKey
+      : "";
+    setProductSearchTerm(product ? product.displayName || product.model || product.productKey : "");
     setProductDropdownOpen(false);
     clearEnquiryFieldError("potentialProduct");
     setEnquiryForm((current) => ({
       ...current,
       potentialProduct: productId,
-      requirementSummary: product
-        ? [product.model, product.narration].filter(Boolean).join(" - ") ||
-          [product.name, product.narration].filter(Boolean).join(" - ") ||
-          product.model ||
-          product.name ||
-          product.productKey
-        : current.requirementSummary
+      requirementSummary:
+        productSummary && current.requirementSummary.trim()
+          ? current.requirementSummary.includes(productSummary)
+            ? current.requirementSummary
+            : `${current.requirementSummary.trim()}\n${productSummary}`
+          : productSummary || current.requirementSummary
     }));
   }
 
@@ -2671,6 +2767,48 @@ function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
     }
   }
 
+  async function handleDeleteEnquiry(enquiry: EnquiryRecord) {
+    const confirmed = window.confirm(
+      `Delete enquiry ${enquiry.enquiryId}? This will also delete linked quotations, line items, and orders. Customer will not be deleted.`
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    const actionKey = `enquiry-delete-${enquiry.id}`;
+    try {
+      setActionState({
+        key: actionKey,
+        label: "Delete Enquiry",
+        status: "loading",
+        message: "Deleting enquiry and related quotation/order records..."
+      });
+      const response = await apiFetch(`${apiUrl}/api/portal/enquiries/${enquiry.id}`, {
+        method: "DELETE"
+      });
+      const payload = (await response.json()) as { message?: string };
+      if (!response.ok) {
+        throw new Error(payload.message || "Failed to delete enquiry");
+      }
+
+      setActionState({
+        key: actionKey,
+        label: "Delete Enquiry",
+        status: "success",
+        message: "Enquiry and related records deleted successfully."
+      });
+      setEnquiryPage((current) => ({ ...current, initialized: false }));
+      void refreshOperations(true);
+    } catch (error) {
+      setActionState({
+        key: actionKey,
+        label: "Delete Enquiry",
+        status: "error",
+        message: error instanceof Error ? error.message : "Failed to delete enquiry"
+      });
+    }
+  }
+
   async function handleSubmitCustomer() {
     if (customerSubmitInFlightRef.current) {
       return;
@@ -2734,6 +2872,75 @@ function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
         customerSubmitInFlightRef.current = false;
       }
     }
+
+  async function handleSubmitProduct() {
+    const isEditing = Boolean(editingProductId);
+    const actionKey = "portal-product";
+    const label = isEditing ? "Update Product" : "Create Product";
+
+    if (!productForm.model.trim() || !productForm.narration.trim()) {
+      setActionState({
+        key: actionKey,
+        label,
+        status: "error",
+        message: "Model and Narration are mandatory."
+      });
+      return;
+    }
+
+    try {
+      setActionState({
+        key: actionKey,
+        label,
+        status: "loading",
+        message: isEditing ? "Updating product..." : "Creating product..."
+      });
+
+      const response = await apiFetch(
+        isEditing ? `${apiUrl}/api/portal/products/${editingProductId}` : `${apiUrl}/api/portal/products`,
+        {
+          method: isEditing ? "PATCH" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            category: productForm.category,
+            model: productForm.model,
+            narration: productForm.narration,
+            variant: productForm.variant,
+            supplier: productForm.supplier,
+            purchaseCost: Number(productForm.purchaseCost || 0),
+            exFactory: Number(productForm.exFactory || 0),
+            freight: Number(productForm.freight || 0),
+            gstAmount: Number(productForm.gstAmount || 0),
+            bulkSalePrice: Number(productForm.bulkSalePrice || 0),
+            mrp: Number(productForm.mrp || 0),
+            dealerPrice: Number(productForm.dealerPrice || 0),
+            gstPercent: productForm.gstPercent
+          })
+        }
+      );
+      const payload = (await response.json()) as { message?: string };
+      if (!response.ok) {
+        throw new Error(payload.message || "Failed to save product");
+      }
+
+      setActionState({
+        key: actionKey,
+        label,
+        status: "success",
+        message: isEditing ? "Product updated successfully." : "Product created successfully."
+      });
+      closeEntryPanel();
+      setActiveView("products");
+      void refreshOperations(true);
+    } catch (error) {
+      setActionState({
+        key: actionKey,
+        label,
+        status: "error",
+        message: error instanceof Error ? error.message : "Failed to save product"
+      });
+    }
+  }
 
   async function handleSubmitQuotation() {
     if (quotationSubmitInFlightRef.current) {
@@ -2947,9 +3154,9 @@ function updateLineItemRow(
 
         const product = operations?.products.find((item) => item.id === nextRow.productId);
         if (field === "productId" && product) {
-          nextRow.rate = formatAmountInput(Number(product.bulkSalePrice || product.mrp || 0));
-          nextRow.transport = formatAmountInput(Number(product.transportCharge || 0));
-          nextRow.gstPercent = formatAmountInput(Number(product.gstPercent || 0));
+          nextRow.rate = formatAmountInput(parseNumericValue(product.bulkSalePrice || product.mrp || 0));
+          nextRow.transport = formatAmountInput(parseNumericValue(product.freight || 0));
+          nextRow.gstPercent = formatAmountInput(parseNumericValue(product.gstPercent || 0));
         }
 
         return nextRow;
@@ -3587,7 +3794,7 @@ function updateLineItemRow(
                             handleProductAutofill(productOption.id);
                           }}
                         >
-                          <strong>{productOption.name || productOption.model || productOption.productKey}</strong>
+                          <strong>{productOption.displayName || productOption.model || productOption.productKey}</strong>
                           <span>
                             {[productOption.model, productOption.productKey, productOption.narration]
                               .filter(Boolean)
@@ -3663,7 +3870,7 @@ function updateLineItemRow(
                   <option value="">Select product</option>
                   {(operations?.products ?? []).map((product) => (
                     <option key={product.id} value={product.id}>
-                      {product.name || product.model || product.productKey}
+                      {product.displayName || product.model || product.productKey}
                     </option>
                   ))}
                 </select>
@@ -3680,7 +3887,7 @@ function updateLineItemRow(
 
             {selectedProduct ? (
               <div className="document-list">
-                <h3>Uploaded documents for {selectedProduct.name || selectedProduct.productKey}</h3>
+                <h3>Uploaded documents for {selectedProduct.displayName || selectedProduct.productKey}</h3>
                 {selectedProduct.documents.length ? (
                   selectedProduct.documents.map((document) => (
                     <article className="document-item" key={document.id}>
@@ -3708,6 +3915,85 @@ function updateLineItemRow(
                 disabled={isUploadingProductDocuments}
               >
                 {isUploadingProductDocuments ? "Uploading..." : "Upload documents"}
+              </button>
+            </div>
+          </section>
+        </section>
+      );
+    }
+
+    if (entryMode === "product") {
+      const isSavingProduct = actionState?.key === "portal-product" && actionState.status === "loading";
+      return (
+        <section className="entry-modal-shell">
+          <div className="entry-backdrop" onClick={closeEntryPanel} />
+          <section className="entry-modal">
+            <header className="entry-header">
+              <div>
+                <p className="eyebrow">Product</p>
+                <h2>{editingProductId ? "Edit product" : "Create product"}</h2>
+              </div>
+              <button className="entry-close" type="button" onClick={closeEntryPanel}>
+                Close
+              </button>
+            </header>
+
+            {popupActionState ? (
+              <section className={`action-banner entry-action-banner ${popupActionState.status}`}>
+                <strong>{popupActionState.label}</strong>
+                <span>{popupActionState.message}</span>
+                {renderBannerCloseButton(dismissActionState)}
+              </section>
+            ) : null}
+
+            <div className="form-grid">
+              <label>
+                <span>Category</span>
+                <select value={productForm.category} onChange={(event) => setProductForm((current) => ({ ...current, category: event.target.value }))}>
+                  {productCategoryOptions.map((category) => (
+                    <option key={category} value={category}>{category}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>Model</span>
+                <input value={productForm.model} onChange={(event) => setProductForm((current) => ({ ...current, model: event.target.value }))} />
+              </label>
+              <label className="form-span-2">
+                <span>Narration</span>
+                <textarea rows={2} value={productForm.narration} onChange={(event) => setProductForm((current) => ({ ...current, narration: event.target.value }))} />
+              </label>
+              <label>
+                <span>Variant</span>
+                <input value={productForm.variant} onChange={(event) => setProductForm((current) => ({ ...current, variant: event.target.value }))} />
+              </label>
+              <label>
+                <span>Supplier</span>
+                <input value={productForm.supplier} onChange={(event) => setProductForm((current) => ({ ...current, supplier: event.target.value }))} />
+              </label>
+              {([
+                ["purchaseCost", "Purchase Cost"],
+                ["exFactory", "Ex-factory"],
+                ["freight", "Freight"],
+                ["gstAmount", "GST Amount"],
+                ["bulkSalePrice", "Bulk Sale Price"],
+                ["mrp", "MRP"],
+                ["dealerPrice", "Dealer Price"]
+              ] as const).map(([field, label]) => (
+                <label key={field}>
+                  <span>{label}</span>
+                  <input type="number" min="0" step="0.01" value={productForm[field]} onChange={(event) => setProductForm((current) => ({ ...current, [field]: event.target.value }))} />
+                </label>
+              ))}
+              <label>
+                <span>GST%</span>
+                <input value={productForm.gstPercent} onChange={(event) => setProductForm((current) => ({ ...current, gstPercent: event.target.value }))} />
+              </label>
+            </div>
+
+            <div className="entry-actions">
+              <button className="action-inline-button" type="button" onClick={() => void handleSubmitProduct()} disabled={isSavingProduct}>
+                {isSavingProduct ? "Saving..." : editingProductId ? "Update product" : "Create product"}
               </button>
             </div>
           </section>
@@ -4147,7 +4433,7 @@ function updateLineItemRow(
                     <span>Product {index + 1}</span>
                     {row.existing ? (
                       <div className="locked-field">
-                        <strong>{product?.name || product?.model || product?.productKey || "Selected product"}</strong>
+                        <strong>{product?.displayName || product?.model || product?.productKey || "Selected product"}</strong>
                         <span>{[product?.model, product?.productKey].filter(Boolean).join(" | ") || "Product locked after insertion"}</span>
                       </div>
                     ) : (
@@ -4158,7 +4444,7 @@ function updateLineItemRow(
                         <option value="">Select product</option>
                         {operations.products.map((productOption) => (
                           <option key={productOption.id} value={productOption.id}>
-                            {productOption.name || productOption.model || productOption.productKey}
+                            {productOption.displayName || productOption.model || productOption.productKey}
                           </option>
                         ))}
                       </select>
@@ -4184,7 +4470,7 @@ function updateLineItemRow(
                     />
                   </label>
                   <label className="line-item-qty">
-                    <span>Freight Amount</span>
+                    <span>Package & Transport</span>
                     <input
                       type="number"
                       min="0"
@@ -4194,7 +4480,7 @@ function updateLineItemRow(
                     />
                   </label>
                   <label className="line-item-qty">
-                    <span>GST Amount</span>
+                    <span>GST %</span>
                     <input
                       type="number"
                       min="0"
@@ -4222,12 +4508,12 @@ function updateLineItemRow(
                     🗑
                   </button>
                   <div className="line-item-preview">
-                    <span>{product?.narration || product?.name || "Product details will auto-fill from the catalog."}</span>
+                    <span>{product?.displayName || product?.narration || "Product details will auto-fill from the catalog."}</span>
                     <strong>{product ? formatCurrency(amounts.totalAmount) : "Amount pending"}</strong>
                     {product ? (
                       <>
                         <span>{`Base ${formatCurrency(amounts.unitValue)} | Freight ${formatCurrency(amounts.freightAmount)}`}</span>
-                        <span>{`GST Amount ${formatCurrency(amounts.gstAmount)}`}</span>
+                        <span>{`GST ${amounts.gstPercent}% = ${formatCurrency(amounts.gstAmount)}`}</span>
                       </>
                     ) : null}
                   </div>
@@ -4322,9 +4608,9 @@ function updateLineItemRow(
               <button type="button" onClick={() => openLineItemEntry()}>
                 Create Quotations
               </button>
-              <a href={operations.actions.productsFormUrl || "#"} target="_blank" rel="noreferrer">
+              <button type="button" onClick={() => openProductEntry()}>
                 Create Products
-              </a>
+              </button>
               {operations.actions.defaultTemplateFolderUrl ? (
                 <a href={operations.actions.defaultTemplateFolderUrl} target="_blank" rel="noreferrer">
                   Default Templates
@@ -4612,6 +4898,15 @@ function updateLineItemRow(
                     title="Edit enquiry"
                   >
                     ✎
+                  </button>
+                  <button
+                    className="icon-action-button danger"
+                    type="button"
+                    onClick={() => void handleDeleteEnquiry(enquiry)}
+                    disabled={actionState?.key === `enquiry-delete-${enquiry.id}` && actionState.status === "loading"}
+                    title="Delete enquiry"
+                  >
+                    ×
                   </button>
                   {["New", "New Enquiries", "Parsed"].includes(enquiry.parserStatus || "") ? (
                     <button
@@ -5151,7 +5446,19 @@ function updateLineItemRow(
                   <span className="table-submeta">Logged {formatDateTime(quotation.loggedDateTime)}</span>
                 ) : null}
               </td>
-              <td>{quotation.customerName || customerLookup.get(quotation.linkedCustomerId)?.customerName || "Not linked"}</td>
+              <td>
+                <strong>{customerLookup.get(quotation.linkedCustomerId)?.customerName || quotation.customerName || "Not linked"}</strong>
+                {(customerLookup.get(quotation.linkedCustomerId)?.driveFolderUrl || quotation.driveFolderUrl) ? (
+                  <a
+                    className="table-submeta"
+                    href={customerLookup.get(quotation.linkedCustomerId)?.driveFolderUrl || quotation.driveFolderUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Open client folder
+                  </a>
+                ) : null}
+              </td>
               <td>
                 <span className={`status-chip ${statusTone(quotation.status)}`}>
                   {quotation.status || "Draft"}
@@ -5294,25 +5601,31 @@ function updateLineItemRow(
         eyebrow="Products"
         title="Catalog and pricing references feeding quotation line item selection"
         rows={operations.products}
+        headerAction={
+          <button className="action-inline-button" type="button" onClick={() => openProductEntry()}>
+            Create Product
+          </button>
+        }
         sortableColumns={[
           { key: "productKey", label: "Product Key", getValue: (product) => product.productKey },
           { key: "model", label: "Model", getValue: (product) => product.model },
-          { key: "name", label: "Name", getValue: (product) => product.name },
+          { key: "description", label: "Model - Narration", getValue: (product) => product.displayName },
+          { key: "category", label: "Category", getValue: (product) => product.category },
           { key: "narration", label: "Narration", getValue: (product) => product.narration },
           { key: "bulkSale", label: "Bulk Sale", getValue: (product) => product.bulkSalePrice || 0 },
           { key: "mrp", label: "MRP", getValue: (product) => product.mrp || 0 },
-          { key: "source", label: "Source", getValue: (product) => product.sourceSheet },
+          { key: "dealer", label: "Dealer Price", getValue: (product) => product.dealerPrice || 0 },
           { key: "documents", label: "Documents", getValue: (product) => product.documents.length }
         ]}
         columns={
           <>
             <th>Product Key</th>
             <th>Model</th>
-            <th>Name</th>
-            <th>Narration</th>
+            <th>Model - Narration</th>
+            <th>Category</th>
             <th>Bulk Sale</th>
             <th>MRP</th>
-            <th>Source</th>
+            <th>Dealer Price</th>
             <th>Documents</th>
           </>
         }
@@ -5322,13 +5635,20 @@ function updateLineItemRow(
           <tr key={product.id}>
             <td>{product.productKey}</td>
             <td>{product.model || "-"}</td>
-            <td>{product.name || "Unnamed product"}</td>
-            <td>{product.narration || "No narration"}</td>
+            <td>{product.displayName || product.narration || "-"}</td>
+            <td>{product.category || "-"}</td>
             <td>{product.bulkSalePrice ? formatCurrency(product.bulkSalePrice) : "Pending"}</td>
             <td>{product.mrp ? formatCurrency(product.mrp) : "Pending"}</td>
-            <td>{product.sourceSheet || "Manual"}</td>
+            <td>{product.dealerPrice ? formatCurrency(product.dealerPrice) : "Pending"}</td>
             <td>
               <div className="action-stack">
+                <button
+                  className="action-inline-button"
+                  type="button"
+                  onClick={() => openProductEntry(product)}
+                >
+                  Edit
+                </button>
                 <button
                   className="action-inline-button"
                   type="button"

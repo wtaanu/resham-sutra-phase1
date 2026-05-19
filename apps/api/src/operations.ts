@@ -111,10 +111,16 @@ type OrderFields = {
 type ProductFields = {
   "Product Key"?: string;
   Model?: string;
-  "Product Name"?: string;
   Narration?: string;
+  Category?: string;
+  Variant?: string;
+  Supplier?: string;
+  "Purchase Cost"?: number;
+  "Ex-factory"?: number;
   "Bulk Sale Price"?: number;
   MRP?: number;
+  "Dealer Price"?: number;
+  "GST%"?: string;
   "GST %"?: number;
   "GST Amount"?: number;
   "Pkg & Transport"?: number;
@@ -485,6 +491,14 @@ export async function getOperationsEnquiriesPage(input?: { includeTotal?: boolea
 
 export async function getOperationsQuotationsPage(input?: { includeTotal?: boolean; offset?: string; pageSize?: number; statuses?: string[] }) {
   const filterByFormula = anyFieldFormula("Status", input?.statuses);
+  const sortField =
+    input?.statuses?.length === 1 && input.statuses[0] === "Approved Quote"
+      ? "Final PDF Generated At"
+      : input?.statuses?.length === 1 && input.statuses[0] === "Sent Quote"
+        ? "Sent Date"
+        : input?.statuses?.some((status) => ["Draft Quote", "Parsed", "New Enquiries"].includes(status))
+          ? "Draft Created Time"
+          : "Quotation Number";
   const totalCountPromise = input?.includeTotal === false
     ? Promise.resolve(0)
     : countRecords(env.AIRTABLE_QUOTATIONS_TABLE, "Quotation Number", filterByFormula);
@@ -493,7 +507,7 @@ export async function getOperationsQuotationsPage(input?: { includeTotal?: boole
     filterByFormula,
     offset: input?.offset,
     pageSize: input?.pageSize ?? 25,
-    sort: [{ field: "Quotation Number", direction: "desc" }]
+    sort: [{ field: sortField, direction: "desc" }]
   });
   const customerIds = page.records.flatMap((record) => record.fields["Linked Customer"] || []);
   const quotationNumbers = page.records.map((record) => record.fields["Quotation Number"] || record.id);
@@ -509,7 +523,8 @@ export async function getOperationsQuotationsPage(input?: { includeTotal?: boole
             "Destination Address",
             "Destination State",
             "Destination City",
-            "Destination Pincode"
+            "Destination Pincode",
+            "Drive Folder URL"
           ],
           filterByFormula: recordIdFormula(customerIds),
           maxRecords: customerIds.length
@@ -568,7 +583,14 @@ export async function getOperationsSnapshot() {
   const quotationIdsByEnquiryId = new Map<string, string[]>();
   const productDocuments = await listProductDocuments(products.map((record) => record.id));
   const productDocumentsByProductId = new Map<string, typeof productDocuments>();
-  const productNamesById = new Map(products.map((record) => [record.id, record.fields["Product Name"] || record.id]));
+  const productNamesById = new Map(
+    products.map((record) => [
+      record.id,
+      [record.fields.Model, record.fields.Narration].filter(Boolean).join(" - ") ||
+        record.fields["Product Key"] ||
+        record.id
+    ])
+  );
 
   for (const document of productDocuments) {
     const existing = productDocumentsByProductId.get(document.productId) ?? [];
@@ -792,25 +814,37 @@ export async function getOperationsSnapshot() {
       destinationCity: record.fields["Destination City"] || "",
       destinationPincode: String(record.fields["Destination Pincode"] || "")
     })),
-    products: products.map((record) => ({
+    products: latestFirst(products).map((record) => ({
       id: record.id,
       productKey: record.fields["Product Key"] || record.id,
       model: record.fields.Model || "",
-      name: record.fields["Product Name"] || "",
+      displayName:
+        [record.fields.Model, record.fields.Narration].filter(Boolean).join(" - ") ||
+        record.fields["Product Key"] ||
+        "",
       narration: record.fields.Narration || "",
+      category: record.fields.Category || "",
+      variant: record.fields.Variant || "",
+      supplier: record.fields.Supplier || "",
+      purchaseCost: record.fields["Purchase Cost"] || 0,
+      exFactory: record.fields["Ex-factory"] || 0,
+      freight: record.fields.Freight || 0,
       bulkSalePrice: record.fields["Bulk Sale Price"] || 0,
       mrp: record.fields.MRP || 0,
-      gstPercent: record.fields["GST Amount"] || record.fields["GST %"] || 0,
+      dealerPrice: record.fields["Dealer Price"] || 0,
+      gstAmount: record.fields["GST Amount"] || 0,
+      gstPercent: record.fields["GST%"] || record.fields["GST %"] || "",
       transportCharge:
-        record.fields["Freight Amount"] ||
         record.fields.Freight ||
-        record.fields["Pkg & Transport"] ||
         0,
       sourceSheet: record.fields["Source Sheet"] || "",
       documents: (productDocumentsByProductId.get(record.id) || []).map((document) => ({
         id: document.id,
         productId: record.id,
-        productName: record.fields["Product Name"] || record.id,
+        productName:
+          [record.fields.Model, record.fields.Narration].filter(Boolean).join(" - ") ||
+          record.fields["Product Key"] ||
+          record.id,
         fileName: document.fileName,
         mimeType: document.mimeType,
         uploadedAt: document.uploadedAt,

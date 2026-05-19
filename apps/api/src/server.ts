@@ -31,8 +31,10 @@ import {
   createOrderFromQuotation,
   createPortalCustomer,
   createPortalEnquiry,
+  createPortalProduct,
   createPortalQuotation,
   createPortalQuotationLineItems,
+  deletePortalEnquiry,
   generateDraftForEnquiry,
   getPortalQuotationLineItems,
   getPortalOrderLineItems,
@@ -40,7 +42,8 @@ import {
   replacePortalQuotationLineItems,
   updatePortalCustomer,
   updatePortalEnquiry,
-  updatePortalOrder
+  updatePortalOrder,
+  updatePortalProduct
 } from "./portal-actions.js";
 import {
   getProductDocumentsByIds,
@@ -364,6 +367,42 @@ app.patch("/api/portal/customers/:id", requireAuthenticatedUser, async (request,
   }
 });
 
+app.post("/api/portal/products", requireAuthenticatedUser, async (request, response) => {
+  try {
+    const result = await createPortalProduct(request.body, response.locals.authUser);
+    response.status(201).json({
+      status: "ok",
+      product: result
+    });
+  } catch (error) {
+    logRouteError("POST /api/portal/products", error);
+    response.status(400).json({
+      status: "error",
+      message: error instanceof Error ? error.message : "Failed to create product"
+    });
+  }
+});
+
+app.patch("/api/portal/products/:id", requireAuthenticatedUser, async (request, response) => {
+  try {
+    const result = await updatePortalProduct(
+      String(request.params.id || ""),
+      request.body,
+      response.locals.authUser
+    );
+    response.status(200).json({
+      status: "ok",
+      product: result
+    });
+  } catch (error) {
+    logRouteError("PATCH /api/portal/products/:id", error);
+    response.status(400).json({
+      status: "error",
+      message: error instanceof Error ? error.message : "Failed to update product"
+    });
+  }
+});
+
 app.post("/api/portal/quotations", requireAuthenticatedUser, async (request, response) => {
   try {
     const result = await createPortalQuotation(request.body, response.locals.authUser);
@@ -428,6 +467,23 @@ app.patch("/api/portal/enquiries/:id", requireAuthenticatedUser, async (request,
     response.status(400).json({
       status: "error",
       message: error instanceof Error ? error.message : "Failed to update enquiry"
+    });
+  }
+});
+
+app.delete("/api/portal/enquiries/:id", requireAuthenticatedUser, async (request, response) => {
+  try {
+    const enquiryId = String(request.params.id || "");
+    const result = await deletePortalEnquiry(enquiryId);
+    response.status(200).json({
+      status: "ok",
+      ...result
+    });
+  } catch (error) {
+    logRouteError("DELETE /api/portal/enquiries/:id", error);
+    response.status(400).json({
+      status: "error",
+      message: error instanceof Error ? error.message : "Failed to delete enquiry"
     });
   }
 });

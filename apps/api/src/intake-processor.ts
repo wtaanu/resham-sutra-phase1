@@ -112,11 +112,11 @@ type QuotationFields = {
 
 type ProductFields = {
   "Product Key"?: string;
-  "Product Name"?: string;
   Model?: string;
   Narration?: string;
   "Bulk Sale Price"?: number;
   MRP?: number;
+  "GST%"?: string;
   "GST %"?: number;
   "GST Amount"?: number;
   "Pkg & Transport"?: number;
@@ -133,6 +133,9 @@ type QuotationLineItemFields = {
   Qty?: number;
   "Rate Per Unit"?: number;
   "Pkg & Transport"?: number;
+  "Freight Amount"?: number;
+  "Packing & Freight"?: number;
+  "GST%"?: number;
   "GST %"?: number;
   "GST Amount"?: number;
   "Total Amount"?: number;
@@ -232,19 +235,18 @@ async function resolveZohoBiginContext(enquiry: AirtableRecord<EnquiryFields>) {
       const product = await getRecord<ProductFields>(env.AIRTABLE_PRODUCTS_TABLE, productId);
       productKey = String(product.fields["Product Key"] || "").trim();
       productName = String(
-        product.fields["Product Name"] ||
-          [product.fields.Model, product.fields.Narration].filter(Boolean).join(" - ") ||
+        [product.fields.Model, product.fields.Narration].filter(Boolean).join(" - ") ||
           productKey ||
           product.id
       ).trim();
       productDescription = String(
-        product.fields.Narration ||
-          [product.fields["Product Name"], product.fields.Model].filter(Boolean).join(" - ") ||
+        [product.fields.Model, product.fields.Narration].filter(Boolean).join(" - ") ||
+          product.fields.Narration ||
           productKey
       ).trim();
       productUnitPrice = Number(product.fields["Bulk Sale Price"] || product.fields.MRP || 0);
-      productFreight = Number(product.fields["Freight Amount"] || product.fields.Freight || product.fields["Pkg & Transport"] || 0);
-      productGstRate = Number(product.fields["GST %"] || product.fields["GST Amount"] || 0);
+      productFreight = Number(product.fields.Freight || 0);
+      productGstRate = Number(product.fields["GST%"] || product.fields["GST %"] || 0);
       productCategory = String(product.fields["Product Category"] || product.fields.Category || "").trim();
     } catch (error) {
       console.warn("[zoho-bigin] product lookup failed", {
@@ -970,17 +972,6 @@ async function ensureQuotationShell(
 
 async function listAllLineItems() {
   return listRecords<QuotationLineItemFields>(env.AIRTABLE_QUOTATION_LINE_ITEMS_TABLE, {
-    fields: [
-      "Quotation",
-      "Description Override",
-      "Qty",
-      "Rate Per Unit",
-      "Pkg & Transport",
-      "GST %",
-      "GST Amount",
-      "Total Amount",
-      "Unit Value"
-    ],
     maxRecords: 500
   });
 }
@@ -998,8 +989,8 @@ function mapDraftLineItems(items: AirtableRecord<QuotationLineItemFields>[]) {
     description: String(item.fields["Description Override"] || "Quotation item").trim(),
     qty: Number(item.fields.Qty || 0),
     rate: Number(item.fields["Rate Per Unit"] || 0),
-    transport: Number(item.fields["Pkg & Transport"] || 0),
-    gstPercent: Number(item.fields["GST %"] || 0),
+    transport: Number(item.fields["Pkg & Transport"] || item.fields["Freight Amount"] || item.fields["Packing & Freight"] || 0),
+    gstPercent: Number(item.fields["GST %"] || item.fields["GST%"] || 0),
     gstAmount: Number(item.fields["GST Amount"] || 0),
     totalAmount: Number(item.fields["Total Amount"] || 0),
     unitValue: Number(item.fields["Unit Value"] || 0)
@@ -1356,113 +1347,37 @@ export async function generateFinalPdfForQuotation(quotationId: string) {
     throw new Error("Quotation line items not found for final PDF generation.");
   }
 
-  const buyerBlock = quotation.fields["Buyer Block"] || buildBuyerBlock(enquiry);
-  const templateCode =
-    customer.fields["Customer Type"] === "Export" ? "myanmar-proforma" : "domestic-standard";
   const folder = await ensureFolder(customer);
   const quotationNumber = quotation.fields["Quotation Number"] || (await nextQuotationNumber());
   const localPdfArtifact = getStoredDocumentArtifact(buildCustomerFolderName(customer), quotationNumber, "pdf");
-  const localDraftArtifact = getStoredDocumentArtifact(buildCustomerFolderName(customer), quotationNumber, "xlsx");
-
   let pdf;
   const draftDriveFileId = extractDriveFileId(String(quotation.fields["Draft File URL"] || ""));
-  if (draftDriveFileId && isDriveConfigured()) {
-    try {
-      const pdfBuffer = await exportDriveFile(draftDriveFileId, "application/pdf");
-      await mkdir(path.dirname(localPdfArtifact.filePath), { recursive: true });
-      await writeFile(localPdfArtifact.filePath, pdfBuffer);
-      pdf = {
-        kind: "pdf" as const,
-        quotationRecordId: quotation.id,
-        quotationNumber,
-        filePath: localPdfArtifact.filePath,
-        payloadPath: "",
-        fileUrl: localPdfArtifact.fileUrl,
-        previewUrl: "",
-        payloadUrl: "",
-        message: "Final PDF exported from the live quotation sheet."
-      };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown Drive export failure.";
-      const draftExists = await fileExists(localDraftArtifact.filePath);
-      if (!folder.folderId || !draftExists) {
-        throw new Error(
-          `Final PDF export must come from the live quotation sheet. Drive PDF export failed: ${message}`
-        );
-      }
+  if (!isDriveConfigured()) {
+    throw new Error("Google Drive is required to generate the final PDF from the editable quotation draft.");
+  }
 
-      console.warn("[quotation-pdf] draft Drive export failed; converting stored XLSX to Google Sheet", {
-        quotationId,
-        quotationNumber,
-        draftDriveFileId,
-        message,
-        stack: error instanceof Error ? error.stack : undefined
-      });
+  if (!draftDriveFileId) {
+    throw new Error("Quotation draft Drive file is missing. Generate the draft quotation first, then generate the PDF.");
+  }
 
-      try {
-        const convertedDraft = await uploadFileToFolder(
-          localDraftArtifact.filePath,
-          `${quotationNumber}.xlsx`,
-          folder.folderId,
-          {
-            convertToGoogleSheet: true
-          }
-        );
-        const convertedDraftFileId = extractDriveFileId(convertedDraft.fileUrl);
-        if (!convertedDraftFileId) {
-          throw new Error("Converted draft file URL did not contain a Drive file ID.");
-        }
-
-        await updateRecord<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
-          id: quotation.id,
-          fields: {
-            "Draft File URL": convertedDraft.fileUrl
-          }
-        });
-
-        const pdfBuffer = await exportDriveFile(convertedDraftFileId, "application/pdf");
-        await mkdir(path.dirname(localPdfArtifact.filePath), { recursive: true });
-        await writeFile(localPdfArtifact.filePath, pdfBuffer);
-        pdf = {
-          kind: "pdf" as const,
-          quotationRecordId: quotation.id,
-          quotationNumber,
-          filePath: localPdfArtifact.filePath,
-          payloadPath: "",
-          fileUrl: localPdfArtifact.fileUrl,
-          previewUrl: "",
-          payloadUrl: "",
-          message: "Final PDF exported after converting the stored quotation sheet to Google Sheets."
-        };
-      } catch (conversionError) {
-        pdf = await createFallbackPdfFromQuotationData({
-          quotation,
-          quotationNumber,
-          customer,
-          enquiry,
-          buyerBlock,
-          templateCode,
-          folderUrl: folder.folderUrl,
-          lineItems,
-          reason:
-            conversionError instanceof Error
-              ? conversionError.message
-              : "Google Drive draft conversion failed"
-        });
-      }
-    }
-  } else {
-    pdf = await createFallbackPdfFromQuotationData({
-      quotation,
+  try {
+    const pdfBuffer = await exportDriveFile(draftDriveFileId, "application/pdf");
+    await mkdir(path.dirname(localPdfArtifact.filePath), { recursive: true });
+    await writeFile(localPdfArtifact.filePath, pdfBuffer);
+    pdf = {
+      kind: "pdf" as const,
+      quotationRecordId: quotation.id,
       quotationNumber,
-      customer,
-      enquiry,
-      buyerBlock,
-      templateCode,
-      folderUrl: folder.folderUrl,
-      lineItems,
-      reason: "Quotation has no live Google Sheet draft file ID."
-    });
+      filePath: localPdfArtifact.filePath,
+      payloadPath: "",
+      fileUrl: localPdfArtifact.fileUrl,
+      previewUrl: "",
+      payloadUrl: "",
+      message: "Final PDF exported from the live quotation sheet."
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown Drive export failure.";
+    throw new Error(`Final PDF export must come from the live quotation sheet. Drive PDF export failed: ${message}`);
   }
 
   let finalPdfUrl = pdf.fileUrl;

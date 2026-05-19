@@ -87,10 +87,15 @@ type QuotationFields = {
 type ProductFields = {
   "Product Key"?: string;
   Model?: string;
-  "Product Name"?: string;
   Narration?: string;
   "Bulk Sale Price"?: number;
   MRP?: number;
+  "Dealer Price"?: number;
+  "Purchase Cost"?: number;
+  "Ex-factory"?: number;
+  Variant?: string;
+  Supplier?: string;
+  "GST%"?: string;
   "GST %"?: number;
   "GST Amount"?: number;
   "Pkg & Transport"?: number;
@@ -109,6 +114,9 @@ type QuotationLineItemFields = {
   Qty?: number;
   "Rate Per Unit"?: number;
   "Pkg & Transport"?: number;
+  "Freight Amount"?: number;
+  "Packing & Freight"?: number;
+  "GST%"?: number;
   "GST %"?: number;
   "GST Amount"?: number;
   "Total Amount"?: number | string;
@@ -344,7 +352,7 @@ const lineItemPayloadSchema = z.object({
         qty: z.coerce.number().positive("Quantity should be greater than zero"),
         rate: z.union([z.coerce.number().positive("Rate should be greater than zero"), z.literal(""), z.undefined()]).optional(),
         transport: z.union([z.coerce.number().nonnegative("Freight amount cannot be negative"), z.literal(""), z.undefined()]).optional(),
-        gstPercent: z.union([z.coerce.number().nonnegative("GST amount cannot be negative"), z.literal(""), z.undefined()]).optional()
+        gstPercent: z.union([z.coerce.number().nonnegative("GST % cannot be negative"), z.literal(""), z.undefined()]).optional()
       })
     )
     .min(1, "Add at least one line item")
@@ -364,6 +372,35 @@ const customerPayloadSchema = z.object({
 
 const quotationPayloadSchema = z.object({
   enquiryId: airtableRecordIdSchema
+});
+
+const productCategorySchema = z.enum([
+  "Electronics",
+  "Home Appliances",
+  "Furniture",
+  "Kitchenware",
+  "Reeled for weft",
+  "Reeling Mulberry",
+  "Reeling Tassar",
+  "Sewing",
+  "Spinning",
+  "Weaving"
+]);
+
+const productPayloadSchema = z.object({
+  category: productCategorySchema,
+  model: z.string().trim().min(1, "Model is required"),
+  narration: z.string().trim().min(1, "Narration is required"),
+  variant: z.string().trim().optional().default(""),
+  supplier: z.string().trim().optional().default(""),
+  purchaseCost: z.coerce.number().nonnegative().optional().default(0),
+  exFactory: z.coerce.number().nonnegative().optional().default(0),
+  freight: z.coerce.number().nonnegative().optional().default(0),
+  gstAmount: z.coerce.number().nonnegative().optional().default(0),
+  bulkSalePrice: z.coerce.number().nonnegative().optional().default(0),
+  mrp: z.coerce.number().nonnegative().optional().default(0),
+  dealerPrice: z.coerce.number().nonnegative().optional().default(0),
+  gstPercent: z.string().trim().optional().default("")
 });
 
 const orderPayloadSchema = z.object({
@@ -423,15 +460,15 @@ function buildPortalLineItemFields(input: {
     const transport = Number(
       parseOptionalAmount(
         item.transport,
-        Number(product.fields["Freight Amount"] || product.fields.Freight || product.fields["Pkg & Transport"] || 0)
+        Number(product.fields.Freight || 0)
       ).toFixed(2)
     );
     const gstPercent = Number(
-      parseOptionalAmount(item.gstPercent, Number(product.fields["GST Amount"] || product.fields["GST %"] || 0)).toFixed(2)
+      parseOptionalAmount(item.gstPercent, Number(product.fields["GST%"] || product.fields["GST %"] || 0)).toFixed(2)
     );
     const unitValue = Number((rate * qty).toFixed(2));
     const freightAmount = Number((transport * qty).toFixed(2));
-    const gstAmount = Number((gstPercent * qty).toFixed(2));
+    const gstAmount = Number((((unitValue + freightAmount) * gstPercent) / 100).toFixed(2));
     const totalAmount = Number((unitValue + freightAmount + gstAmount).toFixed(2));
 
     return {
@@ -451,10 +488,73 @@ function buildPortalLineItemFields(input: {
   });
 }
 
+const quotationFreightFieldCandidates = ["Pkg & Transport"] as const;
+const quotationGstInputFieldCandidates = ["GST %"] as const;
+
+function materializeQuotationLineItemFields(
+  records: Array<Record<string, unknown>>,
+  freightFieldName: (typeof quotationFreightFieldCandidates)[number],
+  gstInputFieldName: (typeof quotationGstInputFieldCandidates)[number]
+) {
+  return records.map((record) => {
+    const next = { ...record };
+    const freightValue = next["Pkg & Transport"];
+    const gstInputValue = next["GST %"];
+
+    delete next["Pkg & Transport"];
+    delete next["Freight Amount"];
+    delete next["Packing & Freight"];
+    delete next["GST %"];
+    delete next["GST%"];
+
+    if (freightFieldName) {
+      next[freightFieldName] = freightValue;
+    }
+    if (gstInputFieldName) {
+      next[gstInputFieldName] = gstInputValue;
+    }
+
+    return next;
+  });
+}
+
+async function createQuotationLineItemRecords(records: Array<Record<string, unknown>>) {
+  let lastError: unknown = null;
+
+  for (const freightFieldName of quotationFreightFieldCandidates) {
+    for (const gstInputFieldName of quotationGstInputFieldCandidates) {
+      const fields = materializeQuotationLineItemFields(records, freightFieldName, gstInputFieldName);
+      try {
+        return await createRecords<QuotationLineItemFields>(env.AIRTABLE_QUOTATION_LINE_ITEMS_TABLE, fields);
+      } catch (error) {
+        lastError = error;
+        const message = error instanceof Error ? error.message : "";
+        const canRetryFreight =
+          freightFieldName && mentionsField(message, freightFieldName);
+        const canRetryGst =
+          gstInputFieldName && mentionsField(message, gstInputFieldName);
+        if (!canRetryFreight && !canRetryGst) {
+          throw error;
+        }
+      }
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("Failed to create quotation line items.");
+}
+
+function getQuotationLineItemFreight(fields: QuotationLineItemFields) {
+  return Number(fields["Pkg & Transport"] || fields["Freight Amount"] || fields["Packing & Freight"] || 0);
+}
+
+function getQuotationLineItemGstInput(fields: QuotationLineItemFields) {
+  return Number(fields["GST %"] || fields["GST%"] || 0);
+}
+
 function buildDescription(product: AirtableRecord<ProductFields>) {
   return (
+    [product.fields.Model, product.fields.Narration].filter(Boolean).join(" - ") ||
     product.fields.Narration ||
-    [product.fields["Product Name"], product.fields.Model].filter(Boolean).join(" - ") ||
     product.fields["Product Key"] ||
     "Quotation item"
   );
@@ -541,19 +641,18 @@ async function resolveZohoBiginContext(enquiry: AirtableRecord<EnquiryFields>) {
       const product = await getRecord<ProductFields>(env.AIRTABLE_PRODUCTS_TABLE, productId);
       productKey = String(product.fields["Product Key"] || "").trim();
       productName = String(
-        product.fields["Product Name"] ||
-          [product.fields.Model, product.fields.Narration].filter(Boolean).join(" - ") ||
+        [product.fields.Model, product.fields.Narration].filter(Boolean).join(" - ") ||
           productKey ||
           product.id
       ).trim();
       productDescription = String(
-        product.fields.Narration ||
-          [product.fields["Product Name"], product.fields.Model].filter(Boolean).join(" - ") ||
+        [product.fields.Model, product.fields.Narration].filter(Boolean).join(" - ") ||
+          product.fields.Narration ||
           productKey
       ).trim();
       productUnitPrice = Number(product.fields["Bulk Sale Price"] || product.fields.MRP || 0);
-      productFreight = Number(product.fields["Freight Amount"] || product.fields.Freight || product.fields["Pkg & Transport"] || 0);
-      productGstRate = Number(product.fields["GST %"] || product.fields["GST Amount"] || 0);
+      productFreight = Number(product.fields.Freight || 0);
+      productGstRate = Number(product.fields["GST%"] || product.fields["GST %"] || 0);
       productCategory = String(product.fields["Product Category"] || product.fields.Category || "").trim();
     } catch (error) {
       console.warn("[zoho-bigin] product lookup failed", {
@@ -806,16 +905,13 @@ async function resolvePotentialProductSummary(productId: string) {
   }
 
   const product = await getRecord<ProductFields>(env.AIRTABLE_PRODUCTS_TABLE, productId);
-  const productName = String(product.fields["Product Name"] || "").trim();
   const model = String(product.fields.Model || "").trim();
   const narration = String(product.fields.Narration || "").trim();
   const productKey = String(product.fields["Product Key"] || "").trim();
 
   const summary =
     [model, narration].filter(Boolean).join(" - ") ||
-    [productName, narration].filter(Boolean).join(" - ") ||
     model ||
-    productName ||
     productKey;
 
   return {
@@ -844,7 +940,7 @@ function parseOptionalAmount(value: unknown, fallback = 0) {
     return fallback;
   }
 
-  const parsed = Number(value);
+  const parsed = Number(String(value).replace(/[^\d.-]/g, ""));
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
@@ -937,6 +1033,17 @@ function logOrderFollowUpFailure(step: string, context: Record<string, unknown>,
     ...context,
     error: serializeError(error)
   });
+}
+
+async function createProductChangeLogEntry(input: Parameters<typeof createChangeLogEntry>[1]) {
+  try {
+    await createChangeLogEntry(env.AIRTABLE_PRODUCT_CHANGE_LOG_TABLE, input);
+  } catch (error) {
+    console.warn("[product-change-log] skipped", {
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined
+    });
+  }
 }
 
 async function updateRecordWithOptionalFieldFallback<T extends Record<string, unknown>>(
@@ -1270,6 +1377,38 @@ async function nextCustomerIdentifier() {
   }, 0);
 
   return `CUST-${String(maxValue + 1).padStart(3, "0")}`;
+}
+
+async function nextProductKey() {
+  const products = await listRecords<ProductFields>(env.AIRTABLE_PRODUCTS_TABLE, {
+    fields: ["Product Key"]
+  });
+
+  const maxValue = products.reduce((currentMax, product) => {
+    const match = String(product.fields["Product Key"] || "").match(/^P(\d+)$/i);
+    return Math.max(currentMax, match ? Number(match[1]) : 0);
+  }, 0);
+
+  return `P${maxValue + 1}`;
+}
+
+function buildProductFields(input: z.infer<typeof productPayloadSchema>, productKey?: string) {
+  return {
+    ...(productKey ? { "Product Key": productKey } : {}),
+    Category: input.category,
+    Model: input.model,
+    Narration: input.narration,
+    Variant: input.variant,
+    Supplier: input.supplier,
+    "Purchase Cost": input.purchaseCost,
+    "Ex-factory": input.exFactory,
+    Freight: input.freight,
+    "GST Amount": input.gstAmount,
+    "Bulk Sale Price": input.bulkSalePrice,
+    MRP: input.mrp,
+    "Dealer Price": input.dealerPrice,
+    "GST%": input.gstPercent
+  };
 }
 
 async function nextOrderIdentifier() {
@@ -1653,6 +1792,75 @@ export async function updatePortalEnquiry(enquiryId: string, payload: unknown) {
   };
 }
 
+export async function deletePortalEnquiry(enquiryId: string) {
+  const enquiry = await getRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, enquiryId);
+  const linkedQuotationIds = new Set(enquiry.fields.Quotations || []);
+
+  const allQuotations = await listRecords<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
+    fields: ["Linked Enquiry", "Quotation Number"],
+    maxRecords: 1000
+  });
+  for (const quotation of allQuotations) {
+    if (quotation.fields["Linked Enquiry"]?.includes(enquiryId)) {
+      linkedQuotationIds.add(quotation.id);
+    }
+  }
+
+  const quotationIds = Array.from(linkedQuotationIds);
+  const [quotationLineItems, orders] = await Promise.all([
+    quotationIds.length
+      ? listRecords<QuotationLineItemFields>(env.AIRTABLE_QUOTATION_LINE_ITEMS_TABLE, {
+          fields: ["Quotation"],
+          maxRecords: 1000
+        })
+      : Promise.resolve([]),
+    listRecords<OrderFields>(env.AIRTABLE_ORDERS_TABLE, {
+      fields: ["Linked Quotation", "Quotation", "Enquiries", "Order Number"],
+      maxRecords: 1000
+    })
+  ]);
+
+  const quotationLineItemIds = quotationLineItems
+    .filter((item) => item.fields.Quotation?.some((quotationId) => quotationIds.includes(quotationId)))
+    .map((item) => item.id);
+
+  const orderIds = orders
+    .filter((order) => {
+      const linkedQuotation =
+        order.fields["Linked Quotation"]?.[0] ||
+        (Array.isArray(order.fields.Quotation) ? order.fields.Quotation[0] : String(order.fields.Quotation || ""));
+      const linkedEnquiry = Array.isArray(order.fields.Enquiries)
+        ? order.fields.Enquiries[0]
+        : String(order.fields.Enquiries || "");
+      return quotationIds.includes(linkedQuotation || "") || linkedEnquiry === enquiryId;
+    })
+    .map((order) => order.id);
+
+  const orderLineItems = orderIds.length
+    ? await listRecords<OrderLineItemFields>(env.AIRTABLE_ORDER_LINE_ITEMS_TABLE, {
+        fields: ["Order"],
+        maxRecords: 1000
+      })
+    : [];
+  const orderLineItemIds = orderLineItems
+    .filter((item) => orderIds.includes(String(item.fields.Order || "")))
+    .map((item) => item.id);
+
+  await deleteRecords(env.AIRTABLE_ORDER_LINE_ITEMS_TABLE, orderLineItemIds);
+  await deleteRecords(env.AIRTABLE_ORDERS_TABLE, orderIds);
+  await deleteRecords(env.AIRTABLE_QUOTATION_LINE_ITEMS_TABLE, quotationLineItemIds);
+  await deleteRecords(env.AIRTABLE_QUOTATIONS_TABLE, quotationIds);
+  await deleteRecords(env.AIRTABLE_ENQUIRIES_TABLE, [enquiryId]);
+
+  return {
+    enquiryId,
+    deletedQuotationCount: quotationIds.length,
+    deletedQuotationLineItemCount: quotationLineItemIds.length,
+    deletedOrderCount: orderIds.length,
+    deletedOrderLineItemCount: orderLineItemIds.length
+  };
+}
+
 export async function createPortalQuotationLineItems(payload: unknown) {
   const input = lineItemPayloadSchema.parse(payload);
 
@@ -1680,23 +1888,7 @@ export async function createPortalQuotationLineItems(payload: unknown) {
     existingCount
   });
 
-  let created;
-  try {
-    created = await createRecords<QuotationLineItemFields>(
-      env.AIRTABLE_QUOTATION_LINE_ITEMS_TABLE,
-      lineItemFields
-    );
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "";
-    if (!mentionsField(message, "Pkg & Transport")) {
-      throw error;
-    }
-
-    created = await createRecords<QuotationLineItemFields>(
-      env.AIRTABLE_QUOTATION_LINE_ITEMS_TABLE,
-      omitFieldFromRecords(lineItemFields, "Pkg & Transport")
-    );
-  }
+  const created = await createQuotationLineItemRecords(lineItemFields);
   const draft = await refreshDraftForQuotation(quotation.id);
 
   return {
@@ -1711,15 +1903,6 @@ export async function createPortalQuotationLineItems(payload: unknown) {
 
 export async function getPortalQuotationLineItems(quotationId: string) {
   const items = await listRecords<QuotationLineItemFields>(env.AIRTABLE_QUOTATION_LINE_ITEMS_TABLE, {
-    fields: [
-      "Quotation",
-      "Linked Product",
-      "Qty",
-      "Rate Per Unit",
-      "Pkg & Transport",
-      "GST %",
-      "Total Amount"
-    ],
     maxRecords: 500
   });
 
@@ -1731,8 +1914,8 @@ export async function getPortalQuotationLineItems(quotationId: string) {
       productId: item.fields["Linked Product"]?.[0] || "",
       qty: Number(item.fields.Qty || 0),
       rate: Number(item.fields["Rate Per Unit"] || 0),
-      transport: Number(item.fields["Pkg & Transport"] || 0),
-      gstPercent: Number(item.fields["GST %"] || 0),
+      transport: getQuotationLineItemFreight(item.fields),
+      gstPercent: getQuotationLineItemGstInput(item.fields),
       totalAmount: Number(item.fields["Total Amount"] || 0)
     })) satisfies PortalQuotationLineItem[];
 }
@@ -1764,23 +1947,7 @@ export async function replacePortalQuotationLineItems(payload: unknown) {
     existingCount: 0
   });
 
-  let created;
-  try {
-    created = await createRecords<QuotationLineItemFields>(
-      env.AIRTABLE_QUOTATION_LINE_ITEMS_TABLE,
-      lineItemFields
-    );
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "";
-    if (!mentionsField(message, "Pkg & Transport")) {
-      throw error;
-    }
-
-    created = await createRecords<QuotationLineItemFields>(
-      env.AIRTABLE_QUOTATION_LINE_ITEMS_TABLE,
-      omitFieldFromRecords(lineItemFields, "Pkg & Transport")
-    );
-  }
+  const created = await createQuotationLineItemRecords(lineItemFields);
 
   const draft = await refreshDraftForQuotation(quotation.id);
 
@@ -1916,6 +2083,46 @@ export async function updatePortalCustomer(customerId: string, payload: unknown,
   await createChangeLogEntry(env.AIRTABLE_CUSTOMER_CHANGE_LOG_TABLE, {
     entityRecordId: updated.id,
     entityLabel: updated.fields["Client ID"] || updated.fields["Customer Name"] || updated.id,
+    action: "updated",
+    before: existing.fields,
+    after: updated.fields,
+    actor
+  });
+
+  return updated;
+}
+
+export async function createPortalProduct(payload: unknown, actor?: AuthenticatedUser | null) {
+  const input = productPayloadSchema.parse(payload);
+  const productKey = await nextProductKey();
+  const product = await createRecord<ProductFields>(
+    env.AIRTABLE_PRODUCTS_TABLE,
+    buildProductFields(input, productKey)
+  );
+
+  await createProductChangeLogEntry({
+    entityRecordId: product.id,
+    entityLabel: product.fields["Product Key"] || product.id,
+    action: "created",
+    before: null,
+    after: product.fields,
+    actor
+  });
+
+  return product;
+}
+
+export async function updatePortalProduct(productId: string, payload: unknown, actor?: AuthenticatedUser | null) {
+  const input = productPayloadSchema.parse(payload);
+  const existing = await getRecord<ProductFields>(env.AIRTABLE_PRODUCTS_TABLE, productId);
+  const updated = await updateRecord<ProductFields>(env.AIRTABLE_PRODUCTS_TABLE, {
+    id: productId,
+    fields: buildProductFields(input)
+  });
+
+  await createProductChangeLogEntry({
+    entityRecordId: updated.id,
+    entityLabel: updated.fields["Product Key"] || updated.id,
     action: "updated",
     before: existing.fields,
     after: updated.fields,

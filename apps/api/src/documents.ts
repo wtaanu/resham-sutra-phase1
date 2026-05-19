@@ -267,13 +267,21 @@ async function resolveTemplateBuffer(localTemplatePath: string) {
     const templateFolder = await ensureDefaultTemplateFolder();
     const templateFileName =
       env.GOOGLE_DRIVE_DEFAULT_TEMPLATE_FILE_NAME?.trim() || path.basename(localTemplatePath);
-    let templateFile = await findDriveFileInFolder(templateFileName, templateFolder.folderId);
+    const templateBaseName = path.extname(templateFileName)
+      ? templateFileName.slice(0, -path.extname(templateFileName).length)
+      : templateFileName;
+    const findTemplateFile = async () =>
+      (await findDriveFileInFolder(templateFileName, templateFolder.folderId)) ||
+      (templateBaseName !== templateFileName
+        ? await findDriveFileInFolder(templateBaseName, templateFolder.folderId)
+        : null);
+    let templateFile = await findTemplateFile();
 
     if (!templateFile) {
       await uploadFileToFolder(localTemplatePath, templateFileName, templateFolder.folderId, {
         convertToGoogleSheet: true
       });
-      templateFile = await findDriveFileInFolder(templateFileName, templateFolder.folderId);
+      templateFile = await findTemplateFile();
     }
 
     if (!templateFile) {
