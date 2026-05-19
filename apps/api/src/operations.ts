@@ -1,5 +1,7 @@
 import { listRecords, listRecordsPage, type AirtableRecord } from "./airtable.js";
 import { env } from "./config.js";
+import { ensureDefaultTemplateReady } from "./documents.js";
+import { isDriveConfigured } from "./drive.js";
 import { listProductDocuments } from "./product-documents.js";
 
 type EnquiryFields = {
@@ -618,6 +620,36 @@ export async function getOperationsSnapshot() {
   for (const record of customers) {
     addCustomerLookupRecord(record, customerNameById, customerClientIdById);
   }
+  const quotationCustomerIds = Array.from(
+    new Set(quotations.flatMap((quotation) => quotation.fields["Linked Customer"] || []).filter(Boolean))
+  );
+  const missingQuotationCustomerIds = quotationCustomerIds.filter((value) => !customerNameById.has(value));
+  const extraQuotationCustomers = missingQuotationCustomerIds.length
+    ? await safeList<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, {
+        fields: [
+          "Client ID",
+          "Customer Name",
+          "Company",
+          "Phone",
+          "Email",
+          "Address",
+          "State",
+          "City",
+          "Pincode",
+          "Destination Address",
+          "Destination State",
+          "Destination City",
+          "Destination Pincode",
+          "Customer Type",
+          "Drive Folder URL"
+        ],
+        filterByFormula: recordIdFormula(missingQuotationCustomerIds),
+        maxRecords: missingQuotationCustomerIds.length
+      })
+    : [];
+  for (const record of extraQuotationCustomers) {
+    addCustomerLookupRecord(record, customerNameById, customerClientIdById);
+  }
   const orderCustomerKeys = Array.from(new Set(orders.map(orderCustomerKey).filter(Boolean)));
   const missingOrderCustomerRecordIds = orderCustomerKeys.filter(
     (value) => value.startsWith("rec") && !customerNameById.has(value)
@@ -656,6 +688,9 @@ export async function getOperationsSnapshot() {
     addCustomerLookupRecord(record, customerNameById, customerClientIdById);
   }
   const customerDefaultsById = new Map(customers.map((record) => [record.id, mapCustomerRecord(record)]));
+  for (const record of extraQuotationCustomers) {
+    customerDefaultsById.set(record.id, mapCustomerRecord(record));
+  }
   for (const record of extraOrderCustomers) {
     customerDefaultsById.set(record.id, mapCustomerRecord(record));
   }
@@ -697,13 +732,25 @@ export async function getOperationsSnapshot() {
     countRecords(env.AIRTABLE_QUOTATIONS_TABLE, "Quotation Number", exactFieldFormula("Status", "Sent Quote"))
   ]);
 
+  const defaultTemplateFolderUrl = await (async () => {
+    if (!isDriveConfigured()) {
+      return "";
+    }
+
+    try {
+      return (await ensureDefaultTemplateReady()).folderUrl;
+    } catch {
+      return "";
+    }
+  })();
+
   return {
     actions: {
       interfaceUrl: env.AIRTABLE_INTERFACE_URL,
       enquiryFormUrl: env.AIRTABLE_ENQUIRY_FORM_URL,
       lineItemsFormUrl: env.AIRTABLE_LINE_ITEMS_FORM_URL,
       productsFormUrl: env.AIRTABLE_PRODUCTS_FORM_URL,
-      defaultTemplateFolderUrl: ""
+      defaultTemplateFolderUrl
     },
     metrics: [
       {

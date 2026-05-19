@@ -2526,6 +2526,17 @@ function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
     });
   }, [operations?.quotations]);
 
+  const sortedProductsForSelection = useMemo(() => {
+    return [...(operations?.products ?? [])].sort((left, right) => {
+      const leftLabel = left.displayName || left.model || left.productKey || "";
+      const rightLabel = right.displayName || right.model || right.productKey || "";
+      return leftLabel.localeCompare(rightLabel, undefined, {
+        numeric: true,
+        sensitivity: "base"
+      });
+    });
+  }, [operations?.products]);
+
   const filteredCustomers = useMemo(() => {
     const term = customerSearchTerm.trim().toLowerCase();
     if (!term) {
@@ -2541,7 +2552,7 @@ function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
 
   const filteredProducts = useMemo(() => {
     const search = productSearchTerm.trim().toLowerCase();
-    const products = operations?.products || [];
+    const products = sortedProductsForSelection;
 
     if (!search) {
       return products;
@@ -2552,7 +2563,7 @@ function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
         .toLowerCase()
         .includes(search)
     );
-  }, [operations?.products, productSearchTerm]);
+  }, [productSearchTerm, sortedProductsForSelection]);
 
   const enquiryStatusOptions = useMemo(() => {
     const uniqueStatuses = Array.from(
@@ -3868,7 +3879,7 @@ function updateLineItemRow(
                 <span>Product</span>
                 <select value={selectedProductId} onChange={(event) => setSelectedProductId(event.target.value)}>
                   <option value="">Select product</option>
-                  {(operations?.products ?? []).map((product) => (
+                  {sortedProductsForSelection.map((product) => (
                     <option key={product.id} value={product.id}>
                       {product.displayName || product.model || product.productKey}
                     </option>
@@ -3925,10 +3936,10 @@ function updateLineItemRow(
     if (entryMode === "product") {
       const isSavingProduct = actionState?.key === "portal-product" && actionState.status === "loading";
       return (
-        <section className="entry-modal-shell">
+        <section className="entry-overlay">
           <div className="entry-backdrop" onClick={closeEntryPanel} />
-          <section className="entry-modal">
-            <header className="entry-header">
+          <section className="panel entry-panel entry-modal" ref={entryModalRef}>
+            <div className="panel-header panel-header-tight">
               <div>
                 <p className="eyebrow">Product</p>
                 <h2>{editingProductId ? "Edit product" : "Create product"}</h2>
@@ -3936,7 +3947,7 @@ function updateLineItemRow(
               <button className="entry-close" type="button" onClick={closeEntryPanel}>
                 Close
               </button>
-            </header>
+            </div>
 
             {popupActionState ? (
               <section className={`action-banner entry-action-banner ${popupActionState.status}`}>
@@ -4442,7 +4453,7 @@ function updateLineItemRow(
                         onChange={(event) => updateLineItemRow(row.id, "productId", event.target.value)}
                       >
                         <option value="">Select product</option>
-                        {operations.products.map((productOption) => (
+                        {sortedProductsForSelection.map((productOption) => (
                           <option key={productOption.id} value={productOption.id}>
                             {productOption.displayName || productOption.model || productOption.productKey}
                           </option>
@@ -5118,6 +5129,33 @@ function updateLineItemRow(
     const isMarkingSent =
       actionState?.key === markSentActionKey && actionState.status === "loading";
     const existingOrder = orderByQuotationId.get(quotation.id);
+    const clientFolderUrl = customerLookup.get(quotation.linkedCustomerId)?.driveFolderUrl || "";
+    const renderFolderLinks = () => (
+      <>
+        {clientFolderUrl ? (
+          <a
+            className="action-inline-link"
+            href={clientFolderUrl}
+            target="_blank"
+            rel="noreferrer"
+            onClick={() => handleLinkAction(`client-folder-${quotation.id}`, "Open Customer Folder")}
+          >
+            Open customer folder
+          </a>
+        ) : null}
+        {quotation.driveFolderUrl && quotation.driveFolderUrl !== clientFolderUrl ? (
+          <a
+            className="action-inline-link"
+            href={quotation.driveFolderUrl}
+            target="_blank"
+            rel="noreferrer"
+            onClick={() => handleLinkAction(`quotation-folder-${quotation.id}`, "Open Folder")}
+          >
+            Open quotation folder
+          </a>
+        ) : null}
+      </>
+    );
 
     if (quotation.status === "Parsed") {
       return (
@@ -5177,17 +5215,7 @@ function updateLineItemRow(
               {isMarkingSent ? "..." : "S"}
             </button>
           </div>
-          {quotation.driveFolderUrl ? (
-            <a
-              className="action-inline-link"
-              href={quotation.driveFolderUrl}
-              target="_blank"
-              rel="noreferrer"
-              onClick={() => handleLinkAction(`quotation-folder-${quotation.id}`, "Open Folder")}
-            >
-              Open Folder
-            </a>
-          ) : null}
+          {renderFolderLinks()}
         </div>
       );
     }
@@ -5223,17 +5251,7 @@ function updateLineItemRow(
               {existingOrder ? "O" : "+"}
             </button>
           </div>
-          {quotation.driveFolderUrl ? (
-            <a
-              className="action-inline-link"
-              href={quotation.driveFolderUrl}
-              target="_blank"
-              rel="noreferrer"
-              onClick={() => handleLinkAction(`quotation-folder-${quotation.id}`, "Open Folder")}
-            >
-              Open Folder
-            </a>
-          ) : null}
+          {renderFolderLinks()}
         </div>
       );
     }
@@ -5249,17 +5267,7 @@ function updateLineItemRow(
           >
             {isRegenerateLoading ? "Generating..." : "Generate Draft"}
           </button>
-          {quotation.driveFolderUrl ? (
-            <a
-              className="action-inline-link"
-              href={quotation.driveFolderUrl}
-              target="_blank"
-              rel="noreferrer"
-              onClick={() => handleLinkAction(`quotation-folder-${quotation.id}`, "Open Folder")}
-            >
-              Open Folder
-            </a>
-          ) : null}
+          {renderFolderLinks()}
         </div>
       );
     }
@@ -5314,17 +5322,7 @@ function updateLineItemRow(
                 : "PDF"}
             </button>
           </div>
-          {quotation.driveFolderUrl ? (
-            <a
-              className="action-inline-link"
-              href={quotation.driveFolderUrl}
-              target="_blank"
-              rel="noreferrer"
-              onClick={() => handleLinkAction(`quotation-folder-${quotation.id}`, "Open Folder")}
-            >
-              Open Folder
-            </a>
-          ) : null}
+          {renderFolderLinks()}
         </div>
       );
     }
@@ -5611,11 +5609,11 @@ function updateLineItemRow(
           { key: "model", label: "Model", getValue: (product) => product.model },
           { key: "description", label: "Model - Narration", getValue: (product) => product.displayName },
           { key: "category", label: "Category", getValue: (product) => product.category },
-          { key: "narration", label: "Narration", getValue: (product) => product.narration },
           { key: "bulkSale", label: "Bulk Sale", getValue: (product) => product.bulkSalePrice || 0 },
           { key: "mrp", label: "MRP", getValue: (product) => product.mrp || 0 },
           { key: "dealer", label: "Dealer Price", getValue: (product) => product.dealerPrice || 0 },
-          { key: "documents", label: "Documents", getValue: (product) => product.documents.length }
+          { key: "documents", label: "Documents", getValue: (product) => product.documents.length },
+          { key: "actions", label: "Actions", getValue: (product) => product.productKey }
         ]}
         columns={
           <>
@@ -5627,6 +5625,7 @@ function updateLineItemRow(
             <th>MRP</th>
             <th>Dealer Price</th>
             <th>Documents</th>
+            <th>Actions</th>
           </>
         }
         emptyTitle="No products loaded"
@@ -5640,6 +5639,7 @@ function updateLineItemRow(
             <td>{product.bulkSalePrice ? formatCurrency(product.bulkSalePrice) : "Pending"}</td>
             <td>{product.mrp ? formatCurrency(product.mrp) : "Pending"}</td>
             <td>{product.dealerPrice ? formatCurrency(product.dealerPrice) : "Pending"}</td>
+            <td>{product.documents.length}</td>
             <td>
               <div className="action-stack">
                 <button
@@ -5647,14 +5647,14 @@ function updateLineItemRow(
                   type="button"
                   onClick={() => openProductEntry(product)}
                 >
-                  Edit
+                  Edit Product
                 </button>
                 <button
                   className="action-inline-button"
                   type="button"
                   onClick={() => openProductDocuments(product.id)}
                 >
-                  Upload / View ({product.documents.length})
+                  Upload / View
                 </button>
                 {product.documents[0] ? (
                   <a

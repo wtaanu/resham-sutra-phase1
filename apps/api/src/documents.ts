@@ -301,6 +301,40 @@ async function resolveTemplateBuffer(localTemplatePath: string) {
   }
 }
 
+export async function ensureDefaultTemplateReady() {
+  if (!isDriveConfigured()) {
+    throw new Error("Google Drive is not configured");
+  }
+
+  const localTemplatePath = path.resolve(env.QUOTATION_TEMPLATE_DIR);
+  const templateFolder = await ensureDefaultTemplateFolder();
+  const templateFileName =
+    env.GOOGLE_DRIVE_DEFAULT_TEMPLATE_FILE_NAME?.trim() || path.basename(localTemplatePath);
+  const templateBaseName = path.extname(templateFileName)
+    ? templateFileName.slice(0, -path.extname(templateFileName).length)
+    : templateFileName;
+  const findTemplateFile = async () =>
+    (await findDriveFileInFolder(templateFileName, templateFolder.folderId)) ||
+    (templateBaseName !== templateFileName
+      ? await findDriveFileInFolder(templateBaseName, templateFolder.folderId)
+      : null);
+  let templateFile = await findTemplateFile();
+
+  if (!templateFile) {
+    await uploadFileToFolder(localTemplatePath, templateFileName, templateFolder.folderId, {
+      convertToGoogleSheet: true
+    });
+    templateFile = await findTemplateFile();
+  }
+
+  return {
+    ...templateFolder,
+    templateFileUrl:
+      templateFile?.webViewLink ||
+      (templateFile?.id ? `https://docs.google.com/spreadsheets/d/${templateFile.id}/edit` : "")
+  };
+}
+
 function escapePdfText(value: string) {
   return value.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
 }
