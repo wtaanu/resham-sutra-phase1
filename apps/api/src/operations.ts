@@ -380,9 +380,11 @@ function mapQuotationRecord(
   quotationMetricsById = new Map<string, { lineItemCount: number; quotationGrandTotal: number }>(),
   pdfGeneratedAtByQuotationId = new Map<string, string>(),
   customerNameById = new Map<string, string>(),
-  customerDefaultsById = new Map<string, ReturnType<typeof mapCustomerRecord>>()
+  customerDefaultsById = new Map<string, ReturnType<typeof mapCustomerRecord>>(),
+  enquiryCustomerIdById = new Map<string, string>()
 ) {
-  const linkedCustomerId = record.fields["Linked Customer"]?.[0] || "";
+  const linkedEnquiryId = record.fields["Linked Enquiry"]?.[0] || "";
+  const linkedCustomerId = record.fields["Linked Customer"]?.[0] || enquiryCustomerIdById.get(linkedEnquiryId) || "";
   const customerDefaults = customerDefaultsById.get(linkedCustomerId);
 
   return {
@@ -400,7 +402,7 @@ function mapQuotationRecord(
     customerDestinationState: customerDefaults?.destinationState || "",
     customerDestinationCity: customerDefaults?.destinationCity || "",
     customerDestinationPincode: customerDefaults?.destinationPincode || "",
-    linkedEnquiryId: record.fields["Linked Enquiry"]?.[0] || "",
+    linkedEnquiryId,
     status: record.fields.Status || "",
     draftFileUrl: record.fields["Draft File URL"] || "",
     draftCreatedTime: record.fields["Draft Created Time"] || "",
@@ -512,9 +514,22 @@ export async function getOperationsQuotationsPage(input?: { includeTotal?: boole
     sort: [{ field: sortField, direction: "desc" }]
   });
   const customerIds = page.records.flatMap((record) => record.fields["Linked Customer"] || []);
+  const enquiryIds = page.records.flatMap((record) => record.fields["Linked Enquiry"] || []);
   const quotationNumbers = page.records.map((record) => record.fields["Quotation Number"] || record.id);
+  const pageEnquiries = enquiryIds.length
+    ? await listRecords<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
+        fields: ["Linked Customer"],
+        filterByFormula: recordIdFormula(enquiryIds),
+        maxRecords: enquiryIds.length
+      })
+    : [];
+  const enquiryCustomerIdById = new Map(
+    pageEnquiries.map((record) => [record.id, record.fields["Linked Customer"]?.[0] || ""])
+  );
+  const customerIdsFromEnquiries = pageEnquiries.flatMap((record) => record.fields["Linked Customer"] || []);
+  const allCustomerIds = Array.from(new Set([...customerIds, ...customerIdsFromEnquiries].filter(Boolean)));
   const [linkedCustomers, quotationLineItems] = await Promise.all([
-    customerIds.length
+    allCustomerIds.length
       ? listRecords<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, {
           fields: [
             "Customer Name",
@@ -528,8 +543,8 @@ export async function getOperationsQuotationsPage(input?: { includeTotal?: boole
             "Destination Pincode",
             "Drive Folder URL"
           ],
-          filterByFormula: recordIdFormula(customerIds),
-          maxRecords: customerIds.length
+          filterByFormula: recordIdFormula(allCustomerIds),
+          maxRecords: allCustomerIds.length
         })
       : Promise.resolve([]),
     quotationNumbers.length
@@ -548,7 +563,7 @@ export async function getOperationsQuotationsPage(input?: { includeTotal?: boole
 
   return {
     quotations: page.records.map((record) =>
-      mapQuotationRecord(record, quotationMetricsById, new Map(), customerNameById, customerDefaultsById)
+      mapQuotationRecord(record, quotationMetricsById, new Map(), customerNameById, customerDefaultsById, enquiryCustomerIdById)
     ),
     nextOffset: page.offset,
     pageSize: page.pageSize,
@@ -615,13 +630,23 @@ export async function getOperationsSnapshot() {
   const quotationById = new Map(quotations.map((record) => [record.id, record]));
   const quotationMetricsById = buildQuotationLineItemMetrics(quotationLineItems);
   const pdfGeneratedAtByQuotationId = new Map<string, string>();
+  const enquiryCustomerIdById = new Map(
+    enquiries.map((record) => [record.id, record.fields["Linked Customer"]?.[0] || ""])
+  );
   const customerNameById = new Map<string, string>();
   const customerClientIdById = new Map<string, string>();
   for (const record of customers) {
     addCustomerLookupRecord(record, customerNameById, customerClientIdById);
   }
   const quotationCustomerIds = Array.from(
-    new Set(quotations.flatMap((quotation) => quotation.fields["Linked Customer"] || []).filter(Boolean))
+    new Set(
+      quotations
+        .flatMap((quotation) => [
+          ...(quotation.fields["Linked Customer"] || []),
+          enquiryCustomerIdById.get(quotation.fields["Linked Enquiry"]?.[0] || "") || ""
+        ])
+        .filter(Boolean)
+    )
   );
   const missingQuotationCustomerIds = quotationCustomerIds.filter((value) => !customerNameById.has(value));
   const extraQuotationCustomers = missingQuotationCustomerIds.length
@@ -823,7 +848,14 @@ export async function getOperationsSnapshot() {
     }),
     customers: latestFirst(customers).map(mapCustomerRecord),
     quotations: quotations.map((record) =>
-      mapQuotationRecord(record, quotationMetricsById, pdfGeneratedAtByQuotationId, customerNameById, customerDefaultsById)
+      mapQuotationRecord(
+        record,
+        quotationMetricsById,
+        pdfGeneratedAtByQuotationId,
+        customerNameById,
+        customerDefaultsById,
+        enquiryCustomerIdById
+      )
     ),
     orders: latestFirst(orders).map((record) => ({
       id: record.id,

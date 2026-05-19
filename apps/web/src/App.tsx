@@ -1147,6 +1147,7 @@ export default function App() {
   const [customerSearchTerm, setCustomerSearchTerm] = useState("");
   const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false);
   const [customerPageSearchTerm, setCustomerPageSearchTerm] = useState("");
+  const [productPageSearchTerm, setProductPageSearchTerm] = useState("");
   const [productSearchTerm, setProductSearchTerm] = useState("");
   const [productDropdownOpen, setProductDropdownOpen] = useState(false);
   const [enquiryStatusFilter, setEnquiryStatusFilter] = useState("All");
@@ -2306,7 +2307,7 @@ export default function App() {
 
 function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
     const linkedEnquiry = quotation?.linkedEnquiryId ? enquiryLookup.get(quotation.linkedEnquiryId) : undefined;
-    const linkedCustomer = quotation?.linkedCustomerId ? customerLookup.get(quotation.linkedCustomerId) : undefined;
+    const linkedCustomer = resolveQuotationCustomer(quotation);
     const defaultAddress =
       linkedCustomer?.destinationAddress ||
       quotation?.customerDestinationAddress ||
@@ -2505,6 +2506,20 @@ function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
   const orderByQuotationId = useMemo(() => {
     return new Map((operations?.orders ?? []).map((order) => [order.linkedQuotationId, order]));
   }, [operations?.orders]);
+
+  function resolveQuotationCustomer(quotation: QuotationRecord | undefined) {
+    if (!quotation) {
+      return undefined;
+    }
+
+    const directCustomer = quotation.linkedCustomerId ? customerLookup.get(quotation.linkedCustomerId) : undefined;
+    if (directCustomer) {
+      return directCustomer;
+    }
+
+    const linkedEnquiry = quotation.linkedEnquiryId ? enquiryLookup.get(quotation.linkedEnquiryId) : undefined;
+    return linkedEnquiry?.linkedCustomerId ? customerLookup.get(linkedEnquiry.linkedCustomerId) : undefined;
+  }
 
   function resolveOrderCustomerLabel(order: OrderRecord) {
     return (
@@ -3500,7 +3515,7 @@ function updateLineItemRow(
       ...operations.quotations.slice(0, 2).map((quotation) => ({
         id: quotation.id,
         title: quotation.quotationNumber,
-        subtitle: customerLookup.get(quotation.linkedCustomerId)?.customerName || "Quotation workflow",
+        subtitle: resolveQuotationCustomer(quotation)?.customerName || quotation.customerName || "Quotation workflow",
         meta: quotation.status || "Draft",
         href: quotation.draftFileUrl || quotation.finalPdfUrl || quotation.driveFolderUrl || undefined
       }))
@@ -4420,7 +4435,7 @@ function updateLineItemRow(
                 <option value="">Select quotation</option>
                 {availableQuotationOptions.map((quotation) => (
                   <option key={quotation.id} value={quotation.id}>
-                    {quotation.quotationNumber} - {customerLookup.get(quotation.linkedCustomerId)?.customerName || "Unlinked"}
+                    {quotation.quotationNumber} - {resolveQuotationCustomer(quotation)?.customerName || quotation.customerName || "Unlinked"}
                   </option>
                 ))}
               </select>
@@ -5126,7 +5141,7 @@ function updateLineItemRow(
     const isMarkingSent =
       actionState?.key === markSentActionKey && actionState.status === "loading";
     const existingOrder = orderByQuotationId.get(quotation.id);
-    const clientFolderUrl = customerLookup.get(quotation.linkedCustomerId)?.driveFolderUrl || quotation.driveFolderUrl || "";
+    const clientFolderUrl = resolveQuotationCustomer(quotation)?.driveFolderUrl || quotation.driveFolderUrl || "";
     const renderFolderLinks = () => (
       <>
         {clientFolderUrl ? (
@@ -5387,7 +5402,7 @@ function updateLineItemRow(
           rows={filteredQuotations}
           sortableColumns={[
             { key: "quotation", label: "Quotation", getValue: (quotation) => quotation.quotationNumber },
-            { key: "customer", label: "Customer", getValue: (quotation) => quotation.customerName || customerLookup.get(quotation.linkedCustomerId)?.customerName || "" },
+            { key: "customer", label: "Customer", getValue: (quotation) => resolveQuotationCustomer(quotation)?.customerName || quotation.customerName || "" },
             { key: "status", label: "Status", getValue: (quotation) => quotation.status },
             { key: "items", label: "Items", getValue: (quotation) => quotation.lineItemCount || 0 },
             ...(statuses.length === 1 && statuses[0] === "Approved Quote"
@@ -5442,11 +5457,11 @@ function updateLineItemRow(
                 ) : null}
               </td>
               <td>
-                <strong>{customerLookup.get(quotation.linkedCustomerId)?.customerName || quotation.customerName || "Not linked"}</strong>
-                {(customerLookup.get(quotation.linkedCustomerId)?.driveFolderUrl || quotation.driveFolderUrl) ? (
+                <strong>{resolveQuotationCustomer(quotation)?.customerName || quotation.customerName || "Not linked"}</strong>
+                {(resolveQuotationCustomer(quotation)?.driveFolderUrl || quotation.driveFolderUrl) ? (
                   <a
                     className="table-submeta"
-                    href={customerLookup.get(quotation.linkedCustomerId)?.driveFolderUrl || quotation.driveFolderUrl}
+                    href={resolveQuotationCustomer(quotation)?.driveFolderUrl || quotation.driveFolderUrl}
                     target="_blank"
                     rel="noreferrer"
                   >
@@ -5590,12 +5605,23 @@ function updateLineItemRow(
     if (!operations) {
       return null;
     }
-    const productRows = [...operations.products].sort((left, right) =>
-      (left.model || left.displayName || "").localeCompare(right.model || right.displayName || "", undefined, {
-        numeric: true,
-        sensitivity: "base"
+    const normalizedSearch = productPageSearchTerm.trim().toLowerCase();
+    const productRows = [...operations.products]
+      .filter((product) => {
+        if (!normalizedSearch) {
+          return true;
+        }
+
+        return `${product.model} ${product.displayName} ${product.narration} ${product.category} ${product.supplier}`
+          .toLowerCase()
+          .includes(normalizedSearch);
       })
-    );
+      .sort((left, right) =>
+        (left.model || left.displayName || "").localeCompare(right.model || right.displayName || "", undefined, {
+          numeric: true,
+          sensitivity: "base"
+        })
+      );
 
     return (
       <PaginatedTable
@@ -5603,9 +5629,28 @@ function updateLineItemRow(
         title="Catalog and pricing references feeding quotation line item selection"
         rows={productRows}
         headerAction={
-          <button className="action-inline-button" type="button" onClick={() => openProductEntry()}>
-            Create Product
-          </button>
+          <>
+            <label className="table-search-inline">
+              <span>Search</span>
+              <input
+                value={productPageSearchTerm}
+                placeholder="Model, narration, category"
+                onChange={(event) => setProductPageSearchTerm(event.target.value)}
+              />
+            </label>
+            {productPageSearchTerm ? (
+              <button
+                className="action-ghost-button"
+                type="button"
+                onClick={() => setProductPageSearchTerm("")}
+              >
+                Clear
+              </button>
+            ) : null}
+            <button className="action-inline-button" type="button" onClick={() => openProductEntry()}>
+              Create Product
+            </button>
+          </>
         }
         sortableColumns={[
           { key: "model", label: "Model", getValue: (product) => product.model },
@@ -5629,8 +5674,12 @@ function updateLineItemRow(
             <th>Actions</th>
           </>
         }
-        emptyTitle="No products loaded"
-        emptyBody="Catalog rows will appear here after product entries are added."
+        emptyTitle={productPageSearchTerm.trim() ? "No products matched" : "No products loaded"}
+        emptyBody={
+          productPageSearchTerm.trim()
+            ? "Try another model, narration, or category search."
+            : "Catalog rows will appear here after product entries are added."
+        }
         renderRow={(product) => (
           <tr key={product.id}>
             <td>{product.model || "-"}</td>
