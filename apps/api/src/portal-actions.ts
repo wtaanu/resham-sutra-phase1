@@ -279,7 +279,19 @@ const manualEnquiryCreateInflight = new Map<string, Promise<{
 }>>();
 
 function linkedRecordIds(...recordIds: Array<string | undefined>) {
-  return recordIds.filter((value): value is string => Boolean(value));
+  return recordIds.filter((value): value is string => Boolean(value && isAirtableRecordId(value)));
+}
+
+function isAirtableRecordId(value: unknown) {
+  return /^rec[a-zA-Z0-9]{14,}$/.test(String(value || "").trim());
+}
+
+function firstLinkedValue(value: unknown) {
+  return Array.isArray(value) ? String(value[0] || "").trim() : String(value || "").trim();
+}
+
+function normalizeLookupValue(value: unknown) {
+  return String(value || "").trim().toLowerCase();
 }
 
 const enquiryPayloadSchema = z.object({
@@ -903,6 +915,123 @@ async function findExistingCustomerByContact(input: z.infer<typeof enquiryPayloa
       return customerEmail && customerEmail === email;
     }) ||
     null
+  );
+}
+
+async function listCustomerLookupRecords() {
+  return listRecords<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, {
+    fields: [
+      "Client ID",
+      "Customer Name",
+      "Company",
+      "Phone",
+      "WhatsApp",
+      "Email",
+      "Address",
+      "State",
+      "City",
+      "Pincode"
+    ]
+  });
+}
+
+function findCustomerByReference(reference: string, customers: AirtableRecord<CustomerFields>[]) {
+  const normalizedReference = normalizeLookupValue(reference);
+  if (!normalizedReference) {
+    return null;
+  }
+
+  return (
+    customers.find((customer) => normalizeLookupValue(customer.id) === normalizedReference) ||
+    customers.find((customer) => normalizeLookupValue(customer.fields["Client ID"]) === normalizedReference) ||
+    customers.find((customer) => normalizeLookupValue(customer.fields["Customer Name"]) === normalizedReference) ||
+    customers.find((customer) => normalizeLookupValue(customer.fields.Company) === normalizedReference) ||
+    null
+  );
+}
+
+function findCustomerByContactFields(
+  fields: { phone?: string; email?: string },
+  customers: AirtableRecord<CustomerFields>[]
+) {
+  const phone = normalizePhone(fields.phone);
+  const email = normalizeEmail(fields.email);
+
+  return (
+    customers.find((customer) => {
+      const customerPhone = normalizePhone(customer.fields.Phone || customer.fields.WhatsApp);
+      return phone && customerPhone && customerPhone === phone;
+    }) ||
+    customers.find((customer) => {
+      const customerEmail = normalizeEmail(customer.fields.Email);
+      return email && customerEmail && customerEmail === email;
+    }) ||
+    null
+  );
+}
+
+async function createCustomerFromEnquiryInput(
+  input: z.infer<typeof enquiryPayloadSchema>,
+  existingEnquiry?: AirtableRecord<EnquiryFields>
+) {
+  const clientId = await nextCustomerIdentifier();
+  const pincodeNumber = toPincodeNumber(input.pincode, existingEnquiry?.fields.Pincode);
+  const pincodeText = toPincodeString(input.pincode, existingEnquiry?.fields.Pincode);
+  const fields = withOptionalNumberField(
+    {
+      "Client ID": clientId,
+      "Customer Name": input.leadName || existingEnquiry?.fields["Lead Name"] || "Unknown Client",
+      Company: input.company || existingEnquiry?.fields.Company || "",
+      Phone: normalizePhone(input.phone || existingEnquiry?.fields.Phone || ""),
+      WhatsApp: normalizePhone(input.phone || existingEnquiry?.fields.Phone || ""),
+      Email: normalizeEmail(input.email || existingEnquiry?.fields.Email || ""),
+      Address: input.address || existingEnquiry?.fields.Address || "",
+      State: input.state || existingEnquiry?.fields.State || "",
+      City: input.city || existingEnquiry?.fields.City || "",
+      "Customer Type": "Domestic"
+    },
+    "Pincode",
+    pincodeNumber
+  );
+
+  try {
+    return await createRecord<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, fields);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (!mentionsField(message, "Pincode")) {
+      throw error;
+    }
+
+    return createRecord<CustomerFields>(
+      env.AIRTABLE_CUSTOMERS_TABLE,
+      withOptionalStringField({ ...fields }, "Pincode", pincodeText)
+    );
+  }
+}
+
+async function ensureCustomerForEnquiryInput(
+  input: z.infer<typeof enquiryPayloadSchema>,
+  existingEnquiry?: AirtableRecord<EnquiryFields>
+) {
+  const reference = input.linkedCustomerId || firstLinkedValue(existingEnquiry?.fields["Linked Customer"]);
+  const customers = await listCustomerLookupRecords();
+  const referencedCustomer =
+    reference && isAirtableRecordId(reference)
+      ? await getRecord<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, reference).catch(() =>
+          findCustomerByReference(reference, customers)
+        )
+      : findCustomerByReference(reference, customers);
+
+  return (
+    referencedCustomer ||
+    findCustomerByContactFields(
+      {
+        phone: input.phone || existingEnquiry?.fields.Phone || "",
+        email: input.email || existingEnquiry?.fields.Email || ""
+      },
+      customers
+    ) ||
+    (await createCustomerFromEnquiryInput(input, existingEnquiry))
   );
 }
 
@@ -1670,16 +1799,8 @@ export async function updatePortalEnquiry(enquiryId: string, payload: unknown) {
     input.requirementSummary || existingEnquiry.fields["Requirement Summary"] || "",
     productSummary.productName
   );
-  const existingCustomer = input.linkedCustomerId
-    ? await getRecord<CustomerFields>(env.AIRTABLE_CUSTOMERS_TABLE, input.linkedCustomerId)
-    : existingEnquiry.fields["Linked Customer"]?.[0]
-      ? await getRecord<CustomerFields>(
-          env.AIRTABLE_CUSTOMERS_TABLE,
-          existingEnquiry.fields["Linked Customer"]?.[0] || ""
-        )
-      : await findExistingCustomerByContact(input);
-  const linkedCustomerId =
-    input.linkedCustomerId || existingEnquiry.fields["Linked Customer"]?.[0] || existingCustomer?.id || "";
+  const existingCustomer = await ensureCustomerForEnquiryInput(input, existingEnquiry);
+  const linkedCustomerId = existingCustomer.id;
   const parserStatus =
     existingEnquiry.fields["Parser Status"] || normalizeStatusForEnquiry(linkedCustomerId, input.source);
   const destinationAddress = input.destinationAddress || input.address || "";
