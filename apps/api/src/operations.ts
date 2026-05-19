@@ -405,7 +405,7 @@ function mapQuotationRecord(
     draftFileUrl: record.fields["Draft File URL"] || "",
     draftCreatedTime: record.fields["Draft Created Time"] || "",
     finalPdfUrl: record.fields["Final PDF URL"] || "",
-    driveFolderUrl: record.fields["Drive Folder URL"] || "",
+    driveFolderUrl: customerDefaults?.driveFolderUrl || record.fields["Drive Folder URL"] || "",
     sentDate: record.fields["Sent Date"] || "",
     whatsappSentDateTime: record.fields["WhatsApp Sent Date Time"] || "",
     emailSentDateTime: record.fields["Email Sent Date Time"] || "",

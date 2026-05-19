@@ -490,11 +490,13 @@ function buildPortalLineItemFields(input: {
 
 const quotationFreightFieldCandidates = ["Pkg & Transport"] as const;
 const quotationGstInputFieldCandidates = ["GST %"] as const;
+const quotationFreightValueModes = ["number", "text"] as const;
 
 function materializeQuotationLineItemFields(
   records: Array<Record<string, unknown>>,
   freightFieldName: (typeof quotationFreightFieldCandidates)[number],
-  gstInputFieldName: (typeof quotationGstInputFieldCandidates)[number]
+  gstInputFieldName: (typeof quotationGstInputFieldCandidates)[number],
+  freightValueMode: (typeof quotationFreightValueModes)[number]
 ) {
   return records.map((record) => {
     const next = { ...record };
@@ -508,7 +510,8 @@ function materializeQuotationLineItemFields(
     delete next["GST%"];
 
     if (freightFieldName) {
-      next[freightFieldName] = freightValue;
+      next[freightFieldName] =
+        freightValueMode === "text" ? String(freightValue ?? "") : freightValue;
     }
     if (gstInputFieldName) {
       next[gstInputFieldName] = gstInputValue;
@@ -523,18 +526,25 @@ async function createQuotationLineItemRecords(records: Array<Record<string, unkn
 
   for (const freightFieldName of quotationFreightFieldCandidates) {
     for (const gstInputFieldName of quotationGstInputFieldCandidates) {
-      const fields = materializeQuotationLineItemFields(records, freightFieldName, gstInputFieldName);
-      try {
-        return await createRecords<QuotationLineItemFields>(env.AIRTABLE_QUOTATION_LINE_ITEMS_TABLE, fields);
-      } catch (error) {
-        lastError = error;
-        const message = error instanceof Error ? error.message : "";
-        const canRetryFreight =
-          freightFieldName && mentionsField(message, freightFieldName);
-        const canRetryGst =
-          gstInputFieldName && mentionsField(message, gstInputFieldName);
-        if (!canRetryFreight && !canRetryGst) {
-          throw error;
+      for (const freightValueMode of quotationFreightValueModes) {
+        const fields = materializeQuotationLineItemFields(
+          records,
+          freightFieldName,
+          gstInputFieldName,
+          freightValueMode
+        );
+        try {
+          return await createRecords<QuotationLineItemFields>(env.AIRTABLE_QUOTATION_LINE_ITEMS_TABLE, fields);
+        } catch (error) {
+          lastError = error;
+          const message = error instanceof Error ? error.message : "";
+          const canRetryFreight =
+            freightFieldName && mentionsField(message, freightFieldName);
+          const canRetryGst =
+            gstInputFieldName && mentionsField(message, gstInputFieldName);
+          if (!canRetryFreight && !canRetryGst) {
+            throw error;
+          }
         }
       }
     }

@@ -5037,7 +5037,6 @@ function updateLineItemRow(
           { key: "customer", label: "Customer", getValue: (customer) => customer.customerName },
           { key: "company", label: "Company", getValue: (customer) => customer.company },
           { key: "contact", label: "Contact", getValue: (customer) => customer.phone },
-          { key: "type", label: "Type", getValue: (customer) => customer.customerType },
           { key: "drive", label: "Drive", getValue: (customer) => customer.driveFolderUrl },
           { key: "action", label: "Action", getValue: (customer) => customer.customerName }
         ]}
@@ -5047,7 +5046,6 @@ function updateLineItemRow(
             <th>Customer</th>
             <th>Company</th>
             <th>Contact</th>
-            <th>Type</th>
             <th>Drive</th>
             <th>Action</th>
           </>
@@ -5085,7 +5083,6 @@ function updateLineItemRow(
               <strong>{customer.phone || "No phone"}</strong>
               <span>{[customer.city, customer.state, customer.pincode].filter(Boolean).join(", ") || customer.address || "Address pending"}</span>
             </td>
-            <td>{customer.customerType || "Unclassified"}</td>
             <td>
               {customer.driveFolderUrl ? (
                 <a href={customer.driveFolderUrl} target="_blank" rel="noreferrer">
@@ -5129,7 +5126,7 @@ function updateLineItemRow(
     const isMarkingSent =
       actionState?.key === markSentActionKey && actionState.status === "loading";
     const existingOrder = orderByQuotationId.get(quotation.id);
-    const clientFolderUrl = customerLookup.get(quotation.linkedCustomerId)?.driveFolderUrl || "";
+    const clientFolderUrl = customerLookup.get(quotation.linkedCustomerId)?.driveFolderUrl || quotation.driveFolderUrl || "";
     const renderFolderLinks = () => (
       <>
         {clientFolderUrl ? (
@@ -5593,19 +5590,24 @@ function updateLineItemRow(
     if (!operations) {
       return null;
     }
+    const productRows = [...operations.products].sort((left, right) =>
+      (left.model || left.displayName || "").localeCompare(right.model || right.displayName || "", undefined, {
+        numeric: true,
+        sensitivity: "base"
+      })
+    );
 
     return (
       <PaginatedTable
         eyebrow="Products"
         title="Catalog and pricing references feeding quotation line item selection"
-        rows={operations.products}
+        rows={productRows}
         headerAction={
           <button className="action-inline-button" type="button" onClick={() => openProductEntry()}>
             Create Product
           </button>
         }
         sortableColumns={[
-          { key: "productKey", label: "Product Key", getValue: (product) => product.productKey },
           { key: "model", label: "Model", getValue: (product) => product.model },
           { key: "description", label: "Model - Narration", getValue: (product) => product.displayName },
           { key: "category", label: "Category", getValue: (product) => product.category },
@@ -5617,7 +5619,6 @@ function updateLineItemRow(
         ]}
         columns={
           <>
-            <th>Product Key</th>
             <th>Model</th>
             <th>Model - Narration</th>
             <th>Category</th>
@@ -5632,7 +5633,6 @@ function updateLineItemRow(
         emptyBody="Catalog rows will appear here after product entries are added."
         renderRow={(product) => (
           <tr key={product.id}>
-            <td>{product.productKey}</td>
             <td>{product.model || "-"}</td>
             <td>{product.displayName || product.narration || "-"}</td>
             <td>{product.category || "-"}</td>
