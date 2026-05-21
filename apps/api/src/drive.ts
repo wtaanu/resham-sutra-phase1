@@ -464,18 +464,24 @@ export async function uploadFileToFolder(
       ? exactExisting
       : null;
 
-  if (options?.replaceExisting && existingFiles.length) {
+  const filesToReplace = options?.convertToGoogleSheet
+    ? existingFiles.filter((file) => isGoogleSheet(file) && (file.name === baseName || file.name === normalizedFileName))
+    : exactExisting && !String(exactExisting.mimeType || "").startsWith("application/vnd.google-apps.")
+      ? [exactExisting]
+      : [];
+
+  if (options?.replaceExisting && filesToReplace.length) {
     console.info("[drive] replacing existing file(s) before upload", {
       fileName,
       folderId,
       convertToGoogleSheet: Boolean(options.convertToGoogleSheet),
-      existingFiles: existingFiles.map((file) => ({
+      existingFiles: filesToReplace.map((file) => ({
         id: file.id,
         name: file.name,
         mimeType: file.mimeType
       }))
     });
-    for (const file of existingFiles) {
+    for (const file of filesToReplace) {
       await trashDriveFile(file.id);
     }
     existing = null;
