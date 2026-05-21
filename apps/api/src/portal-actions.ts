@@ -500,6 +500,19 @@ function buildPortalLineItemFields(input: {
   });
 }
 
+function toAirtablePercentValue(value: number) {
+  return value > 1 ? Number((value / 100).toFixed(4)) : value;
+}
+
+function fromAirtablePercentValue(value: unknown) {
+  const parsed = Number(value || 0);
+  if (!Number.isFinite(parsed)) {
+    return 0;
+  }
+
+  return parsed > 0 && parsed <= 1 ? Number((parsed * 100).toFixed(2)) : parsed;
+}
+
 const quotationFreightFieldCandidates = ["Pkg & Transport"] as const;
 const quotationGstInputFieldCandidates = ["GST %"] as const;
 const quotationFreightValueModes = ["number", "text"] as const;
@@ -526,7 +539,7 @@ function materializeQuotationLineItemFields(
         freightValueMode === "text" ? String(freightValue ?? "") : freightValue;
     }
     if (gstInputFieldName) {
-      next[gstInputFieldName] = gstInputValue;
+      next[gstInputFieldName] = toAirtablePercentValue(Number(gstInputValue || 0));
     }
 
     return next;
@@ -570,7 +583,7 @@ function getQuotationLineItemFreight(fields: QuotationLineItemFields) {
 }
 
 function getQuotationLineItemGstInput(fields: QuotationLineItemFields) {
-  return Number(fields["GST %"] || fields["GST%"] || 0);
+  return fromAirtablePercentValue(fields["GST %"] || fields["GST%"] || 0);
 }
 
 function buildDescription(product: AirtableRecord<ProductFields>) {

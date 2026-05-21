@@ -1072,6 +1072,15 @@ function getLineItemsForQuotation(
   return lineItems.filter((item) => item.fields.Quotation?.includes(quotationId));
 }
 
+function fromAirtablePercentValue(value: unknown) {
+  const parsed = Number(value || 0);
+  if (!Number.isFinite(parsed)) {
+    return 0;
+  }
+
+  return parsed > 0 && parsed <= 1 ? Number((parsed * 100).toFixed(2)) : parsed;
+}
+
 function mapDraftLineItems(items: AirtableRecord<QuotationLineItemFields>[]) {
   return items.map((item, index) => ({
     lineNo: index + 1,
@@ -1079,7 +1088,7 @@ function mapDraftLineItems(items: AirtableRecord<QuotationLineItemFields>[]) {
     qty: Number(item.fields.Qty || 0),
     rate: Number(item.fields["Rate Per Unit"] || 0),
     transport: Number(item.fields["Pkg & Transport"] || item.fields["Freight Amount"] || item.fields["Packing & Freight"] || 0),
-    gstPercent: Number(item.fields["GST %"] || item.fields["GST%"] || 0),
+    gstPercent: fromAirtablePercentValue(item.fields["GST %"] || item.fields["GST%"] || 0),
     gstAmount: Number(item.fields["GST Amount"] || 0),
     totalAmount: Number(item.fields["Total Amount"] || 0),
     unitValue: Number(item.fields["Unit Value"] || 0)
@@ -1330,7 +1339,8 @@ async function createDraftForReadyEnquiry(
       `${quotationNumber}.xlsx`,
       folder.folderId,
       {
-        convertToGoogleSheet: true
+        convertToGoogleSheet: true,
+        replaceExisting: true
       }
     );
     draftFileUrl = upload.fileUrl;

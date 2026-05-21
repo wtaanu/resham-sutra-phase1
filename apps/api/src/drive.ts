@@ -7,6 +7,7 @@ type GoogleDriveFile = {
   name: string;
   webViewLink?: string;
   mimeType?: string;
+  modifiedTime?: string;
 };
 
 type GoogleDriveListResponse = {
@@ -130,7 +131,8 @@ async function findFolderByNameInParent(folderName: string, parentFolderId: stri
 
   const params = new URLSearchParams({
     q: query,
-    fields: "files(id,name,webViewLink,mimeType)"
+    fields: "files(id,name,webViewLink,mimeType,modifiedTime)",
+    orderBy: "modifiedTime desc"
   });
 
   const response = await fetch(
@@ -190,7 +192,8 @@ export async function findFolderByName(folderName: string) {
 
   const params = new URLSearchParams({
     q: query,
-    fields: "files(id,name,webViewLink,mimeType)"
+    fields: "files(id,name,webViewLink,mimeType,modifiedTime)",
+    orderBy: "modifiedTime desc"
   });
 
   const response = await fetch(
@@ -340,6 +343,21 @@ export async function exportDriveFile(fileId: string, mimeType: string) {
   return Buffer.from(bytes);
 }
 
+async function trashDriveFile(fileId: string) {
+  const response = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, {
+    method: "PATCH",
+    headers: await driveHeaders(),
+    body: JSON.stringify({
+      trashed: true
+    })
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(`Drive file replace failed (${response.status}): ${message}`);
+  }
+}
+
 export async function createFolder(folderName: string) {
   if (!isDriveConfigured()) {
     throw new Error("Google Drive is not configured");
@@ -438,12 +456,19 @@ export async function uploadFileToFolder(
   const exactExisting =
     existingFiles.find((file) => file.name === normalizedFileName) ||
     null;
-  const existing = options?.convertToGoogleSheet
+  let existing = options?.convertToGoogleSheet
     ? existingFiles.find((file) => isGoogleSheet(file) && (file.name === baseName || file.name === normalizedFileName)) ||
       null
     : exactExisting && !String(exactExisting.mimeType || "").startsWith("application/vnd.google-apps.")
       ? exactExisting
       : null;
+
+  if (options?.replaceExisting && existingFiles.length) {
+    for (const file of existingFiles) {
+      await trashDriveFile(file.id);
+    }
+    existing = null;
+  }
 
   const uploadUrl = existing
     ? `https://www.googleapis.com/upload/drive/v3/files/${existing.id}?uploadType=multipart&fields=id,name,webViewLink,mimeType`

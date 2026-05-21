@@ -268,12 +268,26 @@ async function resolveTemplateBuffer(localTemplatePath: string) {
     }
 
     if (templateFile.mimeType === "application/vnd.google-apps.spreadsheet") {
+      console.info("[documents] using Drive default quotation template", {
+        templateFileId: templateFile.id,
+        templateFileName: templateFile.name,
+        mimeType: templateFile.mimeType,
+        templateFileUrl:
+          templateFile.webViewLink ||
+          (templateFile.id ? `https://docs.google.com/spreadsheets/d/${templateFile.id}/edit` : "")
+      });
       return await exportDriveFile(
         templateFile.id,
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
       );
     }
 
+    console.info("[documents] using Drive default quotation template", {
+      templateFileId: templateFile.id,
+      templateFileName: templateFile.name,
+      mimeType: templateFile.mimeType,
+      templateFileUrl: templateFile.webViewLink || ""
+    });
     return await downloadDriveFile(templateFile.id);
   } catch (error) {
     console.error("[documents] failed to load Drive default quotation template", {

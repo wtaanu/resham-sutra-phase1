@@ -2342,6 +2342,7 @@ function openOrderEntry(order?: OrderRecord, quotation?: QuotationRecord) {
       linkedEnquiry?.pincode ||
       "";
     setOrderLineItemsLoading(true);
+    setOrderLineItems([]);
     setEntryMode("order");
     setEditingOrderId(order?.id || "");
     setOrderForm(
@@ -5283,10 +5284,10 @@ function updateLineItemRow(
             <button
               className="icon-action-button neutral"
               type="button"
-              title={existingOrder ? "Edit linked order" : "Create order"}
-              onClick={() => openOrderEntry(existingOrder, quotation)}
+              title={existingOrder ? "Create order from this quotation" : "Create order"}
+              onClick={() => openOrderEntry(undefined, quotation)}
             >
-              {existingOrder ? "O" : "+"}
+              +
             </button>
           </div>
           {renderFolderLinks()}
