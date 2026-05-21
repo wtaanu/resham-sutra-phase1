@@ -783,6 +783,23 @@ async function syncEnquiryToZohoAndPersist(enquiry: AirtableRecord<EnquiryFields
   }
 }
 
+async function syncEnquiryToZohoAndPersistSafely(
+  enquiry: AirtableRecord<EnquiryFields>,
+  source: string
+) {
+  try {
+    return await syncEnquiryToZohoAndPersist(enquiry);
+  } catch (error) {
+    console.warn("[zoho-bigin] enquiry sync failed without blocking portal action", {
+      source,
+      enquiryId: enquiry.id,
+      enquiryNumber: enquiry.fields["Enquiry ID"] || "",
+      error: serializeError(error)
+    });
+    return enquiry;
+  }
+}
+
 function buildManualEnquiryDedupKey(input: z.infer<typeof enquiryPayloadSchema>) {
   return JSON.stringify({
     source: input.source,
@@ -1811,7 +1828,10 @@ export async function createPortalEnquiry(payload: unknown) {
   }
 
   const provisioned = await createCustomerForEnquiry(created.id);
-  const syncedEnquiry = await syncEnquiryToZohoAndPersist(provisioned.enquiry);
+  const syncedEnquiry = await syncEnquiryToZohoAndPersistSafely(
+    provisioned.enquiry,
+    "createPortalEnquiry"
+  );
 
   return {
     enquiryRecordId: syncedEnquiry.id,
@@ -1946,7 +1966,10 @@ export async function updatePortalEnquiry(enquiryId: string, payload: unknown) {
   updatedEnquiry = await ensureEnquiryCustomerLink(updatedEnquiry, linkedCustomerId);
 
   if (!shouldProvisionAfterUpdate) {
-    const syncedEnquiry = await syncEnquiryToZohoAndPersist(updatedEnquiry);
+    const syncedEnquiry = await syncEnquiryToZohoAndPersistSafely(
+      updatedEnquiry,
+      "updatePortalEnquiry"
+    );
 
     return {
       enquiryRecordId: syncedEnquiry.id,
@@ -1960,7 +1983,10 @@ export async function updatePortalEnquiry(enquiryId: string, payload: unknown) {
   }
 
   const provisioned = await createCustomerForEnquiry(updatedEnquiry.id);
-  const syncedEnquiry = await syncEnquiryToZohoAndPersist(provisioned.enquiry);
+  const syncedEnquiry = await syncEnquiryToZohoAndPersistSafely(
+    provisioned.enquiry,
+    "updatePortalEnquiryProvisioned"
+  );
 
   return {
     enquiryRecordId: syncedEnquiry.id,

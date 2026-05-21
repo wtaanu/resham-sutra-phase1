@@ -354,6 +354,23 @@ async function syncEnquiryToZohoAndPersist(enquiry: AirtableRecord<EnquiryFields
   }
 }
 
+async function syncEnquiryToZohoAndPersistSafely(
+  enquiry: AirtableRecord<EnquiryFields>,
+  source: string
+) {
+  try {
+    return await syncEnquiryToZohoAndPersist(enquiry);
+  } catch (error) {
+    console.warn("[zoho-bigin] enquiry sync failed without blocking intake action", {
+      source,
+      enquiryId: enquiry.id,
+      enquiryNumber: enquiry.fields["Enquiry ID"] || "",
+      error: serializeError(error)
+    });
+    return enquiry;
+  }
+}
+
 function toPincodeNumber(value: unknown) {
   const normalized = String(value ?? "")
     .replace(/\D/g, "")
@@ -1296,7 +1313,7 @@ export async function syncQuotationWhatsAppDeliveryStatus(event: WhatsAppStatusE
           ...enquiryStatusFields("Sent Quote")
         }
       });
-      await syncEnquiryToZohoAndPersist(updatedEnquiry);
+      await syncEnquiryToZohoAndPersistSafely(updatedEnquiry, "applyQuotationDeliveryStatus");
     }
   }
 
@@ -1514,7 +1531,7 @@ export async function generateFinalPdfForQuotation(quotationId: string) {
       "Linked Customer": linkedRecordIds(customer.id)
     }
   });
-  await syncEnquiryToZohoAndPersist(updatedEnquiry);
+  await syncEnquiryToZohoAndPersistSafely(updatedEnquiry, "generateFinalPdfForQuotation");
 
   return {
     quotation: updatedQuotation,
@@ -1570,7 +1587,7 @@ export async function sendQuotationEmail(quotationId: string) {
         ...enquiryStatusFields("Sent Quote")
       }
     });
-    await syncEnquiryToZohoAndPersist(updatedEnquiry);
+    await syncEnquiryToZohoAndPersistSafely(updatedEnquiry, "sendQuotationEmail");
   }
   return {
     quotation: updatedQuotation,
