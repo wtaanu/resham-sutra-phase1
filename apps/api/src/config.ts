@@ -48,6 +48,8 @@ const envSchema = z.object({
   ZOHO_BIGIN_DEAL_STAGE_ENQUIRY_VALUE: z.string().default("Enquiry"),
   ZOHO_BIGIN_DEAL_STAGE_TO_QUOTE_VALUE: z.string().default("To Quote"),
   ZOHO_BIGIN_DEAL_STAGE_QUOTED_VALUE: z.string().default("Quoted"),
+  ZOHO_BIGIN_DEAL_PIPELINE_ID_FIELD_API_NAME: z.string().default("Pipeline"),
+  ZOHO_BIGIN_DEAL_PIPELINE_ID_VALUE: z.string().default("4700291000000301747"),
   ZOHO_BIGIN_DEAL_PIPELINE_FIELD_API_NAME: z.string().default("Sub_Pipeline"),
   ZOHO_BIGIN_DEAL_PIPELINE_NAME: z.string().default("Standard"),
   ZOHO_BIGIN_DEAL_CLOSING_DATE_FIELD_API_NAME: z.string().default("Closing_Date"),

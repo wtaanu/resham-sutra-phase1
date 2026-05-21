@@ -656,6 +656,7 @@ function mapEnquiryToBiginDealRecord(input: BiginEnquiryPayload, ids: {
       .join("\n")
   };
 
+  setConfiguredField(record, env.ZOHO_BIGIN_DEAL_PIPELINE_ID_FIELD_API_NAME, env.ZOHO_BIGIN_DEAL_PIPELINE_ID_VALUE);
   setConfiguredField(record, env.ZOHO_BIGIN_DEAL_PIPELINE_FIELD_API_NAME, env.ZOHO_BIGIN_DEAL_PIPELINE_NAME);
   setConfiguredField(record, env.ZOHO_BIGIN_DEAL_CLOSING_DATE_FIELD_API_NAME, addDaysIsoDate(30));
   if (ids.contactId) {
