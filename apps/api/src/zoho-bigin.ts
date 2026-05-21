@@ -507,6 +507,19 @@ function deriveBiginDealStage(parserStatus: string) {
   return normalizeBiginDealStageValue(env.ZOHO_BIGIN_DEAL_STAGE_ENQUIRY_VALUE);
 }
 
+function deriveBiginDealStageActualValue(parserStatus: string) {
+  const stageValue = deriveBiginDealStage(parserStatus);
+  const normalized = stageValue.trim().toLowerCase();
+  const stageActualValues: Record<string, string> = {
+    enquiry: "Qualification",
+    quoted: "Needs Analysis",
+    negotiation: "Proposal/Price Quote",
+    "finalized/await po": "Negotiation/Review"
+  };
+
+  return stageActualValues[normalized] || stageValue;
+}
+
 function shouldAttachQuotationRef(parserStatus: string) {
   return deriveBiginDealStage(parserStatus) === normalizeBiginDealStageValue(env.ZOHO_BIGIN_DEAL_STAGE_QUOTED_VALUE);
 }
@@ -646,7 +659,6 @@ function mapEnquiryToBiginDealRecord(input: BiginEnquiryPayload, ids: {
 }) {
   const record: Record<string, unknown> = {
     [env.ZOHO_BIGIN_DEAL_NAME_FIELD_API_NAME]: buildBiginDealName(input),
-    [env.ZOHO_BIGIN_DEAL_STAGE_FIELD_API_NAME]: deriveBiginDealStage(input.parserStatus),
     Description: [
       input.requirementSummary ? `Requirement: ${input.requirementSummary}` : "",
       input.parserStatus ? `Airtable Status: ${input.parserStatus}` : "",
@@ -658,6 +670,7 @@ function mapEnquiryToBiginDealRecord(input: BiginEnquiryPayload, ids: {
 
   setConfiguredField(record, env.ZOHO_BIGIN_DEAL_PIPELINE_ID_FIELD_API_NAME, env.ZOHO_BIGIN_DEAL_PIPELINE_ID_VALUE);
   setConfiguredField(record, env.ZOHO_BIGIN_DEAL_PIPELINE_FIELD_API_NAME, env.ZOHO_BIGIN_DEAL_PIPELINE_NAME);
+  setConfiguredField(record, env.ZOHO_BIGIN_DEAL_STAGE_FIELD_API_NAME, deriveBiginDealStage(input.parserStatus));
   setConfiguredField(record, env.ZOHO_BIGIN_DEAL_CLOSING_DATE_FIELD_API_NAME, addDaysIsoDate(30));
   if (ids.contactId) {
     setConfiguredField(record, env.ZOHO_BIGIN_DEAL_CONTACT_FIELD_API_NAME, { id: ids.contactId });
@@ -673,6 +686,22 @@ function mapEnquiryToBiginDealRecord(input: BiginEnquiryPayload, ids: {
   }
 
   return record;
+}
+
+function shouldRetryDealWithStageActualValue(error: unknown, input: BiginEnquiryPayload) {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.includes("MAPPING_MISMATCH") &&
+    message.includes(env.ZOHO_BIGIN_DEAL_STAGE_FIELD_API_NAME) &&
+    deriveBiginDealStageActualValue(input.parserStatus) !== deriveBiginDealStage(input.parserStatus)
+  );
+}
+
+function withDealStageActualValue(record: Record<string, unknown>, input: BiginEnquiryPayload) {
+  return {
+    ...record,
+    [env.ZOHO_BIGIN_DEAL_STAGE_FIELD_API_NAME]: deriveBiginDealStageActualValue(input.parserStatus)
+  };
 }
 
 async function syncZohoBiginDeal(input: BiginEnquiryPayload, ids: {
@@ -711,25 +740,42 @@ async function syncZohoBiginDeal(input: BiginEnquiryPayload, ids: {
 
   console.info("[zoho-bigin] prepared deal sync payload", context);
 
-  const result = input.dealRecordId
-    ? await zohoBiginRequest(`${moduleName}/${input.dealRecordId}`, {
+  const sendDealRequest = (dealRecord: Record<string, unknown>, requestContext: ZohoBiginRequestContext) => input.dealRecordId
+    ? zohoBiginRequest(`${moduleName}/${input.dealRecordId}`, {
         method: "PUT",
         body: JSON.stringify({
           data: [
             {
               id: input.dealRecordId,
-              ...record
+              ...dealRecord
             }
           ]
         })
-      }, context)
-    : await zohoBiginRequest(`${moduleName}/upsert`, {
+      }, requestContext)
+    : zohoBiginRequest(`${moduleName}/upsert`, {
         method: "POST",
         body: JSON.stringify({
-          data: [record],
+          data: [dealRecord],
           duplicate_check_fields: duplicateCheckFields
         })
-      }, context);
+      }, requestContext);
+
+  let result: BiginRecordResponse;
+  try {
+    result = await sendDealRequest(record, context);
+  } catch (error) {
+    if (!shouldRetryDealWithStageActualValue(error, input)) {
+      throw error;
+    }
+
+    const retryRecord = withDealStageActualValue(record, input);
+    const retryContext: ZohoBiginRequestContext = {
+      ...context,
+      nonEmptyFields: describeBiginFieldValues(retryRecord)
+    };
+    console.warn("[zoho-bigin] retrying deal sync with stage actual value", retryContext);
+    result = await sendDealRequest(retryRecord, retryContext);
+  }
 
   const first = result.data?.[0];
   const dealId = String(first?.details?.id || input.dealRecordId || "");
