@@ -244,6 +244,11 @@ async function writeXlsxDraft(payload: DocumentPayload, outputDir: string) {
   const templateBuffer = await resolveTemplateBuffer(templatePath);
   await workbook.xlsx.load(templateBuffer as any);
   unlockWorkbook(workbook);
+  console.info("[documents] quotation template workbook loaded", {
+    quotationNumber: payload.quotationNumber,
+    templateCode: payload.templateCode,
+    sheetNames: workbook.worksheets.map((sheet) => sheet.name)
+  });
 
   const worksheet =
     payload.templateCode === "myanmar-proforma"

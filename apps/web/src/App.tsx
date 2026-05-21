@@ -3302,8 +3302,102 @@ function updateLineItemRow(
     setLineItemRows((current) => [...current, createLineItemRow()]);
   }
 
-  function removeLineItemRow(rowId: string) {
-    setLineItemRows((current) => current.filter((row) => row.id !== rowId));
+  async function persistQuotationLineItems(
+    rows: LineItemDraftRow[],
+    options: { closePanel: boolean; successMessage?: string } = { closePanel: true }
+  ) {
+    const response = await apiFetch(`${apiUrl}/api/portal/quotation-line-items`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        quotationId: selectedQuotationId,
+        items: rows.map((row) => ({
+          productId: row.productId,
+          qty: row.qty,
+          rate: row.rate,
+          transport: row.transport || "0",
+          gstPercent: row.gstPercent || "0"
+        }))
+      })
+    });
+
+    const payload = (await response.json()) as {
+      message?: string;
+      quotationId?: string;
+      quotationNumber?: string;
+      createdCount?: number;
+      quotationStatus?: string;
+      draftFileUrl?: string;
+      driveFolderUrl?: string;
+    };
+
+    if (!response.ok) {
+      throw new Error(payload.message || "Failed to save line items");
+    }
+
+    if (payload.quotationId) {
+      applyDraftStateToQuotation({
+        quotationId: payload.quotationId,
+        quotationStatus: payload.quotationStatus,
+        draftFileUrl: payload.draftFileUrl,
+        driveFolderUrl: payload.driveFolderUrl
+      });
+    }
+
+    setActionState({
+      key: "portal-line-items",
+      label: "Create Line Items",
+      status: "success",
+      message:
+        options.successMessage ||
+        (payload.draftFileUrl
+          ? `${payload.createdCount || rows.length} line items saved for ${payload.quotationNumber || "quotation"}. Draft updated automatically.`
+          : `${payload.createdCount || rows.length} line items saved for ${payload.quotationNumber || "quotation"}. If the draft does not appear, use Generate Draft from the quotation row.`)
+    });
+    invalidateQuotationPage();
+    try {
+      await refreshOperations(false);
+    } catch {
+      // Keep success state when the follow-up refresh briefly fails.
+    }
+    if (options.closePanel) {
+      setLineItemRows([createLineItemRow()]);
+      closeEntryPanel();
+      setActiveView("quotationDrafts");
+    }
+  }
+
+  async function removeLineItemRow(rowId: string) {
+    const rowToRemove = lineItemRows.find((row) => row.id === rowId);
+    const nextRows = lineItemRows.filter((row) => row.id !== rowId);
+    setLineItemRows(nextRows);
+
+    if (!rowToRemove?.existing || !selectedQuotationId) {
+      return;
+    }
+
+    try {
+      setActionState({
+        key: "portal-line-items",
+        label: "Create Line Items",
+        status: "loading",
+        message: "Deleting line item and refreshing draft..."
+      });
+      await persistQuotationLineItems(nextRows, {
+        closePanel: false,
+        successMessage: "Line item deleted from Airtable and draft XLS refreshed."
+      });
+    } catch (error) {
+      setLineItemRows(lineItemRows);
+      setActionState({
+        key: "portal-line-items",
+        label: "Create Line Items",
+        status: "error",
+        message: error instanceof Error ? error.message : "Failed to delete line item"
+      });
+    }
   }
 
   function addOrderLineItemRow() {
@@ -3348,63 +3442,7 @@ function updateLineItemRow(
         message: "Creating quotation line items..."
       });
 
-      const response = await apiFetch(`${apiUrl}/api/portal/quotation-line-items`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          quotationId: selectedQuotationId,
-          items: lineItemRows.map((row) => ({
-            productId: row.productId,
-            qty: row.qty,
-            rate: row.rate,
-            transport: row.transport || "0",
-            gstPercent: row.gstPercent || "0"
-          }))
-        })
-      });
-
-      const payload = (await response.json()) as {
-        message?: string;
-        quotationId?: string;
-        quotationNumber?: string;
-        createdCount?: number;
-        quotationStatus?: string;
-        draftFileUrl?: string;
-        driveFolderUrl?: string;
-      };
-
-      if (!response.ok) {
-        throw new Error(payload.message || "Failed to create line items");
-      }
-
-      if (payload.quotationId) {
-        applyDraftStateToQuotation({
-          quotationId: payload.quotationId,
-          quotationStatus: payload.quotationStatus,
-          draftFileUrl: payload.draftFileUrl,
-          driveFolderUrl: payload.driveFolderUrl
-        });
-      }
-
-      setActionState({
-        key: "portal-line-items",
-        label: "Create Line Items",
-        status: "success",
-        message: payload.draftFileUrl
-          ? `${payload.createdCount || lineItemRows.length} line items saved for ${payload.quotationNumber || "quotation"}. Draft updated automatically.`
-          : `${payload.createdCount || lineItemRows.length} line items saved for ${payload.quotationNumber || "quotation"}. If the draft does not appear, use Generate Draft from the quotation row.`
-      });
-      setLineItemRows([createLineItemRow()]);
-      closeEntryPanel();
-      invalidateQuotationPage();
-      setActiveView("quotationDrafts");
-      try {
-        await refreshOperations(false);
-      } catch {
-        // Keep success state when the follow-up refresh briefly fails.
-      }
+      await persistQuotationLineItems(lineItemRows);
       } catch (submitError) {
         const message =
           submitError instanceof Error ? submitError.message : "Failed to create line items";
