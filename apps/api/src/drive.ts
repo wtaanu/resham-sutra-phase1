@@ -235,7 +235,8 @@ async function findFilesByNameInFolder(fileName: string, folderId: string) {
 
   const params = new URLSearchParams({
     q: query,
-    fields: "files(id,name,webViewLink,mimeType)"
+    fields: "files(id,name,webViewLink,mimeType,modifiedTime)",
+    orderBy: "modifiedTime desc"
   });
 
   const response = await fetch(
@@ -464,6 +465,16 @@ export async function uploadFileToFolder(
       : null;
 
   if (options?.replaceExisting && existingFiles.length) {
+    console.info("[drive] replacing existing file(s) before upload", {
+      fileName,
+      folderId,
+      convertToGoogleSheet: Boolean(options.convertToGoogleSheet),
+      existingFiles: existingFiles.map((file) => ({
+        id: file.id,
+        name: file.name,
+        mimeType: file.mimeType
+      }))
+    });
     for (const file of existingFiles) {
       await trashDriveFile(file.id);
     }

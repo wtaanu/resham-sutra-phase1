@@ -1389,7 +1389,14 @@ async function createDraftForReadyEnquiry(
       Quotations: linkedRecordIds(quotation.id)
     }
   });
-  await syncEnquiryToZohoAndPersist(updatedEnquiry);
+  await syncEnquiryToZohoAndPersist(updatedEnquiry).catch((error) => {
+    console.warn("[draft-refresh] Zoho Bigin sync failed after draft refresh; continuing", {
+      enquiryId: updatedEnquiry.id,
+      quotationId: quotation.id,
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined
+    });
+  });
 
   return {
     quotation: updatedQuotation,

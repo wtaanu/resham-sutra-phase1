@@ -131,10 +131,6 @@ function unlockWorkbook(workbook: ExcelJS.Workbook) {
       // Ignore sheets that are already unprotected or unsupported by the parser.
     }
 
-    if (worksheet.state === "hidden") {
-      worksheet.state = "visible";
-    }
-
     const model = worksheet.model as typeof worksheet.model & {
       sheetProtection?: unknown;
     };
