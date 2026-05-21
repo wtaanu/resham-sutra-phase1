@@ -213,7 +213,13 @@ export async function findFolderByName(folderName: string) {
   return data.files[0] ?? null;
 }
 
-async function findFilesByNameInFolder(fileName: string, folderId: string) {
+async function findFilesByNameInFolder(
+  fileName: string,
+  folderId: string,
+  options?: {
+    includeBaseName?: boolean;
+  }
+) {
   if (!isDriveConfigured()) {
     throw new Error("Google Drive is not configured");
   }
@@ -221,8 +227,9 @@ async function findFilesByNameInFolder(fileName: string, folderId: string) {
   const normalizedFileName = String(fileName || "").trim();
   const ext = path.extname(normalizedFileName);
   const baseName = ext ? normalizedFileName.slice(0, -ext.length) : normalizedFileName;
+  const includeBaseName = options?.includeBaseName ?? true;
   const nameCandidates = Array.from(
-    new Set([normalizedFileName, baseName].filter(Boolean))
+    new Set([normalizedFileName, includeBaseName ? baseName : ""].filter(Boolean))
   );
   const nameFormula =
     nameCandidates.length === 1
@@ -453,7 +460,9 @@ export async function uploadFileToFolder(
     fileName
   );
 
-  const existingFiles = await findFilesByNameInFolder(fileName, folderId);
+  const existingFiles = await findFilesByNameInFolder(fileName, folderId, {
+    includeBaseName: Boolean(options?.convertToGoogleSheet)
+  });
   const exactExisting =
     existingFiles.find((file) => file.name === normalizedFileName) ||
     null;
@@ -524,6 +533,50 @@ export async function uploadFileToFolder(
   }
 
   const data = (await response.json()) as GoogleDriveFile;
+  if (options?.replaceExisting) {
+    const filesAfterUpload = await findFilesByNameInFolder(fileName, folderId, {
+      includeBaseName: Boolean(options?.convertToGoogleSheet)
+    }).catch((error) => {
+      console.warn("[drive] duplicate cleanup search failed after upload", {
+        fileName,
+        folderId,
+        uploadedFileId: data.id,
+        error: error instanceof Error ? { message: error.message, stack: error.stack } : String(error)
+      });
+      return [];
+    });
+    const duplicateFiles = options?.convertToGoogleSheet
+      ? filesAfterUpload.filter(
+          (file) =>
+            file.id !== data.id &&
+            isGoogleSheet(file) &&
+            (file.name === baseName || file.name === normalizedFileName)
+        )
+      : filesAfterUpload.filter(
+          (file) =>
+            file.id !== data.id &&
+            file.name === normalizedFileName &&
+            !String(file.mimeType || "").startsWith("application/vnd.google-apps.")
+        );
+
+    if (duplicateFiles.length) {
+      console.info("[drive] cleaning duplicate file(s) after upload", {
+        fileName,
+        folderId,
+        uploadedFileId: data.id,
+        convertToGoogleSheet: Boolean(options.convertToGoogleSheet),
+        duplicateFiles: duplicateFiles.map((file) => ({
+          id: file.id,
+          name: file.name,
+          mimeType: file.mimeType
+        }))
+      });
+      for (const file of duplicateFiles) {
+        await trashDriveFile(file.id);
+      }
+    }
+  }
+
   return {
     fileId: data.id,
     fileName: data.name,
