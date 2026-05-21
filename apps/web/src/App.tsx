@@ -3303,7 +3303,7 @@ function updateLineItemRow(
   }
 
   function removeLineItemRow(rowId: string) {
-    setLineItemRows((current) => (current.length > 1 ? current.filter((row) => row.id !== rowId) : current));
+    setLineItemRows((current) => current.filter((row) => row.id !== rowId));
   }
 
   function addOrderLineItemRow() {
@@ -3319,7 +3319,7 @@ function updateLineItemRow(
       return;
     }
 
-    if (lineItemRows.some((row) => !row.productId)) {
+    if (lineItemRows.length > 0 && lineItemRows.some((row) => !row.productId)) {
       setActionState({
         key: "portal-line-items",
         label: "Create Line Items",
@@ -3329,7 +3329,7 @@ function updateLineItemRow(
       return;
     }
 
-    if (lineItemRows.some((row) => !isValidPositiveAmount(row.rate))) {
+    if (lineItemRows.length > 0 && lineItemRows.some((row) => !isValidPositiveAmount(row.rate))) {
       setActionState({
         key: "portal-line-items",
         label: "Create Line Items",

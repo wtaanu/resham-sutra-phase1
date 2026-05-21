@@ -367,7 +367,7 @@ const lineItemPayloadSchema = z.object({
         gstPercent: z.union([z.coerce.number().nonnegative("GST % cannot be negative"), z.literal(""), z.undefined()]).optional()
       })
     )
-    .min(1, "Add at least one line item")
+    .default([])
 });
 
 const customerPayloadSchema = z.object({

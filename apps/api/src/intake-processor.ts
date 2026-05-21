@@ -1433,10 +1433,6 @@ export async function refreshDraftForQuotation(quotationId: string) {
   assertQuotationFlowAllowedForEnquiry(enquiry);
   const lineItems = getLineItemsForQuotation(quotation.id, await listAllLineItems());
 
-  if (!lineItems.length) {
-    throw new Error("Quotation line items not found for draft generation.");
-  }
-
   return createDraftForReadyEnquiry(enquiry, customer, quotation, lineItems);
 }
 

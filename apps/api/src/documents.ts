@@ -44,7 +44,7 @@ const documentPayloadSchema = z.object({
   consigneeBlock: z.string().default(""),
   terms: z.array(z.string()).default([]),
   driveFolderName: z.string().default(""),
-  lineItems: z.array(lineItemSchema).min(1)
+  lineItems: z.array(lineItemSchema).default([])
 });
 
 export type DocumentPayload = z.infer<typeof documentPayloadSchema>;
@@ -150,6 +150,15 @@ function clearDomesticRows(worksheet: ExcelJS.Worksheet) {
   });
 }
 
+function toExcelPercentValue(value: unknown) {
+  const parsed = Number(value || 0);
+  if (!Number.isFinite(parsed)) {
+    return 0;
+  }
+
+  return parsed > 1 ? Number((parsed / 100).toFixed(4)) : parsed;
+}
+
 function clearMyanmarRows(worksheet: ExcelJS.Worksheet) {
   ["A", "B", "C", "D", "E", "F", "G", "H", "I"].forEach((column) => {
     worksheet.getCell(`${column}13`).value = "";
@@ -181,7 +190,7 @@ function applyDomesticTemplate(
     setCell(worksheet, `C${rowNumber}`, item.qty);
     setCell(worksheet, `D${rowNumber}`, item.rate);
     setCell(worksheet, `E${rowNumber}`, item.transport);
-    setCell(worksheet, `F${rowNumber}`, item.gstPercent);
+    setCell(worksheet, `F${rowNumber}`, toExcelPercentValue(item.gstPercent));
     setCell(worksheet, `G${rowNumber}`, item.gstAmount);
     setCell(worksheet, `H${rowNumber}`, item.totalAmount);
   });
@@ -218,7 +227,7 @@ function applyMyanmarTemplate(
   setCell(worksheet, "D13", item?.rate ?? 0);
   setCell(worksheet, "E13", item?.transport ?? 0);
   setCell(worksheet, "F13", item?.unitValue ?? 0);
-  setCell(worksheet, "G13", item?.gstPercent ?? 0);
+  setCell(worksheet, "G13", toExcelPercentValue(item?.gstPercent ?? 0));
   setCell(worksheet, "H13", item?.gstAmount ?? 0);
   setCell(worksheet, "I13", item?.totalAmount ?? 0);
 
