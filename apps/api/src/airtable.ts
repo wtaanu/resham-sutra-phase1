@@ -41,7 +41,7 @@ async function airtableRequest<TResponse>(
 
   if (!response.ok) {
     const message = await response.text();
-    throw new Error(`Airtable request failed (${response.status}): ${message}`);
+    throw new Error(`Airtable request failed (${response.status}) ${init?.method || "GET"} ${path}: ${message}`);
   }
 
   return (await response.json()) as TResponse;

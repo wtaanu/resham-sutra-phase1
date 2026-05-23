@@ -815,6 +815,32 @@ function buildManualEnquiryDedupKey(input: z.infer<typeof enquiryPayloadSchema>)
   });
 }
 
+function quoteAirtableFormulaValue(value: string) {
+  return value.replace(/'/g, "\\'");
+}
+
+async function resolveEnquiryForDelete(enquiryId: string) {
+  const normalizedId = String(enquiryId || "").trim();
+  if (!normalizedId) {
+    throw new Error("Enquiry id is required for delete.");
+  }
+
+  if (normalizedId.startsWith("rec")) {
+    return getRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, normalizedId);
+  }
+
+  const matches = await listRecords<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, {
+    fields: ["Enquiry ID", "Quotations"],
+    filterByFormula: `{Enquiry ID}='${quoteAirtableFormulaValue(normalizedId)}'`,
+    maxRecords: 1
+  });
+  const enquiry = matches[0];
+  if (!enquiry) {
+    throw new Error(`Enquiry not found for delete: ${normalizedId}`);
+  }
+  return enquiry;
+}
+
 function toPincodeNumber(value: string, fallback?: unknown) {
   const normalized = String(value || fallback || "").replace(/\D/g, "").slice(0, 6);
   return normalized ? Number(normalized) : undefined;
@@ -2000,7 +2026,8 @@ export async function updatePortalEnquiry(enquiryId: string, payload: unknown) {
 }
 
 export async function deletePortalEnquiry(enquiryId: string) {
-  const enquiry = await getRecord<EnquiryFields>(env.AIRTABLE_ENQUIRIES_TABLE, enquiryId);
+  const enquiry = await resolveEnquiryForDelete(enquiryId);
+  const resolvedEnquiryId = enquiry.id;
   const linkedQuotationIds = new Set(enquiry.fields.Quotations || []);
 
   const allQuotations = await listRecords<QuotationFields>(env.AIRTABLE_QUOTATIONS_TABLE, {
@@ -2008,7 +2035,7 @@ export async function deletePortalEnquiry(enquiryId: string) {
     maxRecords: 1000
   });
   for (const quotation of allQuotations) {
-    if (quotation.fields["Linked Enquiry"]?.includes(enquiryId)) {
+    if (quotation.fields["Linked Enquiry"]?.includes(resolvedEnquiryId)) {
       linkedQuotationIds.add(quotation.id);
     }
   }
@@ -2037,7 +2064,7 @@ export async function deletePortalEnquiry(enquiryId: string) {
       const linkedEnquiry = Array.isArray(order.fields.Enquiries)
         ? order.fields.Enquiries[0]
         : String(order.fields.Enquiries || "");
-      return quotationIds.includes(linkedQuotation || "") || linkedEnquiry === enquiryId;
+      return quotationIds.includes(linkedQuotation || "") || linkedEnquiry === resolvedEnquiryId;
     })
     .map((order) => order.id);
 
@@ -2055,10 +2082,10 @@ export async function deletePortalEnquiry(enquiryId: string) {
   await deleteRecords(env.AIRTABLE_ORDERS_TABLE, orderIds);
   await deleteRecords(env.AIRTABLE_QUOTATION_LINE_ITEMS_TABLE, quotationLineItemIds);
   await deleteRecords(env.AIRTABLE_QUOTATIONS_TABLE, quotationIds);
-  await deleteRecords(env.AIRTABLE_ENQUIRIES_TABLE, [enquiryId]);
+  await deleteRecords(env.AIRTABLE_ENQUIRIES_TABLE, [resolvedEnquiryId]);
 
   return {
-    enquiryId,
+    enquiryId: resolvedEnquiryId,
     deletedQuotationCount: quotationIds.length,
     deletedQuotationLineItemCount: quotationLineItemIds.length,
     deletedOrderCount: orderIds.length,
