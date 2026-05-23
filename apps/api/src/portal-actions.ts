@@ -2022,7 +2022,7 @@ export async function deletePortalEnquiry(enquiryId: string) {
         })
       : Promise.resolve([]),
     listRecords<OrderFields>(env.AIRTABLE_ORDERS_TABLE, {
-      fields: ["Linked Quotation", "Quotation", "Enquiries", "Order Number"],
+      fields: ["Linked Quotation", "Enquiries", "Order Number"],
       maxRecords: 1000
     })
   ]);
@@ -2033,9 +2033,7 @@ export async function deletePortalEnquiry(enquiryId: string) {
 
   const orderIds = orders
     .filter((order) => {
-      const linkedQuotation =
-        order.fields["Linked Quotation"]?.[0] ||
-        (Array.isArray(order.fields.Quotation) ? order.fields.Quotation[0] : String(order.fields.Quotation || ""));
+      const linkedQuotation = order.fields["Linked Quotation"]?.[0] || "";
       const linkedEnquiry = Array.isArray(order.fields.Enquiries)
         ? order.fields.Enquiries[0]
         : String(order.fields.Enquiries || "");
